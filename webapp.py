@@ -1905,6 +1905,8 @@ async def get_picks(email: str = Query(""), phone: str = Query("")):
     except Exception as e:
         if "429" in str(e):
             raise HTTPException(503, "Servidor ocupado, intenta en unos segundos")
+        if "WorksheetNotFound" in type(e).__name__ or "WorksheetNotFound" in str(e):
+            return {"picks": {}}   # jugador sin tab todavía → picks vacíos
         raise
     picks = {}
     for row in filas:
