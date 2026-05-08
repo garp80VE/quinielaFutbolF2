@@ -1074,7 +1074,7 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
     for start in range(0, len(players), CHUNK):
         chunk = players[start:start + CHUNK]
         # Comillas simples alrededor del nombre para tabs con espacios/caracteres especiales
-        ranges = [f"'{p['TAB_NOMBRE']}'!A4:P{last_row}" for p in chunk]
+        ranges = [f"'{p['TAB_NOMBRE']}'!A4:R{last_row}" for p in chunk]
         try:
             with _sheets_lock:
                 resp = sh.values_batch_get(ranges)

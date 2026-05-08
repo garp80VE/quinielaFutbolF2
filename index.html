@@ -2906,9 +2906,15 @@ async function loadPuntos(force=false) {
         const pts = parseInt(g.pts) || 0;
         const row = document.createElement('div');
         row.style.cssText = `padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;${i > 0 ? 'border-top:1px solid #f0f4ff' : ''}`;
-        const pickStr = (g.g1 !== '' && g.g2 !== '') ? `${g.g1}–${g.g2}` : '—';
-        const ganTxt = g.gan === '1' ? g.eq1 : g.gan === '2' ? g.eq2 : 'Empate';
-        row.innerHTML = `<div style="flex:1;min-width:0"><p style="font-size:12px;font-weight:600;color:#1e293b;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.eq1} vs ${g.eq2}</p><p style="font-size:11px;color:#64748b;margin:2px 0 0">Pick: ${pickStr} · ${ganTxt}</p></div><span class="pts ${pts>=3?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts}p</span>`;
+        const pg1 = g.pick_gol1 ?? g.g1 ?? '';
+        const pg2 = g.pick_gol2 ?? g.g2 ?? '';
+        const pgan = g.pick_ganador ?? g.gan ?? '';
+        const eq1 = g.eq1_real || g.eq1 || '?';
+        const eq2 = g.eq2_real || g.eq2 || '?';
+        const hasMarcador = pg1 !== '' && pg2 !== '';
+        const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
+        const ganTxt = (hasMarcador && pgan) ? pgan : '—';
+        row.innerHTML = `<div style="flex:1;min-width:0"><p style="font-size:12px;font-weight:600;color:#1e293b;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${eq1} vs ${eq2}</p><p style="font-size:11px;color:#64748b;margin:2px 0 0">Pick: ${pickStr} · ${ganTxt}</p></div><span class="pts ${pts>=3?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts}p</span>`;
         games.appendChild(row);
       });
 
