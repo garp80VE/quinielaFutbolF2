@@ -2221,16 +2221,15 @@ async def get_game_picks(jgo: int = Query(...)):
                 real_eq1 = game.get("eq1", "")
                 real_eq2 = game.get("eq2", "")
                 real_gan = game.get("ganador", "")
-                # Liberation check
-                liberation = (pick_eq1 == real_eq1 or pick_eq1 == real_eq2 or
-                              pick_eq2 == real_eq1 or pick_eq2 == real_eq2)
-                pts_eq1 = 1 if (pick_eq1 == real_eq1 and
-                                str(pick_gol1) == str(game.get("gol1",""))) else 0
-                pts_eq2 = 1 if (pick_eq2 == real_eq2 and
-                                str(pick_gol2) == str(game.get("gol2",""))) else 0
+                # Liberation check — fallback to ganador for old picks without eq1/eq2
+                liberation = (pick_eq1 in (real_eq1, real_eq2) or
+                              pick_eq2 in (real_eq1, real_eq2) or
+                              (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
+                pts_gol1 = 1 if (pick_gol1 != "" and str(pick_gol1) == str(game.get("gol1",""))) else 0
+                pts_gol2 = 1 if (pick_gol2 != "" and str(pick_gol2) == str(game.get("gol2",""))) else 0
                 gan_in_match = pick_gan in (real_eq1, real_eq2)
                 pts_gan = 3 if (liberation and gan_in_match and pick_gan == real_gan) else 0
-                pts = (pts_eq1 + pts_eq2 + pts_gan) if liberation else 0
+                pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
 
             return {"nombre": player.get("NOMBRE","?"),
                     "pick_eq1": pick_eq1, "pick_gol1": pick_gol1,
@@ -2336,17 +2335,17 @@ def _compute_compare_picks() -> dict:
 
             real_eq1 = game.get("eq1", "")
             real_eq2 = game.get("eq2", "")
+            # Liberation fallback to ganador for old picks without eq1/eq2
             liberation = (pick_eq1 in (real_eq1, real_eq2) or
-                          pick_eq2 in (real_eq1, real_eq2))
+                          pick_eq2 in (real_eq1, real_eq2) or
+                          (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
 
-            pts_eq1 = 1 if (pick_eq1 == real_eq1 and
-                            pick_gol1 != "" and pick_gol1 == real_g1) else 0
-            pts_eq2 = 1 if (pick_eq2 == real_eq2 and
-                            pick_gol2 != "" and pick_gol2 == real_g2) else 0
+            pts_gol1 = 1 if (pick_gol1 != "" and pick_gol1 == real_g1) else 0
+            pts_gol2 = 1 if (pick_gol2 != "" and pick_gol2 == real_g2) else 0
             gan_in_match = pick_gan in (real_eq1, real_eq2)
             pts_gan = 3 if (liberation and gan_in_match and
                             gan_known and pick_gan == real_gan) else 0
-            pts = (pts_eq1 + pts_eq2 + pts_gan) if liberation else 0
+            pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
 
             game_picks.append({
                 "nombre":  p.get("NOMBRE", "?"),
@@ -2354,8 +2353,8 @@ def _compute_compare_picks() -> dict:
                 "g2":      pick_gol2,
                 "gan":     pick_gan,
                 "pts":     pts,
-                "g1_ok":   bool(pts_eq1 > 0),
-                "g2_ok":   bool(pts_eq2 > 0),
+                "g1_ok":   bool(pts_gol1 > 0),
+                "g2_ok":   bool(pts_gol2 > 0),
                 "gan_ok":  bool(pts_gan > 0),
                 "g1_set":  bool(pick_gol1),
                 "g2_set":  bool(pick_gol2),
@@ -4410,7 +4409,4 @@ if __name__ == "__main__":
     args = _cfg.load("Quiniela WFC 2026 - F2 Webapp")
 
     os.environ["QL_CREDS"] = args.creds
-    os.environ["QL_SHEET"] = args.sheet
-    os.environ["QL_PORT"]  = str(args.port)
-
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    os.environ["QL_SHEET"] = args
