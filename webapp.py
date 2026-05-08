@@ -1520,6 +1520,17 @@ def _check_day_end_notif(filas, fila_inicio):
 async def lifespan(app: FastAPI):
     creds_path = os.environ.get("QL_CREDS", "credentials.json")
     sheet_id   = os.environ.get("QL_SHEET", "")
+
+    # Si el archivo no existe, recrearlo desde GOOGLE_CREDENTIALS (Railway/Fly.io)
+    if not os.path.exists(creds_path):
+        gc_env = os.environ.get("GOOGLE_CREDENTIALS", "")
+        if gc_env:
+            with open(creds_path, "w", encoding="utf-8") as _f:
+                _f.write(gc_env)
+            print(f"[webapp] credentials.json recreado desde GOOGLE_CREDENTIALS")
+        else:
+            raise FileNotFoundError(f"No se encontró {creds_path} ni la variable GOOGLE_CREDENTIALS")
+
     creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
     gc = gspread.authorize(creds)
     state["sh"]  = gc.open_by_key(sheet_id)
