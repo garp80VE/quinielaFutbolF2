@@ -4118,6 +4118,9 @@ def _compute_probabilities() -> dict:
             s["univ_1st"] = round((univ_first[pname]  / n_universes) * 100.0, 2)
             s["univ_2nd"] = round((univ_second[pname] / n_universes) * 100.0, 2)
 
+        # Re-ordenar por prob 1er lugar, desempate por prob 2do lugar
+        standings.sort(key=lambda x: (-x["univ_1st"], -x["univ_2nd"], x["name"]))
+
     return {
         "players":      standings,
         "fixed_games":  len(fixed_jgos),
