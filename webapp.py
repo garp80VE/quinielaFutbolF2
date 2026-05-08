@@ -2515,6 +2515,9 @@ ADMIN_CONFIG_FIELDS = [
     ("SORTEO_ANIM",         "Animación del sorteo"),
     ("FREEZE_EQUIPOS",      "Congelar nombres de equipos (1=no sobreescribir desde ESPN, 0=actualizar)"),
     ("MODO_PRUEBA",         "Modo Prueba (1=usar ESPN_ID_TEST para scores, 0=producción)"),
+    ("PTS_RESULTADO",       "Puntos por ganador correcto"),
+    ("PTS_GOLES1",          "Puntos por gol equipo 1 correcto"),
+    ("PTS_GOLES2",          "Puntos por gol equipo 2 correcto"),
     # TOTAL_JUEGOS_F2 se actualiza automáticamente al recargar partidos
 ]
 
@@ -4409,4 +4412,7 @@ if __name__ == "__main__":
     args = _cfg.load("Quiniela WFC 2026 - F2 Webapp")
 
     os.environ["QL_CREDS"] = args.creds
-    os.environ["QL_SHEET"] = args
+    os.environ["QL_SHEET"] = args.sheet
+    os.environ["QL_PORT"]  = str(args.port)
+
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

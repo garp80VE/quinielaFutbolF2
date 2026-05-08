@@ -162,11 +162,6 @@
           <label for="inp-name" class="block text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1.5">👤 Nombre completo</label>
           <input id="inp-name" type="text" name="name" autocomplete="name" placeholder="Ej: Giovanni Ramirez" class="inp-auth">
         </div>
-        <div>
-          <label for="inp-email" class="block text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1.5">📧 Correo electrónico <span style="font-weight:400;text-transform:none;letter-spacing:0">(opcional)</span></label>
-          <input id="inp-email" type="email" name="email" inputmode="email"
-            autocomplete="email" placeholder="tu@correo.com" class="inp-auth">
-        </div>
       </div>
 
       <button id="btn-auth" type="submit"
@@ -1383,7 +1378,7 @@ window.addEventListener('appinstalled', () => {
 
 // ─── Estado global ────────────────────────────────────────────────
 const S = {
-  phone: null, email: null, nombre: null,
+  phone: null, nombre: null,
   games: [],       // todos los juegos del API
   picks: {},       // { "1": {eq1,gol1,gol2,eq2,ganador}, ... }
   teams: [],       // lista de equipos para selects F2
@@ -1394,16 +1389,13 @@ const S = {
 
 // ─── Session ──────────────────────────────────────────────────────
 // Sesión guardada en localStorage + cookie (la cookie sobrevive en iOS standalone mode)
-function saveSession(p, n, e) {
-  // p = phone (primary), n = nombre, e = email (optional)
-  e = e || '';
+function saveSession(p, n) {
+  // p = phone (primary), n = nombre
   localStorage.setItem('ql_p', p);
-  localStorage.setItem('ql_e', e);
   localStorage.setItem('ql_n', n);
   localStorage.setItem('ql_last', p);
   const exp = new Date(Date.now() + 365*24*60*60*1000).toUTCString();
   document.cookie = `ql_p=${encodeURIComponent(p)};expires=${exp};path=/;SameSite=Lax`;
-  document.cookie = `ql_e=${encodeURIComponent(e)};expires=${exp};path=/;SameSite=Lax`;
   document.cookie = `ql_n=${encodeURIComponent(n)};expires=${exp};path=/;SameSite=Lax`;
   document.cookie = `ql_last=${encodeURIComponent(p)};expires=${exp};path=/;SameSite=Lax`;
 }
@@ -1418,26 +1410,23 @@ function _getCookies() {
 
 function loadSession() {
   let phone  = localStorage.getItem('ql_p');
-  let email  = localStorage.getItem('ql_e');
   let nombre = localStorage.getItem('ql_n');
   if (!phone) {
     // Fallback a cookie — iOS standalone no comparte localStorage con Safari
     const c = _getCookies();
     phone  = c['ql_p'] || '';
-    email  = c['ql_e'] || '';
     nombre = c['ql_n'] || '';
     if (phone) {
       localStorage.setItem('ql_p', phone);
-      localStorage.setItem('ql_e', email);
       localStorage.setItem('ql_n', nombre);
     }
   }
-  return { phone, email, nombre };
+  return { phone, nombre };
 }
 
 function clearSession() {
   localStorage.removeItem('ql_p');
-  localStorage.removeItem('ql_e');
+  localStorage.removeItem('ql_e');  // limpiar legacy
   localStorage.removeItem('ql_n');
   // Expirar cookies
   ['ql_p','ql_e','ql_n'].forEach(k => {
@@ -1486,15 +1475,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Prioridad 1: cookie HTTP del servidor, Prioridad 2: localStorage
   const sess = loadSession();
   const phone = SERVER_SESSION || sess.phone || '';
-  const email = sess.email || '';
   if (phone) {
     try {
-      const r = await api('POST','/api/auth/check',{phone, email});
+      const r = await api('POST','/api/auth/check',{phone});
       if (r.registered) {
         S.phone  = phone;
-        S.email  = r.email || email;
         S.nombre = r.nombre || sess.nombre || '';
-        saveSession(phone, S.nombre, S.email);
+        saveSession(phone, S.nombre);
         await openDashboard(); return;
       }
     } catch(_) {}
@@ -1593,13 +1580,12 @@ async function doAuth() {
   // Si ya mostramos los campos de registro → registrar
   if (extra.style.display === 'flex') {
     const nombre = document.getElementById('inp-name').value.trim();
-    const email  = document.getElementById('inp-email').value.trim().toLowerCase();
     if (!nombre) return showErr(errEl,'Ingresa tu nombre');
     try {
       btnEl.disabled = true; btnEl.textContent = 'Registrando...';
-      const r = await api('POST','/api/auth/register',{phone, nombre, email});
-      S.phone = phone; S.email = email; S.nombre = r.nombre;
-      saveSession(phone, r.nombre, email);
+      const r = await api('POST','/api/auth/register',{phone, nombre});
+      S.phone = phone; S.nombre = r.nombre;
+      saveSession(phone, r.nombre);
       await openDashboard();
     } catch(e) { showErr(errEl, e.message); }
     finally { btnEl.disabled = false; btnEl.textContent = 'Continuar →'; }
@@ -1611,8 +1597,8 @@ async function doAuth() {
     btnEl.disabled = true; btnEl.textContent = 'Verificando...';
     const r = await api('POST','/api/auth/check',{phone});
     if (r.registered) {
-      S.phone = phone; S.email = r.email || ''; S.nombre = r.nombre;
-      saveSession(phone, r.nombre, S.email);
+      S.phone = phone; S.nombre = r.nombre;
+      saveSession(phone, r.nombre);
       await openDashboard();
     } else {
       // Mostrar campos de registro
@@ -1691,7 +1677,6 @@ async function _subscribePush() {
     const r = await api('POST', '/api/push/subscribe', {
       subscription: { endpoint: subJson.endpoint, keys: subJson.keys },
       phone: S.phone || '',
-      email: S.email || '',
     });
     console.log('[push] Servidor respondió:', JSON.stringify(r));
   } catch(e) {
@@ -1722,12 +1707,11 @@ async function doLogout() {
   stopPolling();
   clearSession();
   await fetch('/api/auth/logout', {method:'POST'}).catch(()=>{});
-  S.phone = S.email = S.nombre = null; S.games = []; S.picks = {}; S.groups = {};
+  S.phone = S.nombre = null; S.games = []; S.picks = {}; S.groups = {};
   // Reset auth screen
   document.getElementById('inp-phone').value = '';
   document.getElementById('inp-phone').disabled = false;
   document.getElementById('inp-cc').disabled = false;
-  document.getElementById('inp-email').value = '';
   document.getElementById('inp-name').value = '';
   document.getElementById('reg-extra').style.display = 'none';
   document.getElementById('btn-auth').textContent = 'Continuar →';
@@ -1758,7 +1742,7 @@ async function loadDashboard() {
   try {
     const [gRes, pRes, tRes, cfgRes] = await Promise.all([
       api('GET','/api/games'),
-      api('GET',`/api/picks?phone=${encodeURIComponent(S.phone||'')}` + (S.email ? `&email=${encodeURIComponent(S.email)}` : '')),
+      api('GET',`/api/picks?phone=${encodeURIComponent(S.phone||'')}`),
       api('GET','/api/teams').catch(()=>({})),
       api('GET','/api/public-config').catch(()=>({})),
     ]);
@@ -2346,7 +2330,7 @@ async function saveGroupAndBack() {
   if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Guardando...'; }
 
   try {
-    const r = await api('POST', '/api/picks', {phone: S.phone||'', email: S.email||'', picks});
+    const r = await api('POST', '/api/picks', {phone: S.phone||'', picks});
     showToast(`✅ ${r.guardados} pick(s) guardados`);
     updateProgress();
     buildGroupsGrid();
@@ -2871,7 +2855,7 @@ async function loadPuntos(force=false) {
   const loadingEl = document.getElementById('puntos-loading');
   const contentEl = document.getElementById('puntos-content');
   try {
-    const r = await api('GET', `/api/my-points?phone=${encodeURIComponent(S.phone||'')}` + (S.email ? `&email=${encodeURIComponent(S.email)}` : ''));
+    const r = await api('GET', `/api/my-points?phone=${encodeURIComponent(S.phone||'')}`);
     puntosLoaded = true;
     loadingEl.style.display = 'none';
     contentEl.style.display = 'block';
@@ -3879,14 +3863,13 @@ async function _loadAdminPrizeNow() {
           </div>
           <div style="flex:1;min-width:0">
             <p style="font-weight:700;font-size:13px;color:#1e293b;margin:0">${pl.nombre||'—'}</p>
-            <p style="font-size:11px;color:#94a3b8;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${pl.email}</p>
+            <p style="font-size:11px;color:#94a3b8;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${pl.phone||''}</p>
           </div>
-          <button onclick="togglePagado('${pl.email}','${pl.phone||''}',${!pl.pagado},this)"
+          <button onclick="togglePagado('${pl.phone||''}',${!pl.pagado},this)"
             style="flex-shrink:0;border:${pl.pagado?'none':'1.5px solid #e2e8f0'};border-radius:8px;padding:6px 12px;font-size:11px;font-weight:800;cursor:pointer;transition:all .15s;background:${pl.pagado?'#dcfce7':'#f8fafc'};color:${pl.pagado?'#15803d':'#64748b'}">
             ${pl.pagado ? '✓ Pagado' : 'Marcar'}
           </button>
           <button onclick="adminEliminarJugador(this)"
-            data-email="${pl.email}"
             data-phone="${pl.phone||''}"
             data-nombre="${(pl.nombre||'?').replace(/"/g,'&quot;')}"
             title="Eliminar jugador"
@@ -3921,12 +3904,12 @@ function initAdmSections() {
   }
 }
 
-async function togglePagado(email, phone, paid, btn) {
+async function togglePagado(phone, paid, btn) {
   const prev = btn.textContent;
   btn.disabled = true;
   btn.textContent = '...';
   try {
-    await api('POST', '/api/admin/player-paid', { email, phone, paid });
+    await api('POST', '/api/admin/player-paid', { phone, paid });
     loadAdminPrize();
   } catch(e) {
     showToast('Error: ' + e.message);
@@ -3936,14 +3919,13 @@ async function togglePagado(email, phone, paid, btn) {
 }
 
 async function adminEliminarJugador(btn) {
-  const email  = btn.dataset.email  || '';
   const phone  = btn.dataset.phone  || '';
-  const nombre = btn.dataset.nombre || email || phone;
+  const nombre = btn.dataset.nombre || phone;
   if (!confirm(`¿Eliminar a ${nombre} de la quiniela?\nEsta acción no se puede deshacer.`)) return;
   btn.disabled = true;
   btn.textContent = '…';
   try {
-    await api('POST', '/api/admin/player-delete', { email, phone });
+    await api('POST', '/api/admin/player-delete', { phone });
     showToast(`${nombre} eliminado`);
     loadAdminPrize();
   } catch(e) {
@@ -5215,4 +5197,13 @@ function sorteoStartAnim(tipo, elegibles) {
         landedName = name;
         _sorteoRevealTarget = { name, ts: Date.now() };
       },
-      restart() { landed=false; landedName=null; decel=null; exciting=fa
+      restart() { landed=false; landedName=null; decel=null; exciting=false; _sorteoRevealTarget=null; },
+      stop() { running=false; if(frame) cancelAnimationFrame(frame); frame=null; },
+      onLanded: null
+    };
+  }  // fin if/else tipo animación
+}    // fin function sorteoIniciarAnimacion (o bloque equivalente)
+
+</script>
+</body>
+</html>
