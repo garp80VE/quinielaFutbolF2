@@ -3378,13 +3378,18 @@ async function loadApuestasDetail(game) {
                 const pg1 = p.pick_gol1 ?? p.g1 ?? '';
                 const pg2 = p.pick_gol2 ?? p.g2 ?? '';
                 const pgan = p.pick_gan ?? p.gan ?? '';
+                const hasMarcador = pg1 !== '' && pg2 !== '';
                 const ptsCls = p.pts >= 4 ? 'pts-hi' : p.pts >= 1 ? 'pts-mid' : p.pts === 0 ? 'pts-lo' : '';
-                const pickStr = (pg1 !== '' && pg2 !== '') ? `${pg1}–${pg2}` : '—';
-                const ganStyle = isFinal ? (pgan && pgan === game.ganador ? 'color:#16a34a;font-weight:700' : pgan ? 'color:#dc2626' : 'color:#94a3b8') : 'color:#475569';
+                const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
+                // Solo mostrar ganador si hay marcador completo
+                const ganDisp = (hasMarcador && pgan) ? pgan : '—';
+                const ganStyle = (hasMarcador && pgan)
+                  ? (isFinal ? (pgan === game.ganador ? 'color:#16a34a;font-weight:700' : 'color:#dc2626') : 'color:#475569')
+                  : 'color:#94a3b8';
                 return `<tr style="${i%2?'background:#f8fafc':''}">
-                  <td style="padding:10px 12px;font-weight:600;color:#1e293b">${p.nombre}</td>
+                  <td style="padding:10px 12px;font-weight:600;color:${hasMarcador?'#1e293b':'#94a3b8'}">${p.nombre}</td>
                   <td style="padding:10px 8px;text-align:center;color:#475569">${pickStr}</td>
-                  <td style="padding:10px 8px;text-align:center;${ganStyle};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${pgan||'—'}</td>
+                  <td style="padding:10px 8px;text-align:center;${ganStyle};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${ganDisp}</td>
                   <td style="padding:10px 8px;text-align:center">
                     ${p.pts !== null ? `<span class="pts ${ptsCls}">${p.pts}</span>` : '—'}
                   </td>
