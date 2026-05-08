@@ -2221,15 +2221,19 @@ async def get_game_picks(jgo: int = Query(...)):
                 real_eq1 = game.get("eq1", "")
                 real_eq2 = game.get("eq2", "")
                 real_gan = game.get("ganador", "")
-                # Liberation check — fallback to ganador for old picks without eq1/eq2
-                liberation = (pick_eq1 in (real_eq1, real_eq2) or
-                              pick_eq2 in (real_eq1, real_eq2) or
-                              (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
-                pts_gol1 = 1 if (pick_gol1 != "" and str(pick_gol1) == str(game.get("gol1",""))) else 0
-                pts_gol2 = 1 if (pick_gol2 != "" and str(pick_gol2) == str(game.get("gol2",""))) else 0
-                gan_in_match = pick_gan in (real_eq1, real_eq2)
-                pts_gan = 3 if (liberation and gan_in_match and pick_gan == real_gan) else 0
-                pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
+                # Pick incompleto: requiere marcador (gol1+gol2) Y ganador para recibir puntos
+                if not pick_gol1 or not pick_gol2 or not pick_gan:
+                    pts = 0
+                else:
+                    # Liberation check — fallback to ganador for old picks without eq1/eq2
+                    liberation = (pick_eq1 in (real_eq1, real_eq2) or
+                                  pick_eq2 in (real_eq1, real_eq2) or
+                                  (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
+                    pts_gol1 = 1 if str(pick_gol1) == str(game.get("gol1","")) else 0
+                    pts_gol2 = 1 if str(pick_gol2) == str(game.get("gol2","")) else 0
+                    gan_in_match = pick_gan in (real_eq1, real_eq2)
+                    pts_gan = 3 if (liberation and gan_in_match and pick_gan == real_gan) else 0
+                    pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
 
             return {"nombre": player.get("NOMBRE","?"),
                     "pick_eq1": pick_eq1, "pick_gol1": pick_gol1,
@@ -2335,17 +2339,21 @@ def _compute_compare_picks() -> dict:
 
             real_eq1 = game.get("eq1", "")
             real_eq2 = game.get("eq2", "")
-            # Liberation fallback to ganador for old picks without eq1/eq2
-            liberation = (pick_eq1 in (real_eq1, real_eq2) or
-                          pick_eq2 in (real_eq1, real_eq2) or
-                          (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
-
-            pts_gol1 = 1 if (pick_gol1 != "" and pick_gol1 == real_g1) else 0
-            pts_gol2 = 1 if (pick_gol2 != "" and pick_gol2 == real_g2) else 0
-            gan_in_match = pick_gan in (real_eq1, real_eq2)
-            pts_gan = 3 if (liberation and gan_in_match and
-                            gan_known and pick_gan == real_gan) else 0
-            pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
+            # Pick incompleto: requiere marcador (gol1+gol2) Y ganador
+            if not pick_gol1 or not pick_gol2 or not pick_gan:
+                pts = 0
+                pts_gol1 = pts_gol2 = pts_gan = 0
+            else:
+                # Liberation fallback to ganador for old picks without eq1/eq2
+                liberation = (pick_eq1 in (real_eq1, real_eq2) or
+                              pick_eq2 in (real_eq1, real_eq2) or
+                              (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
+                pts_gol1 = 1 if pick_gol1 == real_g1 else 0
+                pts_gol2 = 1 if pick_gol2 == real_g2 else 0
+                gan_in_match = pick_gan in (real_eq1, real_eq2)
+                pts_gan = 3 if (liberation and gan_in_match and
+                                gan_known and pick_gan == real_gan) else 0
+                pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
 
             game_picks.append({
                 "nombre":  p.get("NOMBRE", "?"),

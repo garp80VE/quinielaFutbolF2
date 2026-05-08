@@ -2008,8 +2008,9 @@ function renderGames(games) {
       : 'w-full text-center text-xs font-bold border-2 border-blue-100 bg-white rounded-2xl py-2 px-1 focus:outline-none focus:border-blue-400 transition-all cursor-pointer';
 
     // Puntos F2: calcular con lógica de liberación (resolución de placeholders)
+    // Requiere marcador completo (gol1 Y gol2) + ganador para recibir cualquier punto
     let pts = null;
-    if ((isFinal || isLive) && p.ganador !== '') {
+    if ((isFinal || isLive) && p.ganador !== '' && p.gol1 !== '' && p.gol2 !== '') {
       const realEq1 = g.eq1||'', realEq2 = g.eq2||'';
       const rPeq1 = resolveTeamName(p.eq1) || p.eq1 || '';
       const rPeq2 = resolveTeamName(p.eq2) || p.eq2 || '';
@@ -2291,8 +2292,8 @@ function setGanF2(jgo, which) {
 async function saveGroupAndBack() {
   if (!curGroup) return;
 
-  // Validar que picks con marcador tengan ganador elegido
-  // (juegos sin marcador ingresado se pueden guardar — simplemente no se envían)
+  // Validar consistencia de picks: marcador y ganador van juntos
+  // Un pick válido requiere gol1 + gol2 + ganador, o ninguno de los tres
   const sinGanador = curGroup.games.filter(g => {
     const p = S.picks[String(g.jgo)];
     const gol1v = document.getElementById(`pgol1-${g.jgo}`)?.value ?? (p?.gol1 ?? '');
@@ -2302,6 +2303,18 @@ async function saveGroupAndBack() {
   });
   if (sinGanador.length > 0) {
     showToast(`❌ ${sinGanador.length} pick(s) con marcador sin ganador seleccionado`);
+    return;
+  }
+  // También bloquear: ganador elegido pero sin marcador
+  const sinMarcador = curGroup.games.filter(g => {
+    const p = S.picks[String(g.jgo)];
+    if (!p?.ganador) return false;
+    const gol1v = document.getElementById(`pgol1-${g.jgo}`)?.value ?? (p?.gol1 ?? '');
+    const gol2v = document.getElementById(`pgol2-${g.jgo}`)?.value ?? (p?.gol2 ?? '');
+    return gol1v === '' || gol2v === '';
+  });
+  if (sinMarcador.length > 0) {
+    showToast(`❌ ${sinMarcador.length} pick(s) con ganador pero sin marcador completo`);
     return;
   }
 
