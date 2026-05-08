@@ -1,0 +1,27 @@
+# Credenciales — NUNCA subir al repo
+credentials.json
+quiniela.cfg
+quiniela_f2.cfg
+vapid_keys.json
+
+# Sesión de WhatsApp
+baileys_session/
+baileys_session_backup/
+*.key
+*.creds.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# Node
+node_modules/
+
+# Logs y temporales
+*.log
+.DS_Store
+Thumbs.db

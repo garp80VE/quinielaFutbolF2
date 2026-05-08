@@ -1,0 +1,24 @@
+{
+  "name": "quiniela-wa-server",
+  "version": "1.0.0",
+  "description": "WhatsApp notification server for Quiniela WFC 2026",
+  "type": "module",
+  "main": "baileys-server.js",
+  "scripts": {
+    "start": "node baileys-server.js"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.16",
+    "express": "^4.19.2",
+    "pino": "^9.5.0",
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "overrides": {
+    "@hapi/boom": "^10.0.1",
+    "@hapi/hoek": "^11.0.0"
+  }
+}

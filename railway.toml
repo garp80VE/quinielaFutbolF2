@@ -1,0 +1,19 @@
+# ── Quiniela WFC 2026 — Railway Configuration ────────────────────────────────
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Railway inyecta PORT automáticamente — la webapp lo usa
+healthcheckPath = "/"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+# ── Volume para sesión persistente de Baileys ─────────────────────────────────
+# Crear el Volume en el dashboard de Railway y montarlo en /data
+# La sesión de WhatsApp sobrevive redeploys y reinicios.
+#
+# En Railway Dashboard:
+#   Settings → Volumes → Add Volume → Mount Path: /data
