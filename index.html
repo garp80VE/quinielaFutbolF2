@@ -2731,15 +2731,17 @@ async function loadComparacion(force=false) {
         const pg1  = p.gol1 ?? '';
         const pg2  = p.gol2 ?? '';
         const pgan = p.gan  ?? '';
-        const hasPick = pg1 !== '' || pg2 !== '' || pgan !== '';
-        const pickStr = (pg1 !== '' && pg2 !== '') ? `${pg1}–${pg2}` : '—';
-        const ganDisp = pgan || '—';
+        const hasMarcador = pg1 !== '' && pg2 !== '';
+        const hasPick = hasMarcador && pgan !== '';
+        const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
+        // Solo mostrar ganador si hay marcador completo
+        const ganDisp = hasPick ? pgan : '—';
         const rowBg = i%2===0 ? '' : 'background:#f8fafc';
         const nameSt = hasPick ? 'color:#1e293b;font-weight:600' : 'color:#94a3b8';
         return `<tr style="${rowBg}">
           <td style="padding:7px 8px;font-size:12px;${nameSt};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${p.nombre}</td>
           <td style="padding:7px 6px;text-align:center;font-size:12px;color:${hasPick?'#1e293b':'#94a3b8'}">${pickStr}</td>
-          <td style="padding:7px 6px;text-align:center;font-size:11px;color:${pgan?'#7c3aed':'#94a3b8'};font-weight:${pgan?'700':'400'};white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis">${ganDisp}</td>
+          <td style="padding:7px 6px;text-align:center;font-size:11px;color:${hasPick?'#7c3aed':'#94a3b8'};font-weight:${hasPick?'700':'400'};white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis">${ganDisp}</td>
         </tr>`;
       }).join('');
 
