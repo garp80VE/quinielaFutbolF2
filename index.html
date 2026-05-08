@@ -1989,7 +1989,7 @@ function renderGames(games) {
     const inputCls = locked
       ? 'goal-inp w-full text-center text-2xl font-black border-2 border-gray-100 bg-gray-100 rounded-2xl py-3 text-gray-400 cursor-not-allowed'
       : 'goal-inp w-full text-center text-2xl font-black border-2 border-gray-100 bg-gray-50 rounded-2xl py-3 focus:outline-none focus:border-emerald-500 focus:bg-white transition-all';
-    const inputAttr = locked ? 'disabled' : `oninput="autoW('${jgo}')"`;
+    const inputAttr = locked ? 'disabled' : `oninput="this.value=Math.max(0,parseInt(this.value)||0);autoW('${jgo}')"`;
 
     // Card class
     const cardCls = isFinal
