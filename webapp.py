@@ -1315,6 +1315,27 @@ def _updater_loop():
                 if not sc:
                     continue
 
+                # En MODO_PRUEBA: el ganador debe ser EQUIPO 1/2 de HORARIOS, no el
+                # equipo del partido de prueba. Usamos los goles para determinarlo;
+                # en caso de empate (penales/prórroga) usamos qué equipo del test ganó
+                # y lo mapeamos a EQ1 o EQ2 real.
+                if modo_prueba and espn_id_test:
+                    eq1_real = cel(col_idx("E"))
+                    eq2_real = cel(col_idx("F"))
+                    if eq1_real or eq2_real:  # ya conocemos los equipos reales
+                        g1 = int(sc["gol1"]) if sc["gol1"].isdigit() else -1
+                        g2 = int(sc["gol2"]) if sc["gol2"].isdigit() else -1
+                        if g1 > g2:
+                            sc["ganador"] = eq1_real
+                        elif g2 > g1:
+                            sc["ganador"] = eq2_real
+                        elif sc["ganador"]:
+                            # Empate a 90' → ver qué posición (eq1/eq2) del test ganó
+                            sc["ganador"] = eq1_real if sc["ganador"] == sc.get("eq1","") else eq2_real
+                        # En MODO_PRUEBA no sobreescribir nombres de equipos desde ESPN test
+                        sc["eq1"] = eq1_real or sc["eq1"]
+                        sc["eq2"] = eq2_real or sc["eq2"]
+
                 # Actualizar minuto SIEMPRE (aunque el score no cambie)
                 nuevo_minuto = sc.get("minuto", "")
                 if nuevo_minuto:
@@ -4473,7 +4494,7 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
     return {"ok": True, "msg": "Setup iniciado"}
 
 
-# ─── Entry point ──────────────────────────────────────────────────────────────
+# ─── Entry point ───────────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import cfg as _cfg
