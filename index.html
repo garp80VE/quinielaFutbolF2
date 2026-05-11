@@ -2549,7 +2549,7 @@ async function loadTabla(force=false) {
 
       // Colores según estado
       const elimStyles = {
-        eliminado: { rowBg: '#fef2f2', nameBg: '#fee2e2', nameColor: '#991b1b', icon: '❌' },
+        eliminado: { rowBg: '#fef2f2', nameBg: '#fee2e2', nameColor: '#991b1b', icon: '†' },
         solo2do:   { rowBg: '#fff7ed', nameBg: '#fed7aa', nameColor: '#92400e', icon: '🚑' },
         vivo:      { rowBg: null,      nameBg: null,       nameColor: null,      icon: null  },
       };
@@ -2641,7 +2641,7 @@ async function loadProbabilidades(force=false) {
       // Ícono / medalla
       let iconEl;
       if (eliminado) {
-        iconEl = `<span style="font-size:20px">✟</span>`;
+        iconEl = `<span style="font-size:20px">†</span>`;
       } else if (soloSegundo) {
         iconEl = `<span style="font-size:20px">🚑</span>`;
       } else {
