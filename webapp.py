@@ -528,7 +528,7 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             return name
         return resolve(g['ganador'], depth + 1)
 
-    # Actualizar placeholders que ya se pueden resolver
+    # ── Paso 1: resolver placeholders existentes (lógica original) ──────────────
     batch   = []
     changes = []
 
@@ -540,6 +540,57 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             if resolved and resolved != raw and not _parse_bracket_ref(resolved):
                 batch.append({"range": f"{col_letter}{game['row']}", "values": [[resolved]]})
                 changes.append(f"JGO {game['jgo']} {slot.upper()}: {raw!r} → {resolved!r}")
+                game[slot] = resolved   # actualizar en memoria para el Paso 2
+
+    # ── Paso 2: rellenar EQ1/EQ2 vacíos usando ganadores de ronda anterior ──────
+    # Orden secuencial: pares de juegos src alimentan cada juego dst
+    # R32[0]+R32[1]→R16[0], R32[2]+R32[3]→R16[1], … mismo para R16→QF, QF→SF
+    RONDA_CHAIN = [('R32','R16'), ('R16','QF'), ('QF','SF')]
+
+    def sorted_by_jgo(lst):
+        return sorted(lst, key=lambda g: int(g['jgo']) if str(g['jgo']).isdigit() else 0)
+
+    for src_r, dst_r in RONDA_CHAIN:
+        src_lst = sorted_by_jgo(ronda_games.get(src_r, []))
+        dst_lst = sorted_by_jgo(ronda_games.get(dst_r, []))
+        for di, dst in enumerate(dst_lst):
+            for offset, (slot, col) in enumerate([('eq1','E'), ('eq2','F')]):
+                si = di * 2 + offset
+                if si >= len(src_lst):
+                    continue
+                src = src_lst[si]
+                if dst[slot] or not src['ganador'] or _parse_bracket_ref(src['ganador']):
+                    continue   # ya tiene equipo, o el ganador aún no es concreto
+                batch.append({"range": f"{col}{dst['row']}", "values": [[src['ganador']]]})
+                changes.append(f"JGO {dst['jgo']} {slot.upper()} (auto-bracket): '' → {src['ganador']!r}")
+                dst[slot] = src['ganador']  # actualizar en memoria
+
+    # SF → FINAL (ganadores) y SF → 3ER (perdedores)
+    sf_lst  = sorted_by_jgo(ronda_games.get('SF',    []))
+    fin_lst = sorted_by_jgo(ronda_games.get('FINAL', []))
+    ter_lst = sorted_by_jgo(ronda_games.get('3ER',   []))
+
+    for si, (slot, col) in enumerate([('eq1','E'), ('eq2','F')]):
+        if si >= len(sf_lst):
+            continue
+        sf_g = sf_lst[si]
+        gan  = sf_g['ganador']
+        if not gan or _parse_bracket_ref(gan):
+            continue
+        # FINAL ← ganadores SF
+        if fin_lst and not fin_lst[0][slot]:
+            batch.append({"range": f"{col}{fin_lst[0]['row']}", "values": [[gan]]})
+            changes.append(f"JGO {fin_lst[0]['jgo']} {slot.upper()} (FINAL): '' → {gan!r}")
+            fin_lst[0][slot] = gan
+        # 3ER ← perdedores SF
+        if ter_lst and not ter_lst[0][slot]:
+            eq1_sf = resolve(sf_g['eq1'])
+            eq2_sf = resolve(sf_g['eq2'])
+            loser  = eq2_sf if gan == eq1_sf else (eq1_sf if gan == eq2_sf else None)
+            if loser and not _parse_bracket_ref(loser):
+                batch.append({"range": f"{col}{ter_lst[0]['row']}", "values": [[loser]]})
+                changes.append(f"JGO {ter_lst[0]['jgo']} {slot.upper()} (3ER-loser): '' → {loser!r}")
+                ter_lst[0][slot] = loser
 
     if batch:
         with _sheets_lock:
@@ -1350,6 +1401,11 @@ def _updater_loop():
                     ws_h.batch_update(batch, value_input_option="RAW")
                 _invalidate_games()
                 print(f"[updater] {n} fila(s) actualizadas")
+                # Propagar ganadores al siguiente cruce del bracket
+                try:
+                    _propagate_bracket(ws_h=ws_h)
+                except Exception as _pe:
+                    print(f"[updater] propagate-bracket error: {_pe}")
 
             # ── Flush de notificaciones INMEDIATO (no espera standings) ─────
             # Usa top5/top3 cacheados del ciclo anterior — llegan en segundos
