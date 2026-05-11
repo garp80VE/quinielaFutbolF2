@@ -2634,31 +2634,53 @@ async function loadProbabilidades(force=false) {
 
     function playerCard(p, idx) {
       const isLeader = p.rank === 1;
-      const medalEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${p.rank}.`;
-      const medal = isLeader
-        ? `<span style="font-size:18px">${medalEmoji}</span>`
-        : `<span style="font-size:14px;color:#64748b;font-weight:700">${medalEmoji}</span>`;
+      // Estado del jugador según probabilidades
+      const eliminado  = hasData && p.univ_1st === 0 && p.univ_2nd === 0;
+      const soloSegundo = hasData && p.univ_1st === 0 && p.univ_2nd > 0;
+
+      // Ícono / medalla
+      let iconEl;
+      if (eliminado) {
+        iconEl = `<span style="font-size:20px">✟</span>`;
+      } else if (soloSegundo) {
+        iconEl = `<span style="font-size:20px">🚑</span>`;
+      } else {
+        const medalEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${p.rank}.`;
+        iconEl = isLeader
+          ? `<span style="font-size:18px">${medalEmoji}</span>`
+          : `<span style="font-size:14px;color:#64748b;font-weight:700">${medalEmoji}</span>`;
+      }
+
+      // Estilo de la tarjeta
+      let cardBg, cardBorder, nameColor;
+      if (eliminado) {
+        cardBg = '#fef2f2'; cardBorder = '2px solid #fca5a5'; nameColor = '#991b1b';
+      } else if (soloSegundo) {
+        cardBg = '#fefce8'; cardBorder = '2px solid #fde68a'; nameColor = '#92400e';
+      } else {
+        cardBg = 'white'; cardBorder = isLeader ? '2px solid #3b82f6' : '1px solid transparent'; nameColor = '#1e293b';
+      }
 
       const univSection = hasData ? `
         <div style="margin-top:10px">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <span style="font-size:11px;color:#64748b;font-weight:600">🥇 Prob. 1er lugar</span>
-            <span style="font-size:13px;font-weight:800;color:${barColor1}">${fmtPct(p.univ_1st)}</span>
+            <span style="font-size:13px;font-weight:800;color:${eliminado||soloSegundo?'#94a3b8':barColor1}">${fmtPct(p.univ_1st)}</span>
           </div>
-          ${barHtml(p.univ_1st, barColor1)}
+          ${barHtml(p.univ_1st, eliminado||soloSegundo?'#cbd5e1':barColor1)}
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
             <span style="font-size:11px;color:#64748b;font-weight:600">🥈 Prob. 2do lugar</span>
-            <span style="font-size:13px;font-weight:800;color:${barColor2}">${fmtPct(p.univ_2nd)}</span>
+            <span style="font-size:13px;font-weight:800;color:${eliminado?'#94a3b8':barColor2}">${fmtPct(p.univ_2nd)}</span>
           </div>
-          ${barHtml(p.univ_2nd, barColor2)}
+          ${barHtml(p.univ_2nd, eliminado?'#cbd5e1':barColor2)}
         </div>` : '';
 
       return `
-        <div style="background:white;border-radius:14px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.07);${isLeader?'border:2px solid #3b82f6':''}">
+        <div style="background:${cardBg};border-radius:14px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.07);border:${cardBorder}">
           <div style="display:flex;align-items:center;gap:10px">
-            ${medal}
+            ${iconEl}
             <div style="flex:1">
-              <div style="font-size:14px;font-weight:800;color:#1e293b">${p.name}</div>
+              <div style="font-size:14px;font-weight:800;color:${nameColor}">${p.name}</div>
               <div style="font-size:11px;color:#64748b">${p.current_pts} pts actuales · máx ${p.max_possible}</div>
             </div>
           </div>
