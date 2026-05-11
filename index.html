@@ -2114,10 +2114,10 @@ function renderGames(games) {
               class="${inputCls}" ${inputAttr}>
           </div>
           <div class="flex flex-col items-center justify-center gap-1">
-            <div class="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-              <span class="text-xs font-black text-gray-400">VS</span>
+            <div class="w-8 h-8 rounded-full ${isLive?'bg-red-100':'bg-gray-100'} flex items-center justify-center">
+              <span class="text-xs font-black ${isLive?'text-red-500':'text-gray-400'}">VS</span>
             </div>
-            <span class="text-xs text-gray-400">90'</span>
+            <span class="text-xs ${isLive?'text-red-500 font-bold':'text-gray-400'}">${isLive && g.minuto ? g.minuto+"'" : "90'"}</span>
           </div>
           <div class="flex-1 flex flex-col items-center gap-1">
             ${teamDisp2}
@@ -2538,12 +2538,18 @@ async function loadTabla(force=false) {
 
     // ── Estado de eliminación por jugador ──────────────────────────
     // solo aplica cuando ya hay partidos finalizados
+    // has2ndPrize: solo mostrar 🚑 si la categoría tiene 2do premio (Cat B)
+    const has2ndPrize = !!(prizeBadge && prizeBadge[2]);
     function getElimStatus(nombre) {
       if (!probHasData) return 'vivo';
       const p = probMap[nombre.trim().toLowerCase()];
       if (!p) return 'vivo';
       if (p.univ_1st === 0 && p.univ_2nd === 0) return 'eliminado';
-      if (p.univ_1st === 0 && p.univ_2nd > 0)   return 'solo2do';
+      if (p.univ_1st === 0 && p.univ_2nd > 0) {
+        if (!has2ndPrize) return 'eliminado';          // Cat A: sin 2do premio → eliminado
+        if (p.univ_2nd >= 99) return 'garantizado2do'; // 2do lugar ya asegurado → 🥈
+        return 'solo2do';                              // peleando el 2do → 🚑
+      }
       return 'vivo';
     }
 
@@ -2556,9 +2562,10 @@ async function loadTabla(force=false) {
 
       // Colores según estado
       const elimStyles = {
-        eliminado: { rowBg: '#fef2f2', nameBg: '#fee2e2', nameColor: '#991b1b', icon: '†' },
-        solo2do:   { rowBg: '#fff7ed', nameBg: '#fed7aa', nameColor: '#92400e', icon: '🚑' },
-        vivo:      { rowBg: null,      nameBg: null,       nameColor: null,      icon: null  },
+        eliminado:      { rowBg: '#fef2f2', nameBg: '#fee2e2', nameColor: '#991b1b', icon: '†'  },
+        solo2do:        { rowBg: '#fff7ed', nameBg: '#fed7aa', nameColor: '#92400e', icon: '🚑' },
+        garantizado2do: { rowBg: '#f0fdf4', nameBg: '#bbf7d0', nameColor: '#166534', icon: '🥈' },
+        vivo:           { rowBg: null,      nameBg: null,       nameColor: null,      icon: null  },
       };
       const es = elimStyles[elim];
 
@@ -2572,7 +2579,7 @@ async function loadTabla(force=false) {
           ? `<span style="margin-left:6px;font-size:11px;font-weight:700;background:${badge.bg};color:${badge.color};border-radius:6px;padding:2px 7px;white-space:nowrap">${badge.emoji} ${badge.label}</span>`
           : '';
         const elimBadge = es.icon
-          ? `<span style="margin-left:6px;font-size:13px" title="${elim==='eliminado'?'Sin posibilidades':'Solo puede quedar 2do'}">${es.icon}</span>`
+          ? `<span style="margin-left:6px;font-size:13px" title="${elim==='eliminado'?'Sin posibilidades':elim==='garantizado2do'?'2do lugar asegurado ':'Solo puede quedar 2do'}">${es.icon}</span>`
           : '';
         const nameBg = es.nameBg ? `background:${es.nameBg};border-radius:6px;padding:1px 6px` : '';
         return `<td style="padding:10px 12px;border-bottom:1px solid ${elim==='eliminado'?'#fecaca':elim==='solo2do'?'#fed7aa':'#f0fdf4'}">
@@ -2615,13 +2622,19 @@ async function loadProbabilidades(force=false) {
   const cont = document.getElementById('prob-content');
   cont.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;padding:60px 16px;gap:12px"><div class="spinner"></div><p style="font-size:13px;color:#64748b">Calculando probabilidades...</p></div>`;
   try {
-    const data = await api('GET', '/api/probabilities');
+    const [data, prizeP] = await Promise.all([
+      api('GET', '/api/probabilities'),
+      api('GET', '/api/prize-info').catch(() => null),
+    ]);
     const players = data.players || [];
 
     if (!players.length) {
       cont.innerHTML = '<p style="text-align:center;color:#64748b;padding:40px 16px;font-size:13px">Sin datos aún.</p>';
       return;
     }
+
+    // Si la categoría tiene 2do premio (Cat B), habilitar lógica de 🚑/🥈
+    const has2ndPrizeP = !!(prizeP && prizeP.dist && prizeP.dist.some(d => d.lugar && /^2[°º]/.test(d.lugar)));
 
     // Si no hay juegos fijos, mostrar mensaje apropiado
     const hasData = players.some(p => p.prob_1st > 0 || p.univ_1st > 0);
@@ -2641,14 +2654,18 @@ async function loadProbabilidades(force=false) {
 
     function playerCard(p, idx) {
       const isLeader = p.rank === 1;
-      // Estado del jugador según probabilidades
-      const eliminado  = hasData && p.univ_1st === 0 && p.univ_2nd === 0;
-      const soloSegundo = hasData && p.univ_1st === 0 && p.univ_2nd > 0;
+      // Estado del jugador según probabilidades y categoría del premio
+      const eliminado      = hasData && p.univ_1st === 0 && p.univ_2nd === 0;
+      const garantizado2do = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd >= 99;
+      const soloSegundo    = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd > 0 && !garantizado2do;
+      // Cat A sin 2do premio: si no puede ganar → eliminado aunque tenga prob de 2do
 
       // Ícono / medalla
       let iconEl;
-      if (eliminado) {
+      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
         iconEl = `<span style="font-size:20px">†</span>`;
+      } else if (garantizado2do) {
+        iconEl = `<span style="font-size:20px">🥈</span>`;
       } else if (soloSegundo) {
         iconEl = `<span style="font-size:20px">🚑</span>`;
       } else {
@@ -2660,8 +2677,10 @@ async function loadProbabilidades(force=false) {
 
       // Estilo de la tarjeta
       let cardBg, cardBorder, nameColor;
-      if (eliminado) {
+      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
         cardBg = '#fef2f2'; cardBorder = '2px solid #fca5a5'; nameColor = '#991b1b';
+      } else if (garantizado2do) {
+        cardBg = '#f0fdf4'; cardBorder = '2px solid #86efac'; nameColor = '#166534';
       } else if (soloSegundo) {
         cardBg = '#fefce8'; cardBorder = '2px solid #fde68a'; nameColor = '#92400e';
       } else {
