@@ -480,7 +480,7 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             ws_h = sh.worksheet("HORARIOS")
 
     with _sheets_lock:
-        filas = ws_h.get(f"A{fila_inicio}:K{fila_fin}")
+        filas = ws_h.get(f"A{fila_inicio}:K{fila_fin}")  # K=GANADOR idx10, I=GOL1 idx8, J=GOL2 idx9, H=ESTADO idx7
 
     # Construir mapa de juegos por ronda (ordenados por JGO)
     all_games   = []
@@ -497,6 +497,9 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             'ronda':   c(1),
             'eq1':     c(4),
             'eq2':     c(5),
+            'estado':  c(7),
+            'gol1':    c(8),
+            'gol2':    c(9),
             'ganador': c(10),
         }
         all_games.append(game)
@@ -529,9 +532,34 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             return name
         return resolve(g['ganador'], depth + 1)
 
-    # ── Paso 1: resolver placeholders existentes (lógica original) ──────────────
     batch   = []
     changes = []
+
+    # ── Paso 0: corregir GANADOR cuando no coincide con EQ1/EQ2 ───────────────────
+    # Si un partido es FINAL y GANADOR no es EQ1 ni EQ2, recalcular desde GOL1/GOL2
+    for game in all_games:
+        if game['estado'] != 'FINAL':
+            continue
+        eq1, eq2, gan = game['eq1'], game['eq2'], game['ganador']
+        if not eq1 or not eq2:
+            continue
+        if gan in (eq1, eq2):
+            continue   # ya está correcto
+        # GANADOR incorrecto (ej. nombre de club test) → recalcular desde goles
+        try:
+            g1 = int(game['gol1']) if game['gol1'].isdigit() else -1
+            g2 = int(game['gol2']) if game['gol2'].isdigit() else -1
+        except Exception:
+            continue
+        if g1 < 0 or g2 < 0:
+            continue
+        new_gan = eq1 if g1 > g2 else (eq2 if g2 > g1 else None)
+        if new_gan:
+            batch.append({"range": f"K{game['row']}", "values": [[new_gan]]})
+            changes.append(f"JGO {game['jgo']} GANADOR: {gan!r} → {new_gan!r}")
+            game['ganador'] = new_gan
+
+    # ── Paso 1: resolver placeholders existentes (lógica original) ──────────────
 
     for game in all_games:
         for slot, col_letter in (('eq1', 'E'), ('eq2', 'F')):
