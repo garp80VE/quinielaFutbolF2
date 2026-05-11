@@ -624,6 +624,13 @@
           </button>
           <div id="propagate-result" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;font-size:12px;color:#374151;max-height:140px;overflow-y:auto"></div>
 
+          <!-- Sincronizar resultados reales -->
+          <button onclick="adminSyncRealResults()" id="btn-sync-real"
+            style="width:100%;background:linear-gradient(135deg,#059669,#047857);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
+            🌐 Sincronizar resultados reales del Mundial
+          </button>
+          <div id="sync-real-result" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 12px;font-size:12px;color:#166534;max-height:160px;overflow-y:auto"></div>
+
         </div>
       </div><!-- /adm-body-prueba -->
     </div>
@@ -4462,6 +4469,45 @@ async function adminPropagateBracket() {
     showToast('❌ ' + e.message);
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🔗 Propagar bracket al sheet'; }
+  }
+}
+
+async function adminSyncRealResults() {
+  const btn = document.getElementById('btn-sync-real');
+  const res = document.getElementById('sync-real-result');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Sincronizando con ESPN...'; }
+  if (res) { res.style.display='none'; res.innerHTML=''; }
+  try {
+    const r = await api('POST', '/api/admin/sync-real-results');
+    const updated = r.updated || [];
+    const skipped = r.skipped || [];
+    const bracket = r.bracket || [];
+    if (res) {
+      res.style.display = 'block';
+      let html = '';
+      if (updated.length)
+        html += `<b>✅ ${updated.length} partido(s) actualizados:</b><br>` + updated.map(c=>`• ${c}`).join('<br>') + '<br><br>';
+      if (bracket.length)
+        html += `<b>🔗 Bracket (${bracket.length}):</b><br>` + bracket.map(c=>`• ${c}`).join('<br>') + '<br><br>';
+      if (skipped.length)
+        html += `<b>⏭ Saltados (${skipped.length}):</b><br>` + skipped.map(c=>`• ${c}`).join('<br>');
+      res.innerHTML = html || '✅ Sin cambios.';
+    }
+    showToast(`✅ ${updated.length} resultado(s) actualizados del Mundial`);
+    // Refrescar juegos en el frontend
+    try {
+      const g = await api('GET','/api/games');
+      if (g.games) {
+        S.games=g.games; S.groups={};
+        for (const gm of S.games) { const k=gm.ronda||gm.grupo||'?'; if(!S.groups[k])S.groups[k]=[]; S.groups[k].push(gm); }
+        buildGroupsGrid();
+      }
+    } catch(_) {}
+  } catch(e) {
+    showToast('❌ ' + e.message);
+    if (res) { res.style.display='block'; res.innerHTML='❌ ' + e.message; }
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='🌐 Sincronizar resultados reales del Mundial'; }
   }
 }
 

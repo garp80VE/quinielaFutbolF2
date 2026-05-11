@@ -3901,6 +3901,110 @@ async def admin_propagate_bracket(ql_admin: str = Cookie(default="")):
         raise HTTPException(500, str(e))
 
 
+@app.post("/api/admin/sync-real-results")
+async def admin_sync_real_results(ql_admin: str = Cookie(default="")):
+    """
+    Sincroniza los resultados reales del Mundial desde ESPN (usa ESPN_ID real,
+    ignora MODO_PRUEBA y el estado FINAL para forzar la actualización).
+    Actualiza HORARIOS, propaga el bracket y recalcula la tabla.
+    """
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+
+    cfg          = state.get("cfg", {})
+    fila_inicio  = int(cfg.get("FILA_INICIO_DATOS", 3))
+    total_juegos = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    fila_fin     = fila_inicio + total_juegos - 1
+
+    with _sheets_lock:
+        ws_h  = state["sh"].worksheet("HORARIOS")
+        filas = ws_h.get(f"A{fila_inicio}:L{fila_fin}")
+
+    batch    = []
+    updated  = []
+    skipped  = []
+
+    for i, fila in enumerate(filas):
+        row = fila_inicio + i
+        def cel(c, f=fila): return f[c-1].strip() if len(f) > c-1 else ""
+
+        jgo       = cel(1)
+        espn_id   = cel(7)   # col G = ESPN_ID real
+        eq1_sheet = cel(5)   # col E = EQUIPO 1
+        eq2_sheet = cel(6)   # col F = EQUIPO 2
+
+        if not jgo or not espn_id:
+            continue
+
+        try:
+            data = espn_get(_espn_summary_url(), {"event": espn_id}) or \
+                   espn_get(ESPN_FALLBACK,       {"event": espn_id})
+            if not data:
+                skipped.append(f"JGO {jgo}: sin datos ESPN")
+                continue
+
+            sc = parse_score(data)
+            if not sc or sc["estado"] == "PROG":
+                skipped.append(f"JGO {jgo}: aún no jugado ({sc.get('estado','?') if sc else '?'})")
+                continue
+
+            ganador  = sc["ganador"]
+            g1 = int(sc["gol1"]) if str(sc.get("gol1","")).isdigit() else -1
+            g2 = int(sc["gol2"]) if str(sc.get("gol2","")).isdigit() else -1
+            eq1_real = eq1_sheet or sc.get("eq1", "")
+            eq2_real = eq2_sheet or sc.get("eq2", "")
+            if eq1_real and eq2_real:
+                if g1 > g2:
+                    ganador = eq1_real
+                elif g2 > g1:
+                    ganador = eq2_real
+                elif sc["ganador"]:
+                    ganador = eq1_real if sc["ganador"] == sc.get("eq1","") else eq2_real
+
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            batch.append({
+                "range":  f"H{row}:L{row}",
+                "values": [[sc["estado"], sc["gol1"], sc["gol2"], ganador, now]]
+            })
+            freeze = cfg.get("FREEZE_EQUIPOS", "0").strip() not in ("", "0", "false", "no")
+            if not freeze:
+                eq1_espn = sc.get("eq1", "")
+                eq2_espn = sc.get("eq2", "")
+                if eq1_espn and not eq1_sheet:
+                    batch.append({"range": f"E{row}", "values": [[eq1_espn]]})
+                if eq2_espn and not eq2_sheet:
+                    batch.append({"range": f"F{row}", "values": [[eq2_espn]]})
+
+            updated.append(f"JGO {jgo}: {eq1_real or '?'} {sc['gol1']}-{sc['gol2']} {eq2_real or '?'} ({ganador})")
+            time.sleep(0.3)
+
+        except Exception as ex:
+            skipped.append(f"JGO {jgo}: error — {ex}")
+
+    if batch:
+        with _sheets_lock:
+            ws_h.batch_update(batch, value_input_option="RAW")
+        _invalidate_games()
+
+    try:
+        changes = _propagate_bracket()
+    except Exception as e:
+        changes = [f"Error propagando: {e}"]
+
+    try:
+        _update_standings()
+    except Exception:
+        pass
+
+    return {
+        "ok":      True,
+        "updated": updated,
+        "skipped": skipped,
+        "bracket": changes,
+        "total":   len(updated),
+    }
+
+
 @app.post("/api/admin/clear-cache")
 async def admin_clear_cache(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
