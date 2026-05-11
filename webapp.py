@@ -588,11 +588,15 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                 if si >= len(src_lst):
                     continue
                 src = src_lst[si]
-                if dst[slot] or not src['ganador'] or _parse_bracket_ref(src['ganador']):
-                    continue   # ya tiene equipo, o el ganador aún no es concreto
+                if not src['ganador'] or _parse_bracket_ref(src['ganador']):
+                    continue   # ganador aún no es concreto
+                if dst[slot] == src['ganador']:
+                    continue   # ya está correcto, no hacer nada
+                # Sobreescribir siempre (también cuando tiene valor incorrecto como clubs test)
+                old_val = dst[slot] or "''"
                 batch.append({"range": f"{col}{dst['row']}", "values": [[src['ganador']]]})
-                changes.append(f"JGO {dst['jgo']} {slot.upper()} (auto-bracket): '' → {src['ganador']!r}")
-                dst[slot] = src['ganador']  # actualizar en memoria
+                changes.append(f"JGO {dst['jgo']} {slot.upper()}: {old_val!r} → {src['ganador']!r}")
+                dst[slot] = src['ganador']
 
     # SF → FINAL (ganadores) y SF → 3ER (perdedores)
     sf_lst  = sorted_by_jgo(ronda_games.get('SF',    []))
@@ -607,18 +611,18 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
         if not gan or _parse_bracket_ref(gan):
             continue
         # FINAL ← ganadores SF
-        if fin_lst and not fin_lst[0][slot]:
+        if fin_lst and fin_lst[0][slot] != gan:
             batch.append({"range": f"{col}{fin_lst[0]['row']}", "values": [[gan]]})
-            changes.append(f"JGO {fin_lst[0]['jgo']} {slot.upper()} (FINAL): '' → {gan!r}")
+            changes.append(f"JGO {fin_lst[0]['jgo']} {slot.upper()} (FINAL): {fin_lst[0][slot]!r} → {gan!r}")
             fin_lst[0][slot] = gan
         # 3ER ← perdedores SF
         if ter_lst and not ter_lst[0][slot]:
             eq1_sf = resolve(sf_g['eq1'])
             eq2_sf = resolve(sf_g['eq2'])
             loser  = eq2_sf if gan == eq1_sf else (eq1_sf if gan == eq2_sf else None)
-            if loser and not _parse_bracket_ref(loser):
+            if loser and not _parse_bracket_ref(loser) and ter_lst[0][slot] != loser:
                 batch.append({"range": f"{col}{ter_lst[0]['row']}", "values": [[loser]]})
-                changes.append(f"JGO {ter_lst[0]['jgo']} {slot.upper()} (3ER-loser): '' → {loser!r}")
+                changes.append(f"JGO {ter_lst[0]['jgo']} {slot.upper()} (3ER-loser): {ter_lst[0][slot]!r} → {loser!r}")
                 ter_lst[0][slot] = loser
 
     if batch:
