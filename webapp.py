@@ -553,7 +553,8 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             continue
         if g1 < 0 or g2 < 0:
             continue
-        new_gan = eq1 if g1 > g2 else (eq2 if g2 > g1 else None)
+        # En empate: avanza EQ1 (desempate automático para pruebas)
+        new_gan = eq1 if g1 >= g2 else eq2
         if new_gan:
             batch.append({"range": f"K{game['row']}", "values": [[new_gan]]})
             changes.append(f"JGO {game['jgo']} GANADOR: {gan!r} → {new_gan!r}")
