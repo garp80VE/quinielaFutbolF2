@@ -883,9 +883,9 @@ def _init_player_tab(ws):
     for i in range(1, total + 1):
         r = i + 3
         # Fórmulas de scoring F2:
-        # Liberation = al menos 1 de los 2 equipos del pick está en el partido real
-        # (OR de pick_eq1 en {real_eq1,real_eq2}  O  pick_eq2 en {real_eq1,real_eq2})
-        lib = f"OR(F{r}=D{r};F{r}=E{r};I{r}=D{r};I{r}=E{r})"
+        # Liberation = al menos 1 pick (eq1, eq2 O ganador) coincide con equipo real
+        # El fallback J (PICK_GANADOR) es clave cuando eq1/eq2 se guardaron vacíos (TBD)
+        lib = f"OR(F{r}=D{r};F{r}=E{r};I{r}=D{r};I{r}=E{r};J{r}=D{r};J{r}=E{r})"
         rows.append([
             i,
             # B: RONDA (HORARIOS col B = índice 2)
@@ -4641,4 +4641,4 @@ if __name__ == "__main__":
     os.environ["QL_SHEET"] = args.sheet
     os.environ["QL_PORT"]  = str(args.port)
 
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    uvicorn.run(app, host="0.
