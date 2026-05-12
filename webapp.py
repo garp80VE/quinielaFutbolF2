@@ -4184,8 +4184,36 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
         ws_h  = sh.worksheet("HORARIOS")
         filas = ws_h.get(f"A{fila_inicio}:M{fila_fin}")  # hasta M = ESPN_ID_TEST
 
+    # ── Placeholders estándar WC bracket para restaurar en R16+ tras reset ──────
+    # Permite que _propagate_bracket vuelva a funcionar correctamente
+    _RONDA_LABEL = {
+        "R32":   ("Dieciseisavos de Final", "Dieciseisavos"),
+        "R16":   ("Octavos de Final",       "Octavos"),
+        "QF":    ("Cuartos de Final",       "Cuartos"),
+        "SF":    ("Semifinal",              "Semifinal"),
+    }
+    # Índice nth dentro de cada ronda (para "Ganador Ronda (nth)")
+    _ronda_nth: dict = {}   # ronda → contador de slots usados
+
+    def _placeholder(ronda_src: str, nth: int, tipo: str = "winner") -> str:
+        label = _RONDA_LABEL.get(ronda_src, ("",))[0]
+        if not label:
+            return ""
+        if tipo == "loser":
+            return f"Perdedor {_RONDA_LABEL.get(ronda_src, ('',))[1]} {nth}"
+        return f"Ganador {label} ({nth})"
+
+    # Mapeo: ronda del juego → ronda de la que vienen sus equipos
+    _SRC_RONDA = {"R16": "R32", "QF": "R16", "SF": "QF",
+                  "3ER": "SF",  "FINAL": "SF"}
+
+    # Pre-computar counters por ronda
+    _ph_counter: dict = {}  # ronda_src → slot actual
+
     # ── 1. Borrar resultados en HORARIOS para las rondas elegidas ─────────────
     clear_h_ranges = []
+    restore_batch  = []   # para restaurar placeholders en E:F de R16+
+
     for i, fila in enumerate(filas):
         def c(idx, f=fila): return f[idx].strip() if len(f) > idx else ""
         ronda = c(1)
@@ -4196,17 +4224,42 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
             continue   # ronda anterior al inicio → conservar
         sheet_row = fila_inicio + i
         # Borrar H:M = estado, gol1, gol2, ganador, timestamp, ESPN_ID_TEST
-        # (incluye col M para que el sync no vuelva a rellenar con datos de prueba)
         clear_h_ranges.append(f"H{sheet_row}:M{sheet_row}")
-        # Si la ronda es R16+ (no R32), también borrar eq1/eq2
+
+        # Para R16+: restaurar placeholders en E:F en lugar de dejarlos vacíos
+        # Así _propagate_bracket puede rellenarlos con equipos reales tras simular
         if ronda != "R32":
-            clear_h_ranges.append(f"E{sheet_row}:F{sheet_row}")
+            src = _SRC_RONDA.get(ronda, "")
+            if ronda == "3ER":
+                # 3er puesto: perdedores de SF 1 y SF 2
+                ph_eq1 = "Perdedor Semifinal 1"
+                ph_eq2 = "Perdedor Semifinal 2"
+            elif ronda == "FINAL":
+                ph_eq1 = "Ganador Semifinal 1"
+                ph_eq2 = "Ganador Semifinal 2"
+            else:
+                n1 = _ph_counter.get(src, 0) + 1
+                n2 = n1 + 1
+                _ph_counter[src] = n2
+                label = _RONDA_LABEL.get(src, ("",))[0]
+                ph_eq1 = f"Ganador {label} ({n1})" if label else ""
+                ph_eq2 = f"Ganador {label} ({n2})" if label else ""
+            if ph_eq1 and ph_eq2:
+                restore_batch.append({
+                    "range":  f"E{sheet_row}:F{sheet_row}",
+                    "values": [[ph_eq1, ph_eq2]]
+                })
         log.append(f"HORARIOS row {sheet_row} ({ronda}) → limpiado")
 
     if clear_h_ranges:
         with _sheets_lock:
             ws_h2 = sh.worksheet("HORARIOS")
             ws_h2.batch_clear(clear_h_ranges)
+
+    if restore_batch:
+        with _sheets_lock:
+            ws_h3 = sh.worksheet("HORARIOS")
+            ws_h3.batch_update(restore_batch, value_input_option="RAW")
 
     # ── 2. Borrar picks en todas las pestañas de jugadores ────────────────────
     reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
