@@ -4002,6 +4002,18 @@ async def admin_sim_range(body: dict = None, ql_admin: str = Cookie(default=""))
         raise HTTPException(403, "No autorizado")
     if body is None:
         body = {}
+    try:
+        return await _admin_sim_range_impl(body)
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[sim-range] ERROR: {e}\n{tb}")
+        raise HTTPException(500, f"Error interno: {e}")
+
+
+async def _admin_sim_range_impl(body: dict):
 
     jgo_desde = int(body.get("jgo_desde", 1))
     jgo_hasta = int(body.get("jgo_hasta", 16))
@@ -4040,8 +4052,8 @@ async def admin_sim_range(body: dict = None, ql_admin: str = Cookie(default=""))
             continue
         eq1 = c(4)
         eq2 = c(5)
-        if not eq1 or not eq2:
-            results.append({"jgo": jgo, "skip": True, "razon": "Equipos aún no definidos"})
+        if not eq1 or not eq2 or _parse_bracket_ref(eq1) or _parse_bracket_ref(eq2):
+            results.append({"jgo": jgo, "skip": True, "razon": "Equipos aún no definidos (propaga ronda anterior primero)"})
             continue
 
         # 25% cada resultado
