@@ -585,10 +585,24 @@
           <!-- Simular resultado -->
           <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:12px 14px">
             <p style="font-size:13px;font-weight:800;color:#0369a1;margin:0 0 10px">⚽ Simular resultado</p>
-            <div style="display:flex;flex-direction:column;gap:8px">
+
+            <!-- Tabs: individual / rango -->
+            <div style="display:flex;gap:6px;margin-bottom:12px">
+              <button id="sim-tab-single" onclick="simSwitchTab('single')"
+                style="flex:1;padding:6px;border:1.5px solid #0369a1;border-radius:8px;font-size:11px;font-weight:800;background:#0369a1;color:white;cursor:pointer">
+                1 juego
+              </button>
+              <button id="sim-tab-range" onclick="simSwitchTab('range')"
+                style="flex:1;padding:6px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:11px;font-weight:800;background:#fff;color:#64748b;cursor:pointer">
+                🎲 Rango aleatorio
+              </button>
+            </div>
+
+            <!-- Panel: individual -->
+            <div id="sim-panel-single" style="display:flex;flex-direction:column;gap:8px">
               <div style="display:flex;gap:8px;align-items:center">
                 <label style="font-size:12px;color:#64748b;width:40px;flex-shrink:0">JGO</label>
-                <input id="sim-jgo" type="number" min="1" max="32" placeholder="1–32"
+                <input id="sim-jgo" type="number" min="1" max="32" placeholder="ej. 1"
                   style="width:70px;border:1.5px solid #e2e8f0;border-radius:8px;padding:7px 10px;font-size:13px;font-weight:700;outline:none">
                 <span id="sim-teams" style="font-size:12px;color:#64748b;flex:1"></span>
               </div>
@@ -613,6 +627,26 @@
               <button onclick="adminSimResult()" id="btn-sim-result"
                 style="width:100%;background:linear-gradient(135deg,#0369a1,#0284c7);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
                 ✅ Aplicar resultado
+              </button>
+            </div>
+
+            <!-- Panel: rango aleatorio -->
+            <div id="sim-panel-range" style="display:none;flex-direction:column;gap:10px">
+              <p style="font-size:11px;color:#0369a1;margin:0">
+                Genera resultados aleatorios para todos los juegos del rango y propaga el bracket automáticamente.
+              </p>
+              <div style="display:flex;gap:8px;align-items:center">
+                <label style="font-size:12px;color:#64748b;white-space:nowrap">JGO desde</label>
+                <input id="sim-range-desde" type="number" min="1" max="32" placeholder="1" value="1"
+                  style="width:60px;border:1.5px solid #e2e8f0;border-radius:8px;padding:7px 8px;font-size:13px;font-weight:700;text-align:center;outline:none">
+                <label style="font-size:12px;color:#64748b">hasta</label>
+                <input id="sim-range-hasta" type="number" min="1" max="32" placeholder="16" value="16"
+                  style="width:60px;border:1.5px solid #e2e8f0;border-radius:8px;padding:7px 8px;font-size:13px;font-weight:700;text-align:center;outline:none">
+              </div>
+              <div id="sim-range-msg" style="display:none;font-size:12px;padding:8px 10px;border-radius:8px;max-height:120px;overflow-y:auto"></div>
+              <button onclick="adminSimRange()" id="btn-sim-range"
+                style="width:100%;background:linear-gradient(135deg,#0369a1,#0284c7);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+                🎲 Simular rango
               </button>
             </div>
           </div>
@@ -4490,6 +4524,51 @@ async function adminSimResult() {
     showToast('❌ ' + e.message);
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='✅ Aplicar resultado'; }
+  }
+}
+
+function simSwitchTab(tab) {
+  const isSingle = tab === 'single';
+  document.getElementById('sim-panel-single').style.display = isSingle ? 'flex' : 'none';
+  document.getElementById('sim-panel-range').style.display  = isSingle ? 'none' : 'flex';
+  const btnS = document.getElementById('sim-tab-single');
+  const btnR = document.getElementById('sim-tab-range');
+  if (btnS) { btnS.style.background = isSingle ? '#0369a1' : '#fff'; btnS.style.color = isSingle ? 'white' : '#64748b'; btnS.style.borderColor = isSingle ? '#0369a1' : '#e2e8f0'; }
+  if (btnR) { btnR.style.background = isSingle ? '#fff' : '#0369a1'; btnR.style.color = isSingle ? '#64748b' : 'white'; btnR.style.borderColor = isSingle ? '#e2e8f0' : '#0369a1'; }
+}
+
+async function adminSimRange() {
+  const desde = parseInt(document.getElementById('sim-range-desde')?.value || '1');
+  const hasta  = parseInt(document.getElementById('sim-range-hasta')?.value || '16');
+  const msg    = document.getElementById('sim-range-msg');
+  const btn    = document.getElementById('btn-sim-range');
+  if (isNaN(desde) || isNaN(hasta) || desde > hasta) { showToast('Rango inválido'); return; }
+  if (btn)  { btn.disabled=true; btn.textContent=`⏳ Simulando JGO ${desde}–${hasta}...`; }
+  if (msg)  { msg.style.display='none'; msg.innerHTML=''; }
+  try {
+    const r = await api('POST', '/api/admin/sim-range', { jgo_desde: desde, jgo_hasta: hasta });
+    const results   = r.results   || [];
+    const bracket   = r.bracket_changes || [];
+    if (msg) {
+      msg.style.display = 'block';
+      msg.style.background = '#f0fdf4'; msg.style.color = '#166534';
+      let html = `<b>✅ ${r.applied} partido(s) simulados</b>`;
+      if (r.skipped) html += ` · <span style="color:#92400e">⚠️ ${r.skipped} saltados (equipos sin definir)</span>`;
+      html += '<br>';
+      html += results.filter(r=>!r.skip).map(x =>
+        `• JGO ${x.jgo}: <b>${x.eq1}</b> ${x.g1}–${x.g2} <b>${x.eq2}</b> → 🏆 ${x.ganador}`
+      ).join('<br>');
+      if (bracket.length) html += `<br><span style="color:#64748b">🔗 ${bracket.length} slot(s) propagados en bracket</span>`;
+      msg.innerHTML = html;
+    }
+    showToast(`✅ ${r.applied} resultado(s) simulados`);
+    // Refrescar juegos
+    try { const g = await api('GET','/api/games'); if(g.games) { S.games=g.games; S.groups={}; for(const gm of S.games){const k=gm.ronda||gm.grupo||'?';if(!S.groups[k])S.groups[k]=[];S.groups[k].push(gm);} buildGroupsGrid(); } } catch(_) {}
+  } catch(e) {
+    if (msg) { msg.style.display='block'; msg.style.background='#fef2f2'; msg.style.color='#dc2626'; msg.textContent='❌ '+e.message; }
+    showToast('❌ '+e.message);
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='🎲 Simular rango'; }
   }
 }
 

@@ -3918,6 +3918,100 @@ async def admin_sim_result(body: SimResultBody, ql_admin: str = Cookie(default="
     }
 
 
+@app.post("/api/admin/sim-range")
+async def admin_sim_range(body: dict = None, ql_admin: str = Cookie(default="")):
+    """
+    Modo Prueba: simula resultados aleatorios para un rango de JGOs.
+    Genera goles random y elige un ganador al azar entre eq1/eq2.
+    Al final propaga el bracket.
+    """
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+    if body is None:
+        body = {}
+
+    jgo_desde = int(body.get("jgo_desde", 1))
+    jgo_hasta = int(body.get("jgo_hasta", 16))
+    if jgo_desde < 1 or jgo_hasta > 64 or jgo_desde > jgo_hasta:
+        raise HTTPException(400, "Rango de JGO inválido")
+
+    import random
+
+    cfg         = state.get("cfg", {})
+    fila_inicio = int(cfg.get("FILA_INICIO_DATOS", 3))
+    total       = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    fila_fin    = fila_inicio + total - 1
+
+    with _sheets_lock:
+        ws_h  = state["sh"].worksheet("HORARIOS")
+        filas = ws_h.get(f"A{fila_inicio}:K{fila_fin}")
+
+    # Posibles marcadores (favorece resultados ajustados)
+    _SCORES = [
+        (1,0),(2,0),(2,1),(3,0),(3,1),(3,2),
+        (0,1),(0,2),(1,2),(0,3),(1,3),(2,3),
+        (1,1),(2,2),(0,0),   # empates — ganador al azar
+    ]
+
+    results = []
+    batch_updates = []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for i, fila in enumerate(filas):
+        def c(idx, f=fila): return f[idx].strip() if len(f) > idx else ""
+        jgo_str = c(0)
+        if not jgo_str or not jgo_str.isdigit():
+            continue
+        jgo = int(jgo_str)
+        if jgo < jgo_desde or jgo > jgo_hasta:
+            continue
+        eq1 = c(4)
+        eq2 = c(5)
+        if not eq1 or not eq2:
+            results.append({"jgo": jgo, "skip": True, "razon": "Equipos aún no definidos"})
+            continue
+
+        g1, g2 = random.choice(_SCORES)
+        # En empate: ganador al azar
+        if g1 > g2:
+            ganador = eq1
+        elif g2 > g1:
+            ganador = eq2
+        else:
+            ganador = random.choice([eq1, eq2])
+            # Ajustar marcador para que no sea empate real (F2 no tiene empate)
+            if random.random() < 0.5:
+                g1 += 1   # gana eq1 en penales → dejamos score empate pero ganador eq1
+            else:
+                g2 += 1
+
+        sheet_row = fila_inicio + i
+        batch_updates.append({
+            "range":  f"H{sheet_row}:L{sheet_row}",
+            "values": [["FINAL", str(g1), str(g2), ganador, now]]
+        })
+        results.append({"jgo": jgo, "eq1": eq1, "eq2": eq2,
+                        "g1": g1, "g2": g2, "ganador": ganador})
+
+    if batch_updates:
+        with _sheets_lock:
+            ws_h2 = state["sh"].worksheet("HORARIOS")
+            ws_h2.batch_update(batch_updates, value_input_option="RAW")
+
+    _invalidate_games()
+
+    # Propagar bracket al final
+    changes = _propagate_bracket()
+
+    return {
+        "ok":      True,
+        "applied": len([r for r in results if not r.get("skip")]),
+        "skipped": len([r for r in results if r.get("skip")]),
+        "results": results,
+        "bracket_changes": changes,
+    }
+
+
 @app.post("/api/admin/propagate-bracket")
 async def admin_propagate_bracket(ql_admin: str = Cookie(default="")):
     """
