@@ -631,6 +631,26 @@
           </button>
           <div id="sync-real-result" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 12px;font-size:12px;color:#166534;max-height:160px;overflow-y:auto"></div>
 
+          <!-- ── Reset de prueba ── -->
+          <div style="background:#fff1f2;border:1.5px solid #fda4af;border-radius:12px;padding:14px">
+            <p style="font-size:13px;font-weight:800;color:#be123c;margin:0 0 6px">🔄 Reiniciar prueba desde cero</p>
+            <p style="font-size:11px;color:#9f1239;margin:0 0 12px">Borra resultados en HORARIOS y picks de todos los jugadores. No borra registros.</p>
+            <div style="display:flex;gap:8px;margin-bottom:10px">
+              <label style="font-size:12px;color:#64748b;white-space:nowrap;align-self:center">Desde:</label>
+              <select id="reset-test-ronda" style="flex:1;border:1.5px solid #e2e8f0;border-radius:8px;padding:7px 10px;font-size:13px;font-weight:700;outline:none;background:white">
+                <option value="R32">R32 — Borrar TODO</option>
+                <option value="R16">R16 — Conservar R32</option>
+                <option value="QF">QF — Conservar R32+R16</option>
+                <option value="SF">SF — Conservar hasta QF</option>
+              </select>
+            </div>
+            <button onclick="adminResetTest()"
+              style="width:100%;background:linear-gradient(135deg,#be123c,#e11d48);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+              🗑️ Aplicar reset
+            </button>
+            <div id="reset-test-msg" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
+          </div>
+
         </div>
       </div><!-- /adm-body-prueba -->
     </div>
@@ -2538,8 +2558,9 @@ async function loadTabla(force=false) {
 
     // ── Estado de eliminación por jugador ──────────────────────────
     // solo aplica cuando ya hay partidos finalizados
-    // has2ndPrize: solo mostrar 🚑 si la categoría tiene 2do premio (Cat B)
-    const has2ndPrize = !!(prizeBadge && prizeBadge[2]);
+    // Cat A (1 ganador): no existe 2do premio → 🚑 no aplica
+    // Cat B/C (2+ ganadores): 🚑 para quien solo puede llegar 2do
+    const has2ndPrize = prize && prize.categoria && prize.categoria !== 'A' && prize.categoria !== '-';
     function getElimStatus(nombre) {
       if (!probHasData) return 'vivo';
       const p = probMap[nombre.trim().toLowerCase()];
@@ -2633,8 +2654,8 @@ async function loadProbabilidades(force=false) {
       return;
     }
 
-    // Si la categoría tiene 2do premio (Cat B), habilitar lógica de 🚑/🥈
-    const has2ndPrizeP = !!(prizeP && prizeP.dist && prizeP.dist.some(d => d.lugar && /^2[°º]/.test(d.lugar)));
+    // Cat A (1 ganador): sin 2do premio → 🚑 no aplica. Cat B/C: sí.
+    const has2ndPrizeP = !!(prizeP && prizeP.categoria && prizeP.categoria !== 'A' && prizeP.categoria !== '-');
 
     // Si no hay juegos fijos, mostrar mensaje apropiado
     const hasData = players.some(p => p.prob_1st > 0 || p.univ_1st > 0);
@@ -3363,9 +3384,11 @@ function buildApuestasGameList() {
       const btn = document.createElement('button');
       const badgeCls = game.estado === 'FINAL' ? 'badge-final' : 'badge-live';
       btn.style.cssText = 'width:100%;background:white;border:1.5px solid #e8eaf0;border-radius:14px;padding:12px 14px;cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px';
+      const apEq1 = resolveTeamName(game.eq1) || game.eq1 || '?';
+      const apEq2 = resolveTeamName(game.eq2) || game.eq2 || '?';
       btn.innerHTML = `
         <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${game.eq1} vs ${game.eq2}</div>
+          <div style="font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${apEq1} vs ${apEq2}</div>
           <div style="font-size:11px;color:#64748b;margin-top:2px">${formatLocalDT(game).fecha} ${formatLocalDT(game).hora}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -3387,7 +3410,9 @@ async function loadApuestasDetail(game) {
   list.style.display    = 'none';
   detail.style.display  = 'none';
   loading.style.display = 'flex';
-  title.textContent     = `${game.eq1} vs ${game.eq2}`;
+  const detEq1 = resolveTeamName(game.eq1) || game.eq1 || '?';
+  const detEq2 = resolveTeamName(game.eq2) || game.eq2 || '?';
+  title.textContent     = `${detEq1} vs ${detEq2}`;
 
   try {
     const r = await api('GET', `/api/game-picks?jgo=${game.jgo}`);
@@ -3408,9 +3433,9 @@ async function loadApuestasDetail(game) {
           <span class="badge ${isFinal?'badge-final':'badge-live'}">${game.estado}${game.minuto && !isFinal ? ' · ' + game.minuto + "'" : ''}</span>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <span style="font-weight:700;font-size:13px;flex:1;text-align:right">${game.eq1}</span>
+          <span style="font-weight:700;font-size:13px;flex:1;text-align:right">${detEq1}</span>
           <span style="font-weight:900;font-size:22px;color:#1e293b">${hayScore ? game.gol1+' – '+game.gol2 : '– –'}</span>
-          <span style="font-weight:700;font-size:13px;flex:1">${game.eq2}</span>
+          <span style="font-weight:700;font-size:13px;flex:1">${detEq2}</span>
         </div>
         ${isFinal && ganLabelGame ? `<p style="text-align:center;font-size:12px;color:#64748b;margin-top:6px">🏆 ${ganLabelGame}</p>` : ''}
       </div>
@@ -4527,6 +4552,33 @@ async function adminSyncRealResults() {
     if (res) { res.style.display='block'; res.innerHTML='❌ ' + e.message; }
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🌐 Sincronizar resultados reales del Mundial'; }
+  }
+}
+
+async function adminResetTest() {
+  const ronda = document.getElementById('reset-test-ronda')?.value || 'R32';
+  const msg   = document.getElementById('reset-test-msg');
+  const confirmMsg = ronda === 'R32'
+    ? '⚠️ Esto borrará TODOS los resultados y picks de prueba. ¿Confirmar?'
+    : `⚠️ Borrar resultados y picks desde ${ronda} en adelante. ¿Confirmar?`;
+  if (!confirm(confirmMsg)) return;
+  if (msg) { msg.style.display='block'; msg.style.background='#fef9c3'; msg.style.color='#92400e'; msg.textContent='⏳ Reiniciando...'; }
+  try {
+    const r = await api('POST', '/api/admin/reset-test', { ronda_desde: ronda });
+    if (msg) { msg.style.background='#f0fdf4'; msg.style.color='#166534'; msg.textContent=r.msg; }
+    showToast('✅ Reset aplicado');
+    // Refrescar estado
+    try {
+      const g = await api('GET','/api/games');
+      if (g.games) {
+        S.games=g.games; S.groups={};
+        for (const gm of S.games) { const k=gm.ronda||gm.grupo||'?'; if(!S.groups[k])S.groups[k]=[]; S.groups[k].push(gm); }
+        buildGroupsGrid();
+      }
+    } catch(_) {}
+  } catch(e) {
+    if (msg) { msg.style.background='#fef2f2'; msg.style.color='#991b1b'; msg.textContent='❌ '+e.message; }
+    showToast('❌ '+e.message);
   }
 }
 

@@ -4051,6 +4051,110 @@ async def admin_clear_cache(ql_admin: str = Cookie(default="")):
     return {"ok": True, "msg": "Caché limpiado y config recargada"}
 
 
+@app.post("/api/admin/reset-test")
+async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")):
+    """
+    Modo Prueba: borra resultados en HORARIOS y picks en pestañas de jugadores
+    para poder iniciar una nueva ronda de pruebas desde cero.
+    body.ronda_desde: 'R32' = borrar todo | 'R16' = conservar resultados R32
+    """
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+    if body is None:
+        body = {}
+
+    ronda_desde = (body.get("ronda_desde") or "R32").upper()
+    if ronda_desde not in ("R32", "R16", "QF", "SF"):
+        raise HTTPException(400, "ronda_desde inválido. Usa: R32, R16, QF, SF")
+
+    _RONDA_ORDER = {"R32": 0, "R16": 1, "QF": 2, "SF": 3, "3ER": 4, "FINAL": 5}
+    from_idx = _RONDA_ORDER.get(ronda_desde, 0)
+
+    cfg         = state.get("cfg", {})
+    fila_inicio = int(cfg.get("FILA_INICIO_DATOS", 3))
+    total       = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    fila_fin    = fila_inicio + total - 1
+
+    sh = state["sh"]
+    log = []
+
+    with _sheets_lock:
+        ws_h  = sh.worksheet("HORARIOS")
+        filas = ws_h.get(f"A{fila_inicio}:K{fila_fin}")
+
+    # ── 1. Borrar resultados en HORARIOS para las rondas elegidas ─────────────
+    clear_h_ranges = []
+    for i, fila in enumerate(filas):
+        def c(idx, f=fila): return f[idx].strip() if len(f) > idx else ""
+        ronda = c(1)
+        if not c(0):
+            continue
+        row_idx = _RONDA_ORDER.get(ronda, -1)
+        if row_idx < from_idx:
+            continue   # ronda anterior al inicio → conservar
+        sheet_row = fila_inicio + i
+        # Borrar H:L = estado, gol1, gol2, ganador, timestamp
+        clear_h_ranges.append(f"H{sheet_row}:L{sheet_row}")
+        # Si la ronda es R16+ (no R32), también borrar eq1/eq2 para restaurar placeholders vacíos
+        if ronda != "R32":
+            clear_h_ranges.append(f"E{sheet_row}:F{sheet_row}")
+        log.append(f"HORARIOS row {sheet_row} ({ronda}) → limpiado")
+
+    if clear_h_ranges:
+        with _sheets_lock:
+            ws_h2 = sh.worksheet("HORARIOS")
+            ws_h2.batch_clear(clear_h_ranges)
+
+    # ── 2. Borrar picks en todas las pestañas de jugadores ────────────────────
+    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+    with _sheets_lock:
+        all_ws = sh.worksheets()
+
+    # Calcular qué filas (JGO → row en pestaña) borrar: row = jgo + 3
+    # Obtener JGOs a limpiar desde HORARIOS
+    jgos_a_limpiar = []
+    for i, fila in enumerate(filas):
+        def c(idx, f=fila): return f[idx].strip() if len(f) > idx else ""
+        ronda = c(1)
+        jgo_str = c(0)
+        if not jgo_str:
+            continue
+        row_idx = _RONDA_ORDER.get(ronda, -1)
+        if row_idx >= from_idx and jgo_str.isdigit():
+            jgos_a_limpiar.append(int(jgo_str))
+
+    pick_ranges = []
+    for jgo in jgos_a_limpiar:
+        tab_row = jgo + 3   # JGO 1 → row 4, JGO 17 → row 20
+        # F:J = PICK_EQ1, PICK_GOL1, PICK_GOL2, PICK_EQ2, PICK_GANADOR
+        pick_ranges.append(f"F{tab_row}:J{tab_row}")
+
+    tabs_limpiadas = 0
+    for ws in all_ws:
+        if ws.title in reserved:
+            continue
+        try:
+            with _sheets_lock:
+                ws.batch_clear(pick_ranges)
+            tabs_limpiadas += 1
+        except Exception as e:
+            log.append(f"WARN pestaña {ws.title}: {e}")
+
+    # ── 3. Limpiar POSICIONES ─────────────────────────────────────────────────
+    with _sheets_lock:
+        ws_p = sh.worksheet("POSICIONES")
+        ws_p.batch_clear(["A3:Z100"])
+
+    _invalidate_games()
+    _cache["players"].clear()
+
+    msg = (f"✅ Reset desde {ronda_desde}: "
+           f"{len(clear_h_ranges)} rangos en HORARIOS, "
+           f"{tabs_limpiadas} pestañas de jugadores, "
+           f"POSICIONES limpiada.")
+    return {"ok": True, "msg": msg, "log": log[:20]}
+
+
 @app.post("/api/admin/reset")
 async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")):
     """Archiva el sheet actual en Drive y resetea el original para nueva quiniela."""
@@ -4641,4 +4745,4 @@ if __name__ == "__main__":
     os.environ["QL_SHEET"] = args.sheet
     os.environ["QL_PORT"]  = str(args.port)
 
-    uvicorn.run(app, host="0.
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
