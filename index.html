@@ -2084,23 +2084,22 @@ function renderGames(games) {
       ? 'w-full text-center text-xs font-bold border-2 border-gray-100 bg-gray-100 rounded-2xl py-2 px-1 text-gray-400 cursor-not-allowed'
       : 'w-full text-center text-xs font-bold border-2 border-blue-100 bg-white rounded-2xl py-2 px-1 focus:outline-none focus:border-blue-400 transition-all cursor-pointer';
 
-    // Puntos F2: el jugador predijo equipos específicos para cada posición.
-    // 1pt si PICK_EQ1 == EQ1_REAL Y gol1 coincide; 1pt si PICK_EQ2 == EQ2_REAL Y gol2 coincide
-    // 3pt si PICK_GANADOR == ganador real
+    // Puntos F2: Logro(2) + Ganador(2) + Gol EQ1(1) + Gol EQ2(1) = máx 6 pts
     let pts = null;
     if ((isFinal || isLive) && p.ganador !== '' && p.gol1 !== '' && p.gol2 !== '') {
-      const realEq1 = g.eq1||'', realEq2 = g.eq2||'';
-      // Equipo predicho por el jugador (lo que guardó como pick, no el resuelto de horarios)
-      const pickEq1 = p.eq1 || '';
-      const pickEq2 = p.eq2 || '';
       const pickGan = p.ganador || '';
-      // PTS_EQ1: equipo predicho para pos1 == equipo real pos1 Y gol coincide
-      const pts_gol1 = (pickEq1 === realEq1 && String(p.gol1) === String(g.gol1)) ? 1 : 0;
-      // PTS_EQ2: equipo predicho para pos2 == equipo real pos2 Y gol coincide
-      const pts_gol2 = (pickEq2 === realEq2 && String(p.gol2) === String(g.gol2)) ? 1 : 0;
-      // PTS_GAN: ganador predicho == ganador real
-      const pts_gan = (!!g.ganador && pickGan === g.ganador) ? 3 : 0;
-      pts = pts_gol1 + pts_gol2 + pts_gan;
+      // PTS_LOGRO: 2pts si resultado 90min (1/X/2) predicho coincide con real
+      const _res = (g1, g2) => Number(g1) > Number(g2) ? '1' : Number(g1) < Number(g2) ? '2' : 'X';
+      const pickResult = _res(p.gol1, p.gol2);
+      const realResult = _res(g.gol1, g.gol2);
+      const pts_logro = (g.gol1 !== '' && g.gol2 !== '' && pickResult === realResult) ? 2 : 0;
+      // PTS_GAN: 2pts si ganador predicho coincide con ganador real
+      const pts_gan = (!!g.ganador && pickGan === g.ganador) ? 2 : 0;
+      // PTS_GOL1: 1pt si cantidad de goles EQ1 coincide
+      const pts_gol1 = (g.gol1 !== '' && String(p.gol1) === String(g.gol1)) ? 1 : 0;
+      // PTS_GOL2: 1pt si cantidad de goles EQ2 coincide
+      const pts_gol2 = (g.gol2 !== '' && String(p.gol2) === String(g.gol2)) ? 1 : 0;
+      pts = pts_logro + pts_gan + pts_gol1 + pts_gol2;
     }
 
     function makeTeamSelect(id, val, disabled) {
@@ -2204,10 +2203,11 @@ function renderGames(games) {
         <!-- Puntos si FINAL -->
         ${pts !== null ? `
           <div class="mt-3 flex items-center justify-center gap-2">
-            <span class="pts ${pts>=4?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts} pts</span>
+            <span class="pts ${pts>=5?'pts-hi':pts>=2?'pts-mid':'pts-lo'}">${pts} pts</span>
           </div>` : `
           <div class="mt-3 flex gap-1.5 flex-wrap">
-            <span class="bg-purple-50 text-purple-700 text-xs px-2.5 py-1 rounded-full font-semibold">🏆 Ganador: 3 pts</span>
+            <span class="bg-green-50 text-green-700 text-xs px-2.5 py-1 rounded-full font-semibold">⚡ Logro: 2 pts</span>
+            <span class="bg-purple-50 text-purple-700 text-xs px-2.5 py-1 rounded-full font-semibold">🏆 Ganador: 2 pts</span>
             <span class="bg-blue-50 text-blue-600 text-xs px-2.5 py-1 rounded-full font-semibold">🎯 Goles c/u: 1 pt</span>
           </div>`}
       </div>`;
@@ -3620,6 +3620,8 @@ async function loadAdminDashboard() {
       const val = cfgRes.fields[key] || '';
       // MODO_PRUEBA se gestiona desde el panel Modo Prueba, no aquí
       if (key === 'MODO_PRUEBA') continue;
+      // F2 tiene esquema de puntuación fijo (no configurable), ocultar estos campos
+      if (key === 'PTS_RESULTADO' || key === 'PTS_GOLES1' || key === 'PTS_GOLES2') continue;
       const div = document.createElement('div');
 
       const SEL_STYLE = `width:100%;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 12px;
@@ -5430,73 +5432,4 @@ function sorteoStartAnim(tipo, elegibles) {
       // ── Nombres en segmentos ────────────────────────────────────────
       names.forEach((name,i) => {
         const mid=angle+i*sliceA+sliceA/2;
-        const isWin=landed&&name.toLowerCase()===landedName?.toLowerCase();
-        ctx.save();
-        ctx.translate(cx+Ri*0.60*Math.cos(mid), cy+Ri*0.60*Math.sin(mid));
-        ctx.rotate(mid+Math.PI/2);
-        const fs=Math.max(8,Math.min(12,Ri*sliceA*0.38));
-        ctx.font=`bold ${fs}px system-ui`;
-        ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillStyle = isWin ? '#1a0a3e' : '#f1f5f9';
-        let txt=name;
-        const mw=Ri*sliceA*0.75;
-        while(ctx.measureText(txt).width>mw&&txt.length>3) txt=txt.slice(0,-1);
-        if(txt!==name) txt+='…';
-        ctx.fillText(txt,0,0);
-        ctx.restore();
-      });
-
-      // ── Hub central ─────────────────────────────────────────────────
-      const hg=ctx.createRadialGradient(cx-Rh*.3,cy-Rh*.3,Rh*.05,cx,cy,Rh);
-      hg.addColorStop(0,'#f1f5f9'); hg.addColorStop(0.5,'#94a3b8'); hg.addColorStop(1,'#334155');
-      ctx.beginPath(); ctx.arc(cx,cy,Rh,0,Math.PI*2);
-      ctx.fillStyle=hg; ctx.fill();
-      ctx.strokeStyle='#ca8a04'; ctx.lineWidth=2; ctx.stroke();
-      ctx.beginPath(); ctx.arc(cx,cy,Rh*.25,0,Math.PI*2);
-      ctx.fillStyle='#1e293b'; ctx.fill();
-
-      // ── Puntero fijo arriba ─────────────────────────────────────────
-      ctx.beginPath();
-      ctx.moveTo(cx, cy-Ri+2);
-      ctx.lineTo(cx-7, cy-R*0.88);
-      ctx.lineTo(cx+7, cy-R*0.88);
-      ctx.closePath();
-      ctx.fillStyle = landed ? '#fbbf24' : '#f8fafc';
-      ctx.fill();
-      ctx.strokeStyle = landed ? '#b45309' : '#475569';
-      ctx.lineWidth=1.5; ctx.stroke();
-
-      // ── Overlay ganador ─────────────────────────────────────────────
-      if (landed && landedName) {
-        ctx.fillStyle='rgba(12,10,26,.9)';
-        ctx.beginPath(); ctx.roundRect(cx-W*.42,cy-40,W*.84,80,16); ctx.fill();
-        ctx.strokeStyle='#fbbf24'; ctx.lineWidth=2.5; ctx.stroke();
-        ctx.fillStyle='#fbbf24';
-        ctx.font=`bold ${Math.min(12,W*.033)}px system-ui`;
-        ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText('🏆 GANADOR', cx, cy-18);
-        ctx.fillStyle='white';
-        ctx.font=`bold ${Math.min(19,W*.052)}px system-ui`;
-        ctx.fillText(landedName, cx, cy+16);
-      }
-
-      frame=requestAnimationFrame(drawRuleta);
-    }
-    drawRuleta();
-
-    _sorteoAnim = {
-      excite() { exciting=true; setTimeout(()=>{ exciting=false; },3000); },
-      reveal(name) {
-        landedName = name;
-        _sorteoRevealTarget = { name, ts: Date.now() };
-      },
-      restart() { landed=false; landedName=null; decel=null; exciting=false; _sorteoRevealTarget=null; },
-      stop() { running=false; if(frame) cancelAnimationFrame(frame); frame=null; },
-      onLanded: null
-    };
-  }  // fin if/else tipo animación
-}    // fin function sorteoIniciarAnimacion (o bloque equivalente)
-
-</script>
-</body>
-</html>
+        const isWin=lan

@@ -871,20 +871,21 @@ def create_player_tab(tab_name: str):
 
 
 def _init_player_tab(ws):
-    """Crea pestaña F2 desde cero con headers y fórmulas (18 columnas A-R).
+    """Crea pestaña F2 desde cero con headers y fórmulas (19 columnas A-S).
     Estructura:
       A: JGO  B: RONDA  C: FECHA  D: EQ1_REAL  E: EQ2_REAL
       F: PICK_EQ1  G: PICK_GOL1  H: PICK_GOL2  I: PICK_EQ2  J: PICK_GANADOR
       K: GOL1_REAL  L: GOL2_REAL  M: GAN_REAL  N: ESTADO
-      O: PTS_EQ1  P: PTS_EQ2  Q: PTS_GAN  R: PTS_TOTAL
+      O: PTS_LOGRO  P: PTS_GAN  Q: PTS_GOL1  R: PTS_GOL2  S: PTS_TOTAL
+    Puntuación F2: Logro(2) + Ganador(2) + Gol EQ1(1) + Gol EQ2(1) = máx 6 pts
     Usa ';' como separador (locale español de Google Sheets)."""
     headers = [
         "JGO", "RONDA", "FECHA", "EQ1 REAL", "EQ2 REAL",
         "PICK EQ1", "PICK GOL1", "PICK GOL2", "PICK EQ2", "PICK GANADOR",
         "GOL1 REAL", "GOL2 REAL", "GAN REAL", "ESTADO",
-        "PTS EQ1", "PTS EQ2", "PTS GAN", "PTS TOTAL"
+        "PTS LOGRO", "PTS GAN", "PTS GOL1", "PTS GOL2", "PTS TOTAL"
     ]
-    ws.update([headers], "A1:R1")
+    ws.update([headers], "A1:S1")
 
     total    = int(state.get("cfg", {}).get("TOTAL_JUEGOS_F2", 32))
     last_row = 3 + total
@@ -916,16 +917,18 @@ def _init_player_tab(ws):
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;11;FALSE);"")' ,
             # N: ESTADO    (HORARIOS col H = índice 8)
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;8;FALSE);"")' ,
-            # O: PTS_EQ1 — 1pt si el equipo predicho clasificó en esa posición Y gol1 coincide
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(F{r}=D{r};G{r}&""=K{r}&"");1;0);"")' ,
-            # P: PTS_EQ2 — 1pt si el equipo predicho clasificó en esa posición Y gol2 coincide
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(I{r}=E{r};H{r}&""=L{r}&"");1;0);"")' ,
-            # Q: PTS_GAN — 3pt si el ganador predicho coincide con el ganador real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};3;0);"")' ,
-            # R: PTS_TOTAL
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:Q{r});0);"")' ,
+            # O: PTS_LOGRO — 2pts si el resultado a 90min (1/X/2) predicho coincide con real
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));2;0);"")' ,
+            # P: PTS_GAN — 2pts si el ganador predicho coincide con el ganador real
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};2;0);"")' ,
+            # Q: PTS_GOL1 — 1pt si el gol del equipo 1 predicho coincide con el real
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";1;0);"")' ,
+            # R: PTS_GOL2 — 1pt si el gol del equipo 2 predicho coincide con el real
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";1;0);"")' ,
+            # S: PTS_TOTAL — máx 6 pts (Logro 2 + Ganador 2 + Gol1 1 + Gol2 1)
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0);"")' ,
         ])
-    ws.update(rows, f"A4:R{last_row}", value_input_option="USER_ENTERED")
+    ws.update(rows, f"A4:S{last_row}", value_input_option="USER_ENTERED")
 
 
 # âââ FastAPI ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -964,12 +967,12 @@ def _top_by_day(fecha: str) -> str:
         for p in players:
             try:
                 ws_p = state["sh"].worksheet(p["TAB_NOMBRE"])
-                tab  = ws_p.get(f"A4:P{3 + total_j}")
+                tab  = ws_p.get(f"A4:S{3 + total_j}")
                 pts_day = 0
                 for g in day_games:
                     row_idx = int(g["jgo"]) - 1  # jgo 1 → índice 0 en tab
-                    if row_idx < len(tab) and len(tab[row_idx]) >= 16:
-                        try: pts_day += float(tab[row_idx][17])  # col R = PTS_TOTAL F2
+                    if row_idx < len(tab) and len(tab[row_idx]) >= 19:
+                        try: pts_day += float(tab[row_idx][18])  # col S = PTS_TOTAL F2
                         except: pass
                 scores.append((p["NOMBRE"], pts_day))
             except Exception:
@@ -1169,7 +1172,7 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
     for start in range(0, len(players), CHUNK):
         chunk = players[start:start + CHUNK]
         # Comillas simples alrededor del nombre para tabs con espacios/caracteres especiales
-        ranges = [f"'{p['TAB_NOMBRE']}'!A4:R{last_row}" for p in chunk]
+        ranges = [f"'{p['TAB_NOMBRE']}'!A4:S{last_row}" for p in chunk]
         try:
             with _sheets_lock:
                 resp = sh.values_batch_get(ranges)
@@ -1182,7 +1185,7 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
                 try:
                     with _sheets_lock:
                         ws_p = sh.worksheet(p["TAB_NOMBRE"])
-                        result_map[p["TAB_NOMBRE"]] = ws_p.get(f"A4:R{last_row}")
+                        result_map[p["TAB_NOMBRE"]] = ws_p.get(f"A4:S{last_row}")
                     time.sleep(0.2)
                 except Exception as e2:
                     print(f"[batch-read] {p['TAB_NOMBRE']}: {e2}")
@@ -1238,18 +1241,18 @@ def _update_standings():
 
             for fila in tab_data:
                 def c(i, f=fila): return f[i].strip() if len(f) > i else ""
-                estado = c(13)   # col N — ESTADO (F2: cols O-R = indices 14-17)
+                estado = c(13)   # col N — ESTADO (F2: cols O-S = indices 14-18)
                 if not estado or estado == "PROG" or not c(0):
                     continue
                 jugados += 1
-                # PTS por columna F2: O=PTS_EQ1(14), P=PTS_EQ2(15), Q=PTS_GAN(16), R=PTS_TOTAL(17)
-                try: g1_acert  += int(float(c(14))) > 0
+                # PTS por columna F2: O=PTS_LOGRO(14), P=PTS_GAN(15), Q=PTS_GOL1(16), R=PTS_GOL2(17), S=PTS_TOTAL(18)
+                try: g1_acert  += int(float(c(14))) > 0   # logro acertado
                 except: pass
-                try: g2_acert  += int(float(c(15))) > 0
+                try: g2_acert  += int(float(c(15))) > 0   # ganador acertado
                 except: pass
-                try: gan_acert += int(float(c(16))) > 0
+                try: gan_acert += int(float(c(16))) > 0   # gol1 acertado
                 except: pass
-                try: pts_total += int(float(c(17))) if c(17) else 0
+                try: pts_total += int(float(c(18))) if c(18) else 0
                 except: pass
 
             standings.append({
@@ -2164,7 +2167,7 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
             estado = c(13)   # col N — ESTADO (F2)
             if not jgo or not estado or estado == "PROG":
                 continue
-            try: pts = int(float(c(17))) if c(17) else 0  # col R = PTS_TOTAL F2
+            try: pts = int(float(c(18))) if c(18) else 0  # col S = PTS_TOTAL F2
             except: pts = 0
 
             game  = next((g for g in games if g["jgo"] == jgo), None)
@@ -2466,31 +2469,35 @@ def _compute_compare_picks() -> dict:
             # Pick incompleto: requiere marcador (gol1+gol2) Y ganador
             if not pick_gol1 or not pick_gol2 or not pick_gan:
                 pts = 0
-                pts_gol1 = pts_gol2 = pts_gan = 0
+                pts_gol1 = pts_gol2 = pts_gan = pts_logro = 0
             else:
-                # Liberation fallback to ganador for old picks without eq1/eq2
-                liberation = (pick_eq1 in (real_eq1, real_eq2) or
-                              pick_eq2 in (real_eq1, real_eq2) or
-                              (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
-                pts_gol1 = 1 if pick_gol1 == real_g1 else 0
-                pts_gol2 = 1 if pick_gol2 == real_g2 else 0
-                gan_in_match = pick_gan in (real_eq1, real_eq2)
-                pts_gan = 3 if (liberation and gan_in_match and
-                                gan_known and pick_gan == real_gan) else 0
-                pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
+                # PTS_LOGRO: 2pts si resultado 90min (1/X/2) coincide
+                def _res(g1, g2):
+                    try: return "1" if int(g1) > int(g2) else ("2" if int(g1) < int(g2) else "X")
+                    except: return ""
+                pts_logro = 2 if (g1_known and g2_known and
+                                   _res(pick_gol1, pick_gol2) == _res(real_g1, real_g2)) else 0
+                # PTS_GAN: 2pts si ganador predicho coincide con ganador real
+                pts_gan = 2 if (gan_known and pick_gan == real_gan) else 0
+                # PTS_GOL1: 1pt si gol EQ1 coincide
+                pts_gol1 = 1 if (g1_known and pick_gol1 == real_g1) else 0
+                # PTS_GOL2: 1pt si gol EQ2 coincide
+                pts_gol2 = 1 if (g2_known and pick_gol2 == real_g2) else 0
+                pts = pts_logro + pts_gan + pts_gol1 + pts_gol2
 
             game_picks.append({
-                "nombre":  p.get("NOMBRE", "?"),
-                "g1":      pick_gol1,
-                "g2":      pick_gol2,
-                "gan":     pick_gan,
-                "pts":     pts,
-                "g1_ok":   bool(pts_gol1 > 0),
-                "g2_ok":   bool(pts_gol2 > 0),
-                "gan_ok":  bool(pts_gan > 0),
-                "g1_set":  bool(pick_gol1),
-                "g2_set":  bool(pick_gol2),
-                "gan_set": bool(pick_gan),
+                "nombre":    p.get("NOMBRE", "?"),
+                "g1":        pick_gol1,
+                "g2":        pick_gol2,
+                "gan":       pick_gan,
+                "pts":       pts,
+                "logro_ok":  bool(pts_logro > 0),
+                "g1_ok":     bool(pts_gol1 > 0),
+                "g2_ok":     bool(pts_gol2 > 0),
+                "gan_ok":    bool(pts_gan > 0),
+                "g1_set":    bool(pick_gol1),
+                "g2_set":    bool(pick_gol2),
+                "gan_set":   bool(pick_gan),
             })
 
         game_picks.sort(key=lambda x: x["pts"], reverse=True)
@@ -4045,8 +4052,8 @@ async def _admin_sim_range_impl(body: dict):
 @app.post("/api/admin/fix-scoring-formulas")
 async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
     """
-    Actualiza las fórmulas de scoring (O,P,Q) en TODAS las pestañas de jugadores
-    para que reconozcan picks con placeholders posicionales sin modificar los picks.
+    Actualiza las fórmulas de scoring (O,P,Q,R,S) en TODAS las pestañas de jugadores.
+    Esquema F2: Logro(2) + Ganador(2) + Gol EQ1(1) + Gol EQ2(1) = máx 6 pts.
     """
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
@@ -4064,12 +4071,16 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
             batch = []
             for i in range(total):
                 r = fila_data + i
-                f_eq1 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(F{r}=D{r};G{r}&""=K{r}&"");1;0);"")'
-                f_eq2 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(I{r}=E{r};H{r}&""=L{r}&"");1;0);"")'
-                f_gan = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};3;0);"")'
-                batch += [{"range": f"O{r}", "values": [[f_eq1]]},
-                          {"range": f"P{r}", "values": [[f_eq2]]},
-                          {"range": f"Q{r}", "values": [[f_gan]]}]
+                f_logro = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));2;0);"")'
+                f_gan   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};2;0);"")'
+                f_gol1  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";1;0);"")'
+                f_gol2  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";1;0);"")'
+                f_total = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0);"")'
+                batch += [{"range": f"O{r}", "values": [[f_logro]]},
+                          {"range": f"P{r}", "values": [[f_gan]]},
+                          {"range": f"Q{r}", "values": [[f_gol1]]},
+                          {"range": f"R{r}", "values": [[f_gol2]]},
+                          {"range": f"S{r}", "values": [[f_total]]}]
             try:
                 with _sheets_lock:
                     _sheets_retry(lambda w=ws, b=batch: w.batch_update(b, value_input_option="USER_ENTERED"))
@@ -4527,7 +4538,7 @@ def _compute_probabilities() -> dict:
                 "g2pick":    c(6),   # G – G2 PICK
                 "ganpick":   c(7),   # H – GAN.PICK
                 "estado":    c(11),  # L – ESTADO
-                "pts_total": c(17),  # R – PTS TOTAL F2 (OK)
+                "pts_total": c(18),  # S – PTS TOTAL F2
             }
         player_tabs[nombre] = games_data
 
