@@ -3946,12 +3946,12 @@ async def admin_sim_range(body: dict = None, ql_admin: str = Cookie(default=""))
         ws_h = state["sh"].worksheet("HORARIOS")
         filas = _sheets_retry(lambda: ws_h.get(f"A{fila_inicio}:K{fila_fin}"))
 
-    # Posibles marcadores (favorece resultados ajustados)
-    _SCORES = [
-        (1,0),(2,0),(2,1),(3,0),(3,1),(3,2),
-        (0,1),(0,2),(1,2),(0,3),(1,3),(2,3),
-        (1,1),(2,2),(0,0),   # empates — ganador al azar
-    ]
+    # Marcadores para cada tipo de resultado (25% cada categoria):
+    # 1) Gana eq1 (score no empate)   2) Gana eq2 (score no empate)
+    # 3) Empate + gana eq1 (penales)  4) Empate + gana eq2 (penales)
+    _SCORES_WIN1  = [(1,0),(2,0),(2,1),(3,0),(3,1),(3,2)]
+    _SCORES_WIN2  = [(0,1),(0,2),(1,2),(0,3),(1,3),(2,3)]
+    _SCORES_DRAW  = [(1,1),(2,2),(0,0),(3,3),(1,1),(2,2)]  # pesos realistas
 
     results = []
     batch_updates = []
@@ -3971,19 +3971,24 @@ async def admin_sim_range(body: dict = None, ql_admin: str = Cookie(default=""))
             results.append({"jgo": jgo, "skip": True, "razon": "Equipos aún no definidos"})
             continue
 
-        g1, g2 = random.choice(_SCORES)
-        # En empate: ganador al azar
-        if g1 > g2:
+        # 25% cada resultado
+        tipo = random.randint(1, 4)
+        if tipo == 1:
+            # Gana eq1 en 90'
+            g1, g2 = random.choice(_SCORES_WIN1)
             ganador = eq1
-        elif g2 > g1:
+        elif tipo == 2:
+            # Gana eq2 en 90'
+            g1, g2 = random.choice(_SCORES_WIN2)
             ganador = eq2
+        elif tipo == 3:
+            # Empate en 90' → gana eq1 por penales
+            g1, g2 = random.choice(_SCORES_DRAW)
+            ganador = eq1
         else:
-            ganador = random.choice([eq1, eq2])
-            # Ajustar marcador para que no sea empate real (F2 no tiene empate)
-            if random.random() < 0.5:
-                g1 += 1   # gana eq1 en penales → dejamos score empate pero ganador eq1
-            else:
-                g2 += 1
+            # Empate en 90' → gana eq2 por penales
+            g1, g2 = random.choice(_SCORES_DRAW)
+            ganador = eq2
 
         sheet_row = fila_inicio + i
         batch_updates.append({
