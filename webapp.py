@@ -916,12 +916,12 @@ def _init_player_tab(ws):
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;11;FALSE);"")' ,
             # N: ESTADO    (HORARIOS col H = índice 8)
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;8;FALSE);"")' ,
-            # O: PTS_EQ1 — 1pt si (EQ1 real O placeholder posicional) Y gol1 coincide
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor");G{r}&""=K{r}&"");1;0);"")' ,
-            # P: PTS_EQ2 — 1pt si (EQ2 real O placeholder posicional) Y gol2 coincide
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor");H{r}&""=L{r}&"");1;0);"")' ,
-            # Q: PTS_GAN — 3pt: ganador directo O pick posicional (EQ1/EQ2 placeholder o real) coincide
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(OR(J{r}=M{r};AND(J{r}=F{r};M{r}=D{r};OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor"));AND(J{r}=I{r};M{r}=E{r};OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor")));3;0);"")' ,
+            # O: PTS_EQ1 — 1pt si el equipo predicho clasificó en esa posición Y gol1 coincide
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(F{r}=D{r};G{r}&""=K{r}&"");1;0);"")' ,
+            # P: PTS_EQ2 — 1pt si el equipo predicho clasificó en esa posición Y gol2 coincide
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(I{r}=E{r};H{r}&""=L{r}&"");1;0);"")' ,
+            # Q: PTS_GAN — 3pt si el ganador predicho coincide con el ganador real
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};3;0);"")' ,
             # R: PTS_TOTAL
             f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:Q{r});0);"")' ,
         ])
@@ -4064,9 +4064,9 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
             batch = []
             for i in range(total):
                 r = fila_data + i
-                f_eq1 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor");G{r}&""=K{r}&"");1;0);"")'
-                f_eq2 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor");H{r}&""=L{r}&"");1;0);"")'
-                f_gan = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(OR(J{r}=M{r};AND(J{r}=F{r};M{r}=D{r};OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor"));AND(J{r}=I{r};M{r}=E{r};OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor")));3;0);"")'
+                f_eq1 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(F{r}=D{r};G{r}&""=K{r}&"");1;0);"")'
+                f_eq2 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(I{r}=E{r};H{r}&""=L{r}&"");1;0);"")'
+                f_gan = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};3;0);"")'
                 batch += [{"range": f"O{r}", "values": [[f_eq1]]},
                           {"range": f"P{r}", "values": [[f_eq2]]},
                           {"range": f"Q{r}", "values": [[f_gan]]}]
@@ -4074,8 +4074,10 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
                 with _sheets_lock:
                     _sheets_retry(lambda w=ws, b=batch: w.batch_update(b, value_input_option="USER_ENTERED"))
                 updated += 1
+                time.sleep(1.5)   # evitar 429 quota entre pestañas
             except Exception as e:
                 print(f"[fix-scoring] Error en {ws.title}: {e}")
+                time.sleep(2.0)
         return {"ok": True, "tabs_actualizadas": updated,
                 "msg": f"✅ Fórmulas actualizadas en {updated} pestañas"}
     except Exception as e:

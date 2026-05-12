@@ -2063,6 +2063,15 @@ function renderGames(games) {
       const inf = _inferBracketSlot(g, 'eq2');
       if (inf) rEq2 = inf;
     }
+    // Para partidos FINALIZADOS en R16+: mostrar los equipos que el jugador PREDIJO
+    // (p.eq1/p.eq2) en lugar de los equipos reales de HORARIOS. Así el jugador ve
+    // su predicción original ("México 0–1 Portugal, Portugal gana → 0 pts") en vez
+    // de los equipos reales ("Corea del Sur vs Argentina") que confunden la lectura.
+    const _pickIsRealName = s => !!(s && s !== 'TBD' && !s.startsWith('Ganador') && !s.startsWith('Perdedor') && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
+    if (locked && isFinal && g.ronda && g.ronda !== 'R32') {
+      if (_pickIsRealName(p.eq1)) rEq1 = p.eq1;
+      if (_pickIsRealName(p.eq2)) rEq2 = p.eq2;
+    }
     // Para R32 los equipos están fijos; para rondas superiores son TBD → dropdown
     // Los inferred "Gan. " y "Perdedor " son semi-conocidos: se muestran como <p> pero no como equipo confirmado
     const eq1Known = !!(rEq1 && rEq1 !== 'TBD' && rEq1 !== '' && !rEq1.startsWith('Gan. ') && !rEq1.startsWith('Perdedor '));
@@ -2075,29 +2084,23 @@ function renderGames(games) {
       ? 'w-full text-center text-xs font-bold border-2 border-gray-100 bg-gray-100 rounded-2xl py-2 px-1 text-gray-400 cursor-not-allowed'
       : 'w-full text-center text-xs font-bold border-2 border-blue-100 bg-white rounded-2xl py-2 px-1 focus:outline-none focus:border-blue-400 transition-all cursor-pointer';
 
-    // Puntos F2: calcular con lógica de liberación (resolución de placeholders)
-    // Requiere marcador completo (gol1 Y gol2) + ganador para recibir cualquier punto
+    // Puntos F2: el jugador predijo equipos específicos para cada posición.
+    // 1pt si PICK_EQ1 == EQ1_REAL Y gol1 coincide; 1pt si PICK_EQ2 == EQ2_REAL Y gol2 coincide
+    // 3pt si PICK_GANADOR == ganador real
     let pts = null;
     if ((isFinal || isLive) && p.ganador !== '' && p.gol1 !== '' && p.gol2 !== '') {
       const realEq1 = g.eq1||'', realEq2 = g.eq2||'';
-      const rPeq1 = resolveTeamName(p.eq1) || p.eq1 || '';
-      const rPeq2 = resolveTeamName(p.eq2) || p.eq2 || '';
-      const rPGan = resolveTeamName(p.ganador) || p.ganador || '';
-      // Liberación: eq1/eq2 del pick coinciden con equipos reales.
-      // Fallback: si no se guardaron eq1/eq2, basta con que el ganador sea un equipo real.
-      const liberation = [realEq1,realEq2].includes(rPeq1)
-                      || [realEq1,realEq2].includes(rPeq2)
-                      || (!!rPGan && [realEq1,realEq2].includes(rPGan));
-      if (!liberation) {
-        pts = 0;
-      } else {
-        // gol1 siempre corresponde a eq1 (izquierda) y gol2 a eq2 (derecha)
-        const pts_gol1 = (p.gol1 !== '' && String(p.gol1) === String(g.gol1)) ? 1 : 0;
-        const pts_gol2 = (p.gol2 !== '' && String(p.gol2) === String(g.gol2)) ? 1 : 0;
-        const ganInMatch = [realEq1,realEq2].includes(rPGan);
-        const pts_gan = (ganInMatch && !!g.ganador && rPGan === g.ganador) ? 3 : 0;
-        pts = pts_gol1 + pts_gol2 + pts_gan;
-      }
+      // Equipo predicho por el jugador (lo que guardó como pick, no el resuelto de horarios)
+      const pickEq1 = p.eq1 || '';
+      const pickEq2 = p.eq2 || '';
+      const pickGan = p.ganador || '';
+      // PTS_EQ1: equipo predicho para pos1 == equipo real pos1 Y gol coincide
+      const pts_gol1 = (pickEq1 === realEq1 && String(p.gol1) === String(g.gol1)) ? 1 : 0;
+      // PTS_EQ2: equipo predicho para pos2 == equipo real pos2 Y gol coincide
+      const pts_gol2 = (pickEq2 === realEq2 && String(p.gol2) === String(g.gol2)) ? 1 : 0;
+      // PTS_GAN: ganador predicho == ganador real
+      const pts_gan = (!!g.ganador && pickGan === g.ganador) ? 3 : 0;
+      pts = pts_gol1 + pts_gol2 + pts_gan;
     }
 
     function makeTeamSelect(id, val, disabled) {
@@ -2390,12 +2393,15 @@ async function saveGroupAndBack() {
   for (const g of curGroup.games) {
     const jgo    = g.jgo;
     const p      = S.picks[String(jgo)] || {};
-    const eq1Known = g.eq1 && g.eq1 !== 'TBD' && g.eq1 !== '';
-    const eq2Known = g.eq2 && g.eq2 !== 'TBD' && g.eq2 !== '';
-    const eq1    = eq1Known ? g.eq1 : (document.getElementById(`peq1-${jgo}`)?.value || p.eq1 || '');
+    // Un equipo "real" no es placeholder ni TBD — los placeholders (Ganador..., Perdedor...)
+    // no deben guardarse como pick; usar el equipo que el jugador predijo (p.eq1/p.eq2).
+    const _isRealTeam = s => !!(s && s !== 'TBD' && !s.startsWith('Ganador') && !s.startsWith('Perdedor'));
+    const eq1Known = _isRealTeam(g.eq1);
+    const eq2Known = _isRealTeam(g.eq2);
+    const eq1    = eq1Known ? g.eq1 : (p.eq1 || document.getElementById(`peq1-${jgo}`)?.value || '');
     const gol1   = document.getElementById(`pgol1-${jgo}`)?.value ?? '';
     const gol2   = document.getElementById(`pgol2-${jgo}`)?.value ?? '';
-    const eq2    = eq2Known ? g.eq2 : (document.getElementById(`peq2-${jgo}`)?.value || p.eq2 || '');
+    const eq2    = eq2Known ? g.eq2 : (p.eq2 || document.getElementById(`peq2-${jgo}`)?.value || '');
     const ganador = p.ganador || '';
 
     picks.push({jgo:parseInt(jgo), eq1, gol1, gol2, eq2, ganador});
