@@ -532,8 +532,9 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             return name
         return resolve(g['ganador'], depth + 1)
 
-    batch   = []
-    changes = []
+    batch           = []
+    changes         = []
+    placeholder_map = {}  # {placeholder_str: real_team_name} para resolver picks de jugadores
 
     # ── Paso 0: corregir GANADOR cuando no coincide con EQ1/EQ2 ───────────────────
     # Si un partido es FINAL y GANADOR no es EQ1 ni EQ2, recalcular desde GOL1/GOL2
@@ -571,6 +572,8 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                 batch.append({"range": f"{col_letter}{game['row']}", "values": [[resolved]]})
                 changes.append(f"JGO {game['jgo']} {slot.upper()}: {raw!r} → {resolved!r}")
                 game[slot] = resolved   # actualizar en memoria para el Paso 2
+                if raw and _parse_bracket_ref(raw):
+                    placeholder_map[raw] = resolved  # para actualizar picks de jugadores
 
     # ── Paso 2: rellenar EQ1/EQ2 vacíos usando ganadores de ronda anterior ──────
     # Orden secuencial: pares de juegos src alimentan cada juego dst
@@ -595,6 +598,8 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                     continue   # ya está correcto, no hacer nada
                 # Sobreescribir siempre (también cuando tiene valor incorrecto como clubs test)
                 old_val = dst[slot] or "''"
+                if dst[slot] and _parse_bracket_ref(dst[slot]):
+                    placeholder_map[dst[slot]] = src['ganador']
                 batch.append({"range": f"{col}{dst['row']}", "values": [[src['ganador']]]})
                 changes.append(f"JGO {dst['jgo']} {slot.upper()}: {old_val!r} → {src['ganador']!r}")
                 dst[slot] = src['ganador']
@@ -613,6 +618,8 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             continue
         # FINAL ← ganadores SF
         if fin_lst and fin_lst[0][slot] != gan:
+            if fin_lst[0][slot] and _parse_bracket_ref(fin_lst[0][slot]):
+                placeholder_map[fin_lst[0][slot]] = gan
             batch.append({"range": f"{col}{fin_lst[0]['row']}", "values": [[gan]]})
             changes.append(f"JGO {fin_lst[0]['jgo']} {slot.upper()} (FINAL): {fin_lst[0][slot]!r} → {gan!r}")
             fin_lst[0][slot] = gan
@@ -622,6 +629,8 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             eq2_sf = resolve(sf_g['eq2'])
             loser  = eq2_sf if gan == eq1_sf else (eq1_sf if gan == eq2_sf else None)
             if loser and not _parse_bracket_ref(loser) and ter_lst[0][slot] != loser:
+                if ter_lst[0][slot] and _parse_bracket_ref(ter_lst[0][slot]):
+                    placeholder_map[ter_lst[0][slot]] = loser
                 batch.append({"range": f"{col}{ter_lst[0]['row']}", "values": [[loser]]})
                 changes.append(f"JGO {ter_lst[0]['jgo']} {slot.upper()} (3ER-loser): {ter_lst[0][slot]!r} → {loser!r}")
                 ter_lst[0][slot] = loser
@@ -631,8 +640,69 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             ws_h.batch_update(batch, value_input_option="RAW")
         _invalidate_games()
         print(f"[propagate-bracket] {len(changes)} cambios: {changes}")
+        if placeholder_map:
+            _resolve_player_picks(sh, placeholder_map)
 
     return changes
+
+
+def _resolve_player_picks(sh, placeholder_map: dict):
+    """
+    Después de propagar el bracket, actualiza los picks de todos los jugadores
+    que tenían placeholders guardados en PICK_EQ1/PICK_EQ2/PICK_GANADOR.
+    placeholder_map = {placeholder_str: real_team_name}
+    Los picks de jugadores hechos ANTES de propagar almacenan el placeholder
+    del equipo (ej. "Ganador Diecise de Final (1)"). Al propagar sabemos que
+    ese placeholder es ahora "Corea del Sur", y actualizamos el pick para que
+    el scoring funcione correctamente.
+    """
+    if not placeholder_map:
+        return
+
+    RESERVED = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+    cfg        = state.get("cfg", {})
+    fila_data  = int(cfg.get("FILA_INICIO_DATOS", 3)) + 1  # row donde empiezan datos (row 4)
+    total      = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    fila_end   = fila_data + total - 1
+
+    try:
+        with _sheets_lock:
+            worksheets = sh.worksheets()
+    except Exception as e:
+        print(f"[resolve-picks] Error listando pestañas: {e}")
+        return
+
+    for ws in worksheets:
+        if ws.title in RESERVED:
+            continue
+        try:
+            with _sheets_lock:
+                rows = _sheets_retry(lambda w=ws: w.get(f"F{fila_data}:J{fila_end}"))
+        except Exception as e:
+            print(f"[resolve-picks] Error leyendo {ws.title}: {e}")
+            continue
+
+        batch = []
+        for ri, row in enumerate(rows):
+            sheet_row = fila_data + ri
+            pick_eq1 = row[0].strip() if len(row) > 0 else ""
+            pick_eq2 = row[3].strip() if len(row) > 3 else ""
+            pick_gan = row[4].strip() if len(row) > 4 else ""
+
+            if pick_eq1 in placeholder_map:
+                batch.append({"range": f"F{sheet_row}", "values": [[placeholder_map[pick_eq1]]]})
+            if pick_eq2 in placeholder_map:
+                batch.append({"range": f"I{sheet_row}", "values": [[placeholder_map[pick_eq2]]]})
+            if pick_gan in placeholder_map:
+                batch.append({"range": f"J{sheet_row}", "values": [[placeholder_map[pick_gan]]]})
+
+        if batch:
+            try:
+                with _sheets_lock:
+                    _sheets_retry(lambda w=ws, b=batch: w.batch_update(b, value_input_option="RAW"))
+                print(f"[resolve-picks] {ws.title}: {len(batch)} picks resueltos → {placeholder_map}")
+            except Exception as e:
+                print(f"[resolve-picks] Error actualizando {ws.title}: {e}")
 
 def _sheets_retry(fn, retries=4, base_delay=15):
     """Ejecuta fn() con reintentos exponenciales ante error 429 de Sheets."""
