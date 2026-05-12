@@ -2389,19 +2389,38 @@ async function saveGroupAndBack() {
     return;
   }
 
+  // Helper: detecta si un string es un nombre de equipo real (no placeholder, no TBD)
+  const _isSaveRealTeam = s => !!(s && s !== 'TBD'
+    && !s.startsWith('Ganador') && !s.startsWith('Perdedor') && !s.startsWith('Gan. '));
+
+  // Para R16+: resolver el equipo predicho desde el bracket del jugador.
+  // Usa resolveTeamName (mira picks de rondas anteriores) + _inferBracketSlot (estructura bracket).
+  // Solo retorna valor si el jugador hizo un pick completo (tiene ganador).
+  const _resolvePickTeam = (game, slot, pickVal) => {
+    const rawName = game[slot === 'eq1' ? 'eq1' : 'eq2'] || '';
+    if (_isSaveRealTeam(rawName)) return rawName;  // R32: equipo ya conocido en HORARIOS
+    // Sin ganador elegido = sin pick → no guardar equipo
+    const gan = S.picks[String(game.jgo)]?.ganador || '';
+    if (!gan) return '';
+    // 1. resolveTeamName: busca en picks del jugador de rondas anteriores
+    const res = resolveTeamName(rawName);
+    if (_isSaveRealTeam(res)) return res;
+    // 2. _inferBracketSlot: infiere de la estructura de bracket
+    const inf = _inferBracketSlot(game, slot);
+    if (inf && _isSaveRealTeam(inf)) return inf;
+    // 3. Fallback: valor previo guardado, si es un equipo real
+    if (_isSaveRealTeam(pickVal)) return pickVal;
+    return '';
+  };
+
   const picks = [];
   for (const g of curGroup.games) {
     const jgo    = g.jgo;
     const p      = S.picks[String(jgo)] || {};
-    // Un equipo "real" no es placeholder ni TBD — los placeholders (Ganador..., Perdedor...)
-    // no deben guardarse como pick; usar el equipo que el jugador predijo (p.eq1/p.eq2).
-    const _isRealTeam = s => !!(s && s !== 'TBD' && !s.startsWith('Ganador') && !s.startsWith('Perdedor'));
-    const eq1Known = _isRealTeam(g.eq1);
-    const eq2Known = _isRealTeam(g.eq2);
-    const eq1    = eq1Known ? g.eq1 : (p.eq1 || document.getElementById(`peq1-${jgo}`)?.value || '');
+    const eq1    = _resolvePickTeam(g, 'eq1', p.eq1 || '');
     const gol1   = document.getElementById(`pgol1-${jgo}`)?.value ?? '';
     const gol2   = document.getElementById(`pgol2-${jgo}`)?.value ?? '';
-    const eq2    = eq2Known ? g.eq2 : (p.eq2 || document.getElementById(`peq2-${jgo}`)?.value || '');
+    const eq2    = _resolvePickTeam(g, 'eq2', p.eq2 || '');
     const ganador = p.ganador || '';
 
     picks.push({jgo:parseInt(jgo), eq1, gol1, gol2, eq2, ganador});
