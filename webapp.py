@@ -4080,7 +4080,7 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
 
     with _sheets_lock:
         ws_h  = sh.worksheet("HORARIOS")
-        filas = ws_h.get(f"A{fila_inicio}:K{fila_fin}")
+        filas = ws_h.get(f"A{fila_inicio}:M{fila_fin}")  # hasta M = ESPN_ID_TEST
 
     # ── 1. Borrar resultados en HORARIOS para las rondas elegidas ─────────────
     clear_h_ranges = []
@@ -4093,9 +4093,10 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
         if row_idx < from_idx:
             continue   # ronda anterior al inicio → conservar
         sheet_row = fila_inicio + i
-        # Borrar H:L = estado, gol1, gol2, ganador, timestamp
-        clear_h_ranges.append(f"H{sheet_row}:L{sheet_row}")
-        # Si la ronda es R16+ (no R32), también borrar eq1/eq2 para restaurar placeholders vacíos
+        # Borrar H:M = estado, gol1, gol2, ganador, timestamp, ESPN_ID_TEST
+        # (incluye col M para que el sync no vuelva a rellenar con datos de prueba)
+        clear_h_ranges.append(f"H{sheet_row}:M{sheet_row}")
+        # Si la ronda es R16+ (no R32), también borrar eq1/eq2
         if ronda != "R32":
             clear_h_ranges.append(f"E{sheet_row}:F{sheet_row}")
         log.append(f"HORARIOS row {sheet_row} ({ronda}) → limpiado")
