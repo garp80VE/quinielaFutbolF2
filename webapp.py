@@ -2039,12 +2039,15 @@ async def save_picks(body: SavePicksBody):
     games, estado_jgo = _get_games_cache()
 
     # Logica de bloqueo F2:
+    # En MODO_PRUEBA: nunca bloquear (permite probar scoring con cualquier estado)
+    modo_prueba = state.get("cfg", {}).get("MODO_PRUEBA", "") in ("1", "true", "True")
+
     # R32: se bloquea partido a partido (igual que F1)
     # Rondas superiores (R16/QF/SF/3ER/FINAL): se bloquean todas juntas
     # cuando el ULTIMO partido de R32 arranca (ya no esta en PROG)
     r32_games = [g for g in games if g.get("ronda") == RONDA_BASE]
     upper_locked = False
-    if r32_games:
+    if r32_games and not modo_prueba:
         last_r32 = max(r32_games, key=lambda g: int(g.get("jgo", 0) or 0))
         last_r32_estado = last_r32.get("estado", "")
         upper_locked = bool(last_r32_estado and last_r32_estado != "PROG")
@@ -2061,14 +2064,14 @@ async def save_picks(body: SavePicksBody):
         ronda  = game.get("ronda", "")
         estado = game.get("estado", "")
 
-        if ronda in RONDAS_SUPERIORES:
-            bloq = upper_locked
-        else:  # R32 o sin ronda
-            bloq = bool(estado and estado != "PROG")
-
-        if bloq:
-            bloqueados += 1
-            continue
+        if not modo_prueba:
+            if ronda in RONDAS_SUPERIORES:
+                bloq = upper_locked
+            else:  # R32 o sin ronda
+                bloq = bool(estado and estado != "PROG")
+            if bloq:
+                bloqueados += 1
+                continue
 
         row = pick.jgo + 3  # JGO 1 -> fila 4
         # F2: 5 campos en cols F-J (pick_eq1, pick_gol1, pick_gol2, pick_eq2, pick_ganador)
