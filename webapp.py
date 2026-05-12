@@ -640,69 +640,9 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             ws_h.batch_update(batch, value_input_option="RAW")
         _invalidate_games()
         print(f"[propagate-bracket] {len(changes)} cambios: {changes}")
-        if placeholder_map:
-            _resolve_player_picks(sh, placeholder_map)
 
     return changes
 
-
-def _resolve_player_picks(sh, placeholder_map: dict):
-    """
-    Después de propagar el bracket, actualiza los picks de todos los jugadores
-    que tenían placeholders guardados en PICK_EQ1/PICK_EQ2/PICK_GANADOR.
-    placeholder_map = {placeholder_str: real_team_name}
-    Los picks de jugadores hechos ANTES de propagar almacenan el placeholder
-    del equipo (ej. "Ganador Diecise de Final (1)"). Al propagar sabemos que
-    ese placeholder es ahora "Corea del Sur", y actualizamos el pick para que
-    el scoring funcione correctamente.
-    """
-    if not placeholder_map:
-        return
-
-    RESERVED = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
-    cfg        = state.get("cfg", {})
-    fila_data  = int(cfg.get("FILA_INICIO_DATOS", 3)) + 1  # row donde empiezan datos (row 4)
-    total      = int(cfg.get("TOTAL_JUEGOS_F2", 32))
-    fila_end   = fila_data + total - 1
-
-    try:
-        with _sheets_lock:
-            worksheets = sh.worksheets()
-    except Exception as e:
-        print(f"[resolve-picks] Error listando pestañas: {e}")
-        return
-
-    for ws in worksheets:
-        if ws.title in RESERVED:
-            continue
-        try:
-            with _sheets_lock:
-                rows = _sheets_retry(lambda w=ws: w.get(f"F{fila_data}:J{fila_end}"))
-        except Exception as e:
-            print(f"[resolve-picks] Error leyendo {ws.title}: {e}")
-            continue
-
-        batch = []
-        for ri, row in enumerate(rows):
-            sheet_row = fila_data + ri
-            pick_eq1 = row[0].strip() if len(row) > 0 else ""
-            pick_eq2 = row[3].strip() if len(row) > 3 else ""
-            pick_gan = row[4].strip() if len(row) > 4 else ""
-
-            if pick_eq1 in placeholder_map:
-                batch.append({"range": f"F{sheet_row}", "values": [[placeholder_map[pick_eq1]]]})
-            if pick_eq2 in placeholder_map:
-                batch.append({"range": f"I{sheet_row}", "values": [[placeholder_map[pick_eq2]]]})
-            if pick_gan in placeholder_map:
-                batch.append({"range": f"J{sheet_row}", "values": [[placeholder_map[pick_gan]]]})
-
-        if batch:
-            try:
-                with _sheets_lock:
-                    _sheets_retry(lambda w=ws, b=batch: w.batch_update(b, value_input_option="RAW"))
-                print(f"[resolve-picks] {ws.title}: {len(batch)} picks resueltos → {placeholder_map}")
-            except Exception as e:
-                print(f"[resolve-picks] Error actualizando {ws.title}: {e}")
 
 def _sheets_retry(fn, retries=4, base_delay=15):
     """Ejecuta fn() con reintentos exponenciales ante error 429 de Sheets."""
@@ -976,12 +916,12 @@ def _init_player_tab(ws):
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;11;FALSE);"")' ,
             # N: ESTADO    (HORARIOS col H = índice 8)
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;8;FALSE);"")' ,
-            # O: PTS_EQ1 — 1pt si pick_eq1==real_eq1 Y gol1 coincide
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(F{r}=D{r};G{r}&""=K{r}&"");1;0);"")' ,
-            # P: PTS_EQ2 — 1pt si pick_eq2==real_eq2 Y gol2 coincide
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(I{r}=E{r};H{r}&""=L{r}&"");1;0);"")' ,
-            # Q: PTS_GAN — 3pt si liberation Y pick_gan está en el partido Y ganó
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};OR(J{r}=D{r};J{r}=E{r});J{r}=M{r});3;0);"")' ,
+            # O: PTS_EQ1 — 1pt si (EQ1 real O placeholder posicional) Y gol1 coincide
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor");G{r}&""=K{r}&"");1;0);"")' ,
+            # P: PTS_EQ2 — 1pt si (EQ2 real O placeholder posicional) Y gol2 coincide
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor");H{r}&""=L{r}&"");1;0);"")' ,
+            # Q: PTS_GAN — 3pt: ganador directo O pick posicional (EQ1/EQ2 placeholder o real) coincide
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(OR(J{r}=M{r};AND(J{r}=F{r};M{r}=D{r};OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor"));AND(J{r}=I{r};M{r}=E{r};OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor")));3;0);"")' ,
             # R: PTS_TOTAL
             f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:Q{r});0);"")' ,
         ])
@@ -4100,6 +4040,46 @@ async def _admin_sim_range_impl(body: dict):
         "results": results,
         "bracket_changes": changes,
     }
+
+
+@app.post("/api/admin/fix-scoring-formulas")
+async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
+    """
+    Actualiza las fórmulas de scoring (O,P,Q) en TODAS las pestañas de jugadores
+    para que reconozcan picks con placeholders posicionales sin modificar los picks.
+    """
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+    try:
+        RESERVED = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+        cfg       = state.get("cfg", {})
+        fila_data = int(cfg.get("FILA_INICIO_DATOS", 3)) + 1
+        total     = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+        with _sheets_lock:
+            worksheets = state["sh"].worksheets()
+        updated = 0
+        for ws in worksheets:
+            if ws.title in RESERVED:
+                continue
+            batch = []
+            for i in range(total):
+                r = fila_data + i
+                f_eq1 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor");G{r}&""=K{r}&"");1;0);"")'
+                f_eq2 = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND(OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor");H{r}&""=L{r}&"");1;0);"")'
+                f_gan = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(OR(J{r}=M{r};AND(J{r}=F{r};M{r}=D{r};OR(F{r}=D{r};LEFT(F{r};7)="Ganador";LEFT(F{r};8)="Perdedor"));AND(J{r}=I{r};M{r}=E{r};OR(I{r}=E{r};LEFT(I{r};7)="Ganador";LEFT(I{r};8)="Perdedor")));3;0);"")'
+                batch += [{"range": f"O{r}", "values": [[f_eq1]]},
+                          {"range": f"P{r}", "values": [[f_eq2]]},
+                          {"range": f"Q{r}", "values": [[f_gan]]}]
+            try:
+                with _sheets_lock:
+                    _sheets_retry(lambda w=ws, b=batch: w.batch_update(b, value_input_option="USER_ENTERED"))
+                updated += 1
+            except Exception as e:
+                print(f"[fix-scoring] Error en {ws.title}: {e}")
+        return {"ok": True, "tabs_actualizadas": updated,
+                "msg": f"✅ Fórmulas actualizadas en {updated} pestañas"}
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.post("/api/admin/propagate-bracket")

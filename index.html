@@ -658,6 +658,13 @@
           </button>
           <div id="propagate-result" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;font-size:12px;color:#374151;max-height:140px;overflow-y:auto"></div>
 
+          <!-- Fix fórmulas de scoring -->
+          <button onclick="adminFixScoringFormulas()" id="btn-fix-scoring"
+            style="width:100%;background:linear-gradient(135deg,#d97706,#b45309);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
+            🧮 Recalcular fórmulas de scoring
+          </button>
+          <div id="fix-scoring-result" style="display:none;background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 12px;font-size:12px;color:#92400e;max-height:80px;overflow-y:auto"></div>
+
           <!-- Sincronizar resultados reales -->
           <button onclick="adminSyncRealResults()" id="btn-sync-real"
             style="width:100%;background:linear-gradient(135deg,#059669,#047857);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
@@ -4569,6 +4576,23 @@ async function adminSimRange() {
     showToast('❌ '+e.message);
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🎲 Simular rango'; }
+  }
+}
+
+async function adminFixScoringFormulas() {
+  const btn = document.getElementById('btn-fix-scoring');
+  const res = document.getElementById('fix-scoring-result');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Actualizando...'; }
+  if (res) { res.style.display='none'; res.textContent=''; }
+  try {
+    const r = await api('POST', '/api/admin/fix-scoring-formulas');
+    if (res) { res.style.display='block'; res.textContent = r.msg || '✅ Listo'; }
+    showToast(r.msg || '✅ Fórmulas actualizadas');
+  } catch(e) {
+    if (res) { res.style.display='block'; res.textContent='❌ '+e.message; }
+    showToast('❌ '+e.message);
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='🧮 Recalcular fórmulas de scoring'; }
   }
 }
 
