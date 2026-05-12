@@ -3943,8 +3943,8 @@ async def admin_sim_range(body: dict = None, ql_admin: str = Cookie(default=""))
     fila_fin    = fila_inicio + total - 1
 
     with _sheets_lock:
-        ws_h  = state["sh"].worksheet("HORARIOS")
-        filas = ws_h.get(f"A{fila_inicio}:K{fila_fin}")
+        ws_h = state["sh"].worksheet("HORARIOS")
+        filas = _sheets_retry(lambda: ws_h.get(f"A{fila_inicio}:K{fila_fin}"))
 
     # Posibles marcadores (favorece resultados ajustados)
     _SCORES = [
@@ -3996,7 +3996,7 @@ async def admin_sim_range(body: dict = None, ql_admin: str = Cookie(default=""))
     if batch_updates:
         with _sheets_lock:
             ws_h2 = state["sh"].worksheet("HORARIOS")
-            ws_h2.batch_update(batch_updates, value_input_option="RAW")
+            _sheets_retry(lambda: ws_h2.batch_update(batch_updates, value_input_option="RAW"))
 
     _invalidate_games()
 
