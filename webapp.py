@@ -604,12 +604,19 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                 # (el emparejamiento secuencial de Paso 2 puede no coincidir con el bracket real de ESPN)
                 if dst[slot] and not _parse_bracket_ref(dst[slot]):
                     continue   # ya tiene un equipo concreto — resuelto por Paso 1, no pisar
-                # Sobreescribir solo si el slot está vacío o es aún un placeholder
-                old_val = dst[slot] or "''"
+                # NO sobreescribir si el slot tiene una referencia de bracket válida:
+                # significa que Paso 1 aún no pudo resolverla (R32 sin ganador aún).
+                # Paso 2 NO debe pisar esa referencia con emparejamiento secuencial incorrecto;
+                # Paso 1 la resolverá correctamente cuando llegue el ganador real.
                 if dst[slot] and _parse_bracket_ref(dst[slot]):
-                    placeholder_map[dst[slot]] = src['ganador']
+                    continue   # esperar a que Paso 1 resuelva con el bracket correcto
+                # Solo aplicar emparejamiento secuencial si el slot está completamente vacío
+                # (hoja nueva sin placeholders de bracket definidos)
+                if dst[slot]:
+                    continue   # cualquier valor existente — no pisar
+                old_val = "''"
                 batch.append({"range": f"{col}{dst['row']}", "values": [[src['ganador']]]})
-                changes.append(f"JGO {dst['jgo']} {slot.upper()}: {old_val!r} → {src['ganador']!r}")
+                changes.append(f"JGO {dst['jgo']} {slot.upper()}: {old_val} → {src['ganador']!r} [seq-fallback]")
                 dst[slot] = src['ganador']
 
     # SF → FINAL (ganadores) y SF → 3ER (perdedores)
