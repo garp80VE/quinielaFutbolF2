@@ -2555,10 +2555,7 @@ async function saveGroupAndBack() {
   // Solo retorna valor si el jugador hizo un pick completo (tiene ganador).
   const _resolvePickTeam = (game, slot, pickVal) => {
     const rawName = game[slot === 'eq1' ? 'eq1' : 'eq2'] || '';
-    // Para R16+: si el jugador ya tiene un equipo real guardado, preservarlo.
-    // No pisar con el equipo real de HORARIOS que pudo actualizarse tras la simulación de R32.
-    if (game.ronda !== 'R32' && _isSaveRealTeam(pickVal)) return pickVal;
-    if (_isSaveRealTeam(rawName)) return rawName;  // R32: equipo siempre conocido en HORARIOS
+    if (_isSaveRealTeam(rawName)) return rawName;  // R32: equipo ya conocido en HORARIOS
     // Sin ganador elegido = sin pick → no guardar equipo
     const gan = S.picks[String(game.jgo)]?.ganador || '';
     if (!gan) return '';

@@ -4639,65 +4639,88 @@ def _compute_probabilities() -> dict:
 
     # ── Probabilidad universo ───────────────────────────────────────────────
     if has_any_fixed:
-        univ_first  = {pname: 0.0 for pname in player_names}
-        univ_second = {pname: 0.0 for pname in player_names}
-        n_universes = len(player_names)
+        import random as _random
+        N_SIM = 400
+        mc_first  = {pname: 0.0 for pname in player_names}
+        mc_second = {pname: 0.0 for pname in player_names}
 
-        def _score_hyp(pick: dict, owner: dict) -> int:
-            """Puntúa pick contra los picks del dueño del universo (partidos pendientes)."""
-            pts = 0
-            if pick.get("ganpick") and owner.get("ganpick") and pick["ganpick"] == owner["ganpick"]:
-                pts += 3
-            if pick.get("g1pick") and owner.get("g1pick") and pick["g1pick"] == owner["g1pick"]:
-                pts += 1
-            if pick.get("g2pick") and owner.get("g2pick") and pick["g2pick"] == owner["g2pick"]:
-                pts += 1
-            return pts
+        # Obtener equipos de HORARIOS para juegos pendientes
+        try:
+            _games_list, _ = _get_games_cache()
+            horarios_map = {g["jgo"]: g for g in _games_list}
+        except Exception:
+            horarios_map = {}
 
-        for owner_name in player_names:
-            owner_gdata = player_tabs[owner_name]
+        for _sim in range(N_SIM):
+            # Simular ganador aleatorio (50/50) para cada juego pendiente
+            sim_winners = {}
+            for jgo in pending_jgos:
+                g = horarios_map.get(jgo, {})
+                eq1 = g.get("eq1", "")
+                eq2 = g.get("eq2", "")
+                if eq1 and eq2:
+                    sim_winners[jgo] = _random.choice([eq1, eq2])
+
+            # Puntuar a cada jugador en esta simulacion
             points = {pname: 0 for pname in player_names}
-
-            for jgo in all_jgos:
-                owner_g = owner_gdata.get(jgo)
-                if not owner_g:
-                    continue
-                is_fixed_game = jgo in fixed_jgos
-
-                for pname in player_names:
-                    player_g = player_tabs[pname].get(jgo)
-                    if not player_g:
+            for pname in player_names:
+                gdata = player_tabs[pname]
+                # Puntos reales de juegos fijos
+                for jgo in fixed_jgos:
+                    g = gdata.get(jgo)
+                    if not g:
                         continue
-                    if is_fixed_game:
-                        try:
-                            points[pname] += int(float(player_g.get("pts_total", "") or 0))
-                        except Exception:
-                            pass
-                    else:
-                        points[pname] += _score_hyp(player_g, owner_g)
+                    try:
+                        points[pname] += int(float(g.get("pts_total", "") or 0))
+                    except Exception:
+                        pass
+                # Puntos simulados de juegos pendientes
+                for jgo in pending_jgos:
+                    g = gdata.get(jgo)
+                    if not g or jgo not in sim_winners:
+                        continue
+                    winner  = sim_winners[jgo]
+                    ganpick = g.get("ganpick", "")
+                    g1pick  = g.get("g1pick",  "")
+                    g2pick  = g.get("g2pick",  "")
+                    hor     = horarios_map.get(jgo, {})
+                    eq1     = hor.get("eq1", "")
+                    eq2     = hor.get("eq2", "")
+                    # PTS_GAN: +2 si ganpick coincide con ganador simulado
+                    if ganpick and ganpick == winner:
+                        points[pname] += 2
+                    # PTS_LOGRO: +2 si direccion del pick coincide con resultado simulado
+                    try:
+                        p1 = int(float(g1pick)) if g1pick else -1
+                        p2 = int(float(g2pick)) if g2pick else -1
+                        pick_dir = "1" if p1 > p2 else ("2" if p2 > p1 else "X")
+                    except Exception:
+                        pick_dir = ""
+                    actual_dir = "1" if winner == eq1 else ("2" if winner == eq2 else "")
+                    if pick_dir and actual_dir and pick_dir == actual_dir:
+                        points[pname] += 2
 
-            # Clasificar en este universo
+            # Clasificar en esta simulacion
             ranked = sorted(points.items(), key=lambda kv: (-kv[1], kv[0]))
             if ranked:
-                best_pts = ranked[0][1]
+                best_pts  = ranked[0][1]
                 first_grp = [x for x in ranked if x[1] == best_pts]
-                share1 = 1.0 / len(first_grp)
+                share1    = 1.0 / len(first_grp)
                 for pname, _ in first_grp:
-                    univ_first[pname] += share1
-
+                    mc_first[pname] += share1
                 remaining = [x for x in ranked if x[1] < best_pts]
                 if remaining:
-                    sec_pts = remaining[0][1]
-                    sec_grp = [x for x in remaining if x[1] == sec_pts]
-                    share2 = 1.0 / len(sec_grp)
+                    sec_pts  = remaining[0][1]
+                    sec_grp  = [x for x in remaining if x[1] == sec_pts]
+                    share2   = 1.0 / len(sec_grp)
                     for pname, _ in sec_grp:
-                        univ_second[pname] += share2
+                        mc_second[pname] += share2
 
         # Convertir conteos a porcentajes
         for s in standings:
             pname = s["name"]
-            s["univ_1st"] = round((univ_first[pname]  / n_universes) * 100.0, 2)
-            s["univ_2nd"] = round((univ_second[pname] / n_universes) * 100.0, 2)
+            s["univ_1st"] = round((mc_first[pname]  / N_SIM) * 100.0, 2)
+            s["univ_2nd"] = round((mc_second[pname] / N_SIM) * 100.0, 2)
 
         # Re-ordenar por prob 1er lugar, desempate por prob 2do lugar
         standings.sort(key=lambda x: (-x["univ_1st"], -x["univ_2nd"], x["name"]))
