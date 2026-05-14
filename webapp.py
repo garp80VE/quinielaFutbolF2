@@ -698,6 +698,9 @@ class SavePicksBody(BaseModel):
 
 # Rondas de F2
 RONDA_BASE       = "R32"   # se bloquea partido a partido
+
+# Pestañas del Sheet que NUNCA se borran — usar esta constante en todo el código
+RESERVED_TABS = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
 RONDAS_SUPERIORES = {"R16", "QF", "SF", "3ER", "FINAL"}  # se bloquean juntas al inicio del último R32
 
 # âââ Helpers de Sheets ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -852,7 +855,7 @@ def ensure_jugadores_headers():
 
 def create_player_tab(tab_name: str):
     sh = state["sh"]
-    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas"}
+    reserved = RESERVED_TABS
 
     # Buscar pestaña de jugador existente para duplicar (la más limpia)
     template = None
@@ -3147,7 +3150,7 @@ async def admin_player_delete(body: dict, ql_admin: str = Cookie(default="")):
                 _sheets_retry(lambda r=i: ws.delete_rows(r))
             if tab_nombre:
                 try:
-                    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+                    reserved = RESERVED_TABS
                     if tab_nombre not in reserved:
                         tab_ws = _sheets_retry(lambda t=tab_nombre: state["sh"].worksheet(t))
                         _sheets_retry(lambda t=tab_ws: state["sh"].del_worksheet(t))
@@ -4082,7 +4085,7 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
     try:
-        RESERVED = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+        RESERVED = RESERVED_TABS
         cfg       = state.get("cfg", {})
         fila_data = int(cfg.get("FILA_INICIO_DATOS", 3)) + 1
         total     = int(cfg.get("TOTAL_JUEGOS_F2", 32))
@@ -4361,7 +4364,7 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
             ws_h3.batch_update(restore_batch, value_input_option="RAW")
 
     # ── 2. Borrar picks en todas las pestañas de jugadores ────────────────────
-    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+    reserved = RESERVED_TABS
     with _sheets_lock:
         all_ws = sh.worksheets()
 
@@ -4466,7 +4469,7 @@ async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")
         print(f"[reset] WARN archivo Drive: {e}")
 
     # ── 2. Resetear original ──
-    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+    reserved = RESERVED_TABS
     with _sheets_lock:
         # Borrar pestañas de jugadores
         for ws in sh.worksheets():
@@ -5103,4 +5106,4 @@ if __name__ == "__main__":
     os.environ["QL_PORT"]  = str(args.port)
 
     uvicorn.run(app, host="0.0.0.0", port=args.port)
-                                                                                                                                                                                                                                                                                                                                                                                      
+                                                                                        
