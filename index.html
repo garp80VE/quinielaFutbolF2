@@ -716,6 +716,78 @@
       </div><!-- /adm-body-prueba -->
     </div>
 
+    <!-- Sección: Sistema de puntos -->
+    <div class="card-open rounded-3xl overflow-hidden" style="border-color:#d1fae5">
+      <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-pts','chev-pts')">
+        <p style="font-weight:800;font-size:14px;color:#1e293b;margin:0">🎯 Sistema de puntos</p>
+        <svg id="chev-pts" class="adm-sec-chev" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+      </div>
+      <div id="adm-body-pts" class="adm-section-body" style="display:none">
+        <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
+          <p style="font-size:11px;color:#64748b;margin:0">Puntos otorgados por cada acierto en un partido.</p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+
+            <!-- PTS_LOGRO: Resultado 90min -->
+            <div style="display:flex;align-items:center;gap:10px;background:#eff6ff;border-radius:10px;padding:10px 12px">
+              <span style="font-size:20px">⚽</span>
+              <div style="flex:1">
+                <p style="font-size:12px;font-weight:700;color:#1d4ed8;margin:0">Resultado 90 min (1/X/2)</p>
+                <p style="font-size:11px;color:#64748b;margin:0">Acertar quién ganó o empató en tiempo reglamentario</p>
+              </div>
+              <input id="adm-pts-logro" type="number" min="0" max="99" step="1"
+                style="width:52px;border:1.5px solid #bfdbfe;border-radius:8px;padding:5px 8px;font-size:16px;font-weight:800;color:#1d4ed8;text-align:center;outline:none;background:white"
+                onfocus="this.style.borderColor='#2563eb'" onblur="this.style.borderColor='#bfdbfe'">
+              <span style="font-size:12px;color:#64748b">pts</span>
+            </div>
+
+            <!-- PTS_GAN: Ganador (extra/penales) -->
+            <div style="display:flex;align-items:center;gap:10px;background:#f0fdf4;border-radius:10px;padding:10px 12px">
+              <span style="font-size:20px">🏆</span>
+              <div style="flex:1">
+                <p style="font-size:12px;font-weight:700;color:#15803d;margin:0">Ganador (extra / penales)</p>
+                <p style="font-size:11px;color:#64748b;margin:0">Acertar el equipo que avanza en knockout</p>
+              </div>
+              <input id="adm-pts-gan" type="number" min="0" max="99" step="1"
+                style="width:52px;border:1.5px solid #bbf7d0;border-radius:8px;padding:5px 8px;font-size:16px;font-weight:800;color:#15803d;text-align:center;outline:none;background:white"
+                onfocus="this.style.borderColor='#16a34a'" onblur="this.style.borderColor='#bbf7d0'">
+              <span style="font-size:12px;color:#64748b">pts</span>
+            </div>
+
+            <!-- PTS_GOL1: Gol equipo 1 -->
+            <div style="display:flex;align-items:center;gap:10px;background:#fdf4ff;border-radius:10px;padding:10px 12px">
+              <span style="font-size:20px">🥅</span>
+              <div style="flex:1">
+                <p style="font-size:12px;font-weight:700;color:#7c3aed;margin:0">Gol equipo 1 (local)</p>
+                <p style="font-size:11px;color:#64748b;margin:0">Acertar el marcador exacto del equipo local</p>
+              </div>
+              <input id="adm-pts-g1" type="number" min="0" max="99" step="1"
+                style="width:52px;border:1.5px solid #e9d5ff;border-radius:8px;padding:5px 8px;font-size:16px;font-weight:800;color:#7c3aed;text-align:center;outline:none;background:white"
+                onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#e9d5ff'">
+              <span style="font-size:12px;color:#64748b">pts</span>
+            </div>
+
+            <!-- PTS_GOL2: Gol equipo 2 -->
+            <div style="display:flex;align-items:center;gap:10px;background:#fff7ed;border-radius:10px;padding:10px 12px">
+              <span style="font-size:20px">🥅</span>
+              <div style="flex:1">
+                <p style="font-size:12px;font-weight:700;color:#c2410c;margin:0">Gol equipo 2 (visitante)</p>
+                <p style="font-size:11px;color:#64748b;margin:0">Acertar el marcador exacto del equipo visitante</p>
+              </div>
+              <input id="adm-pts-g2" type="number" min="0" max="99" step="1"
+                style="width:52px;border:1.5px solid #fed7aa;border-radius:8px;padding:5px 8px;font-size:16px;font-weight:800;color:#c2410c;text-align:center;outline:none;background:white"
+                onfocus="this.style.borderColor='#ea580c'" onblur="this.style.borderColor='#fed7aa'">
+              <span style="font-size:12px;color:#64748b">pts</span>
+            </div>
+
+          </div>
+          <button onclick="savePtsConfig()"
+            style="background:#15803d;color:white;border:none;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:800;cursor:pointer;align-self:flex-end;margin-top:4px">
+            💾 Guardar puntos
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Sección: Pozo y Jugadores -->
     <div class="card-open rounded-3xl overflow-hidden">
       <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-pozo','chev-pozo')">
@@ -3663,6 +3735,19 @@ async function loadAdminDashboard() {
   _initAppUrl();    // mostrar URL de la app
   waStartPolling(); // actualizar estado WhatsApp al cargar el panel
   _initModoPruebaToggle(); // sincronizar toggle modo prueba
+  // Cargar valores actuales del sistema de puntos
+  try {
+    const cfgR = await api('GET', '/api/admin/config');
+    const f = cfgR.fields || {};
+    const logroEl = document.getElementById('adm-pts-logro');
+    const ganEl   = document.getElementById('adm-pts-gan');
+    const g1El    = document.getElementById('adm-pts-g1');
+    const g2El    = document.getElementById('adm-pts-g2');
+    if (logroEl) logroEl.value = f.PTS_LOGRO ?? 2;
+    if (ganEl)   ganEl.value   = f.PTS_GAN   ?? 2;
+    if (g1El)    g1El.value    = f.PTS_GOL1  ?? 1;
+    if (g2El)    g2El.value    = f.PTS_GOL2  ?? 1;
+  } catch(_) {}
   // Verificar si el torneo está activo (bloqueo de admin)
   try {
     const ts = await api('GET', '/api/admin/torneo-status');
@@ -3706,7 +3791,7 @@ async function loadAdminDashboard() {
       // MODO_PRUEBA se gestiona desde el panel Modo Prueba, no aquí
       if (key === 'MODO_PRUEBA') continue;
       // F2 tiene esquema de puntuación fijo (no configurable), ocultar estos campos
-      if (key === 'PTS_RESULTADO' || key === 'PTS_GOLES1' || key === 'PTS_GOLES2') continue;
+      if (key === 'PTS_LOGRO' || key === 'PTS_GAN' || key === 'PTS_GOL1' || key === 'PTS_GOL2') continue;
       const div = document.createElement('div');
 
       const SEL_STYLE = `width:100%;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 12px;
@@ -3859,28 +3944,9 @@ async function loadAdminDashboard() {
             ${animOpts}
           </select>`;
 
-      } else if (key === 'PTS_RESULTADO' || key === 'PTS_GOLES1' || key === 'PTS_GOLES2') {
-        // Sección de reglas de puntuación — primer campo inyecta el encabezado de sección
-        if (key === 'PTS_RESULTADO') {
-          const sep = document.createElement('div');
-          sep.innerHTML = `
-            <div style="display:flex;align-items:center;gap:10px;margin-top:8px;margin-bottom:4px">
-              <span style="font-size:13px;font-weight:700;color:#0f172a">⚽ Reglas de puntuación</span>
-              <div style="flex:1;height:1px;background:#e2e8f0"></div>
-            </div>
-            <p style="font-size:11px;color:#94a3b8;margin:0 0 8px">
-              Después de cambiar estos valores, pulsa
-              <b style="color:#0369a1">🧮 Recalcular fórmulas de puntos</b> (sección Sistema)
-              para que los cambios se reflejen en las hojas de Google Sheets.
-            </p>`;
-          form.appendChild(sep);
-        }
-        const icons = { PTS_RESULTADO:'🏆', PTS_GOLES1:'🥅', PTS_GOLES2:'🥅' };
-        div.innerHTML = `
-          <label style="display:block;font-size:11px;font-weight:700;color:#0369a1;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${icons[key] || ''} ${label}</label>
-          <input id="cfg-${key}" type="number" min="0" step="1" value="${val || (key==='PTS_RESULTADO'?'3':'1')}"
-            style="width:100%;border:1.5px solid #bae6fd;border-radius:10px;padding:10px 12px;font-size:15px;font-weight:700;outline:none;color:#0369a1;background:#f0f9ff"
-            onfocus="this.style.borderColor='#0369a1'" onblur="this.style.borderColor='#bae6fd'">`;
+      } else if (key === 'PTS_LOGRO' || key === 'PTS_GAN' || key === 'PTS_GOL1' || key === 'PTS_GOL2') {
+        // Manejado por la sección dedicada "Sistema de puntos" — no renderizar aquí
+        continue;
 
       } else if (key === 'FREEZE_EQUIPOS') {
         const on = val === '1' || val === 'true';
@@ -4239,6 +4305,26 @@ function updatePct2Preview() {
   if (!inp || !lbl) return;
   const v = parseFloat(inp.value);
   lbl.textContent = (isNaN(v) ? '—' : Math.max(1, Math.min(99, Math.round(100 - v)))) + '%';
+}
+
+async function savePtsConfig() {
+  const logroEl = document.getElementById('adm-pts-logro');
+  const ganEl   = document.getElementById('adm-pts-gan');
+  const g1El    = document.getElementById('adm-pts-g1');
+  const g2El    = document.getElementById('adm-pts-g2');
+  if (!logroEl || !ganEl || !g1El || !g2El) return;
+  const logro = parseInt(logroEl.value), gan = parseInt(ganEl.value);
+  const g1 = parseInt(g1El.value), g2 = parseInt(g2El.value);
+  if ([logro,gan,g1,g2].some(v => isNaN(v) || v < 0 || v > 99)) {
+    showToast('Valores entre 0 y 99'); return;
+  }
+  try {
+    await api('POST', '/api/admin/config', { fields: {
+      PTS_LOGRO: String(logro), PTS_GAN: String(gan),
+      PTS_GOL1:  String(g1),   PTS_GOL2: String(g2)
+    }});
+    showToast('Puntos guardados ✓');
+  } catch(e) { showToast('Error: ' + e.message); }
 }
 
 async function savePrizeConfig() {

@@ -2660,9 +2660,10 @@ ADMIN_CONFIG_FIELDS = [
     ("STRIPE_ACTIVO",       "Pago con tarjeta activo (1=sí, 0=no)"),
     ("FREEZE_EQUIPOS",      "Congelar nombres de equipos (1=no sobreescribir desde ESPN, 0=actualizar)"),
     ("MODO_PRUEBA",         "Modo Prueba (1=usar ESPN_ID_TEST para scores, 0=producción)"),
-    ("PTS_RESULTADO",       "Puntos por ganador correcto"),
-    ("PTS_GOLES1",          "Puntos por gol equipo 1 correcto"),
-    ("PTS_GOLES2",          "Puntos por gol equipo 2 correcto"),
+    ("PTS_LOGRO",           "Puntos por resultado 90min correcto (1/X/2)"),
+    ("PTS_GAN",             "Puntos por ganador correcto (extra/penales)"),
+    ("PTS_GOL1",            "Puntos por gol equipo 1 correcto"),
+    ("PTS_GOL2",            "Puntos por gol equipo 2 correcto"),
     # TOTAL_JUEGOS_F2 se actualiza automáticamente al recargar partidos
 ]
 
