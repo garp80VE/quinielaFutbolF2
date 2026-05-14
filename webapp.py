@@ -4637,93 +4637,99 @@ def _compute_probabilities() -> dict:
                     s["max_possible"] == prev["max_possible"])
             s["rank"] = prev["rank"] if same else i + 1
 
-    # ── Probabilidad universo ───────────────────────────────────────────────
-    if has_any_fixed:
-        import random as _random
-        N_SIM = 400
-        mc_first  = {pname: 0.0 for pname in player_names}
-        mc_second = {pname: 0.0 for pname in player_names}
+    # ── Probabilidad basada en equipos vivos ───────────────────────
+    # Logica: si el equipo que un jugador aposte ya fue eliminado en un
+    # partido terminado, ese pick ya no puede generar puntos.
+    # effective_max[jugador] = pts_actuales + (juegos pendientes donde su
+    #                          ganpick sigue vivo) * MAX_PTS_GAME
+    # La probabilidad se distribuye proporcionalmente al effective_max.
 
-        # Obtener equipos de HORARIOS para juegos pendientes
+    if has_any_fixed:
+        # Obtener HORARIOS para saber eq1/eq2/ganador de cada juego
         try:
             _games_list, _ = _get_games_cache()
             horarios_map = {g["jgo"]: g for g in _games_list}
         except Exception:
             horarios_map = {}
 
-        for _sim in range(N_SIM):
-            # Simular ganador aleatorio (50/50) para cada juego pendiente
-            sim_winners = {}
+        # Equipos eliminados = perdedor de cada juego terminado
+        eliminated: set = set()
+        for jgo in fixed_jgos:
+            hor = horarios_map.get(jgo, {})
+            winner = hor.get("ganador", "").strip()
+            eq1    = hor.get("eq1", "").strip()
+            eq2    = hor.get("eq2", "").strip()
+            if winner and eq1 and eq2:
+                loser = eq2 if winner == eq1 else eq1
+                if loser:
+                    eliminated.add(loser)
+
+        # effective_max por jugador
+        eff_max: dict = {}
+        alive_rem: dict = {}  # cuantos juegos pendientes tienen equipo vivo
+        for pname in player_names:
+            cur   = _current_pts(pname)
+            gdata = player_tabs[pname]
+            alive_pts = 0
+            alive_cnt = 0
             for jgo in pending_jgos:
-                g = horarios_map.get(jgo, {})
-                eq1 = g.get("eq1", "")
-                eq2 = g.get("eq2", "")
-                if eq1 and eq2:
-                    sim_winners[jgo] = _random.choice([eq1, eq2])
+                g = gdata.get(jgo)
+                if not g:
+                    continue
+                ganpick = g.get("ganpick", "").strip()
+                # El pick es viable si: hay equipo elegido Y ese equipo no fue eliminado
+                if ganpick and ganpick not in eliminated:
+                    alive_pts += MAX_PTS_GAME
+                    alive_cnt += 1
+            eff_max[pname]   = cur + alive_pts
+            alive_rem[pname] = alive_cnt
 
-            # Puntuar a cada jugador en esta simulacion
-            points = {pname: 0 for pname in player_names}
-            for pname in player_names:
-                gdata = player_tabs[pname]
-                # Puntos reales de juegos fijos
-                for jgo in fixed_jgos:
-                    g = gdata.get(jgo)
-                    if not g:
-                        continue
-                    try:
-                        points[pname] += int(float(g.get("pts_total", "") or 0))
-                    except Exception:
-                        pass
-                # Puntos simulados de juegos pendientes
-                for jgo in pending_jgos:
-                    g = gdata.get(jgo)
-                    if not g or jgo not in sim_winners:
-                        continue
-                    winner  = sim_winners[jgo]
-                    ganpick = g.get("ganpick", "")
-                    g1pick  = g.get("g1pick",  "")
-                    g2pick  = g.get("g2pick",  "")
-                    hor     = horarios_map.get(jgo, {})
-                    eq1     = hor.get("eq1", "")
-                    eq2     = hor.get("eq2", "")
-                    # PTS_GAN: +2 si ganpick coincide con ganador simulado
-                    if ganpick and ganpick == winner:
-                        points[pname] += 2
-                    # PTS_LOGRO: +2 si direccion del pick coincide con resultado simulado
-                    try:
-                        p1 = int(float(g1pick)) if g1pick else -1
-                        p2 = int(float(g2pick)) if g2pick else -1
-                        pick_dir = "1" if p1 > p2 else ("2" if p2 > p1 else "X")
-                    except Exception:
-                        pick_dir = ""
-                    actual_dir = "1" if winner == eq1 else ("2" if winner == eq2 else "")
-                    if pick_dir and actual_dir and pick_dir == actual_dir:
-                        points[pname] += 2
-
-            # Clasificar en esta simulacion
-            ranked = sorted(points.items(), key=lambda kv: (-kv[1], kv[0]))
-            if ranked:
-                best_pts  = ranked[0][1]
-                first_grp = [x for x in ranked if x[1] == best_pts]
-                share1    = 1.0 / len(first_grp)
-                for pname, _ in first_grp:
-                    mc_first[pname] += share1
-                remaining = [x for x in ranked if x[1] < best_pts]
-                if remaining:
-                    sec_pts  = remaining[0][1]
-                    sec_grp  = [x for x in remaining if x[1] == sec_pts]
-                    share2   = 1.0 / len(sec_grp)
-                    for pname, _ in sec_grp:
-                        mc_second[pname] += share2
-
-        # Convertir conteos a porcentajes
+        # Actualizar standings con effective_max y conteo de picks vivos
         for s in standings:
             pname = s["name"]
-            s["univ_1st"] = round((mc_first[pname]  / N_SIM) * 100.0, 2)
-            s["univ_2nd"] = round((mc_second[pname] / N_SIM) * 100.0, 2)
+            s["max_possible"] = eff_max[pname]      # sobreescribir con max real
+            s["alive_picks"]  = alive_rem[pname]    # cuantos picks aun vivos
 
-        # Re-ordenar por prob 1er lugar, desempate por prob 2do lugar
-        standings.sort(key=lambda x: (-x["univ_1st"], -x["univ_2nd"], x["name"]))
+        # Lider: jugador con mas puntos actuales (ya ordenado por current_pts)
+        leader_pts = max((s["current_pts"] for s in standings), default=0)
+
+        # Candidatos a 1ro: pueden alcanzar o superar al lider actual
+        candidates_1st = [
+            pname for pname in player_names
+            if eff_max[pname] >= leader_pts
+        ]
+
+        total_eff = sum(eff_max[pname] for pname in candidates_1st)
+
+        for s in standings:
+            pname = s["name"]
+            if pname in candidates_1st and total_eff > 0:
+                s["univ_1st"] = round((eff_max[pname] / total_eff) * 100.0, 2)
+            else:
+                s["univ_1st"] = 0.0
+
+        # 2do lugar: entre los que no ganan 1ro
+        # Candidatos a 2do: los que pueden alcanzar al 2do actual
+        sorted_cur = sorted(player_names, key=lambda p: -_current_pts(p))
+        second_pts = _current_pts(sorted_cur[1]) if len(sorted_cur) > 1 else 0
+        candidates_2nd = [
+            pname for pname in player_names
+            if pname not in candidates_1st and eff_max[pname] >= second_pts
+        ]
+        # Si no hay candidatos a 2do fuera de candidatos a 1ro, tomar el resto
+        if not candidates_2nd:
+            candidates_2nd = [p for p in player_names if p not in candidates_1st]
+
+        total_eff2 = sum(eff_max[pname] for pname in candidates_2nd)
+        for s in standings:
+            pname = s["name"]
+            if pname in candidates_2nd and total_eff2 > 0:
+                s["univ_2nd"] = round((eff_max[pname] / total_eff2) * 100.0, 2)
+            else:
+                s["univ_2nd"] = 0.0
+
+        # Re-ordenar por prob 1er lugar, desempate pts actuales, luego nombre
+        standings.sort(key=lambda x: (-x["univ_1st"], -x["current_pts"], x["name"]))
 
     return {
         "players":      standings,
