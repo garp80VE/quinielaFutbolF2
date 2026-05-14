@@ -201,13 +201,9 @@ def idx_col(n):
 # El SW usa este valor en el nombre del caché, forzando invalidación en iOS/Android.
 APP_VERSION = str(int(time.time()))
 
-# ─── Directorio persistente (Railway Volume montado en /data) ─────────────────
-DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-
 # ─── Push Notifications (VAPID) ───────────────────────────────────────────────
-_VAPID_FILE = DATA_DIR / "vapid_keys.json"
-_SUBS_FILE  = DATA_DIR / "push_subs.json"
+_VAPID_FILE = Path(__file__).parent / "vapid_keys.json"
+_SUBS_FILE  = Path(__file__).parent / "push_subs.json"
 _push_subs: list = []   # [{endpoint, keys:{p256dh, auth}, _phone, _email}]
 
 def _subs_load():
@@ -600,11 +596,7 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                     continue   # ganador aún no es concreto
                 if dst[slot] == src['ganador']:
                     continue   # ya está correcto, no hacer nada
-                # NO sobreescribir si Paso 1 ya resolvió un equipo concreto distinto
-                # (el emparejamiento secuencial de Paso 2 puede no coincidir con el bracket real de ESPN)
-                if dst[slot] and not _parse_bracket_ref(dst[slot]):
-                    continue   # ya tiene un equipo concreto — resuelto por Paso 1, no pisar
-                # Sobreescribir solo si el slot está vacío o es aún un placeholder
+                # Sobreescribir siempre (también cuando tiene valor incorrecto como clubs test)
                 old_val = dst[slot] or "''"
                 if dst[slot] and _parse_bracket_ref(dst[slot]):
                     placeholder_map[dst[slot]] = src['ganador']
@@ -702,9 +694,6 @@ class SavePicksBody(BaseModel):
 
 # Rondas de F2
 RONDA_BASE       = "R32"   # se bloquea partido a partido
-
-# Pestañas del Sheet que NUNCA se borran — usar esta constante en todo el código
-RESERVED_TABS = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
 RONDAS_SUPERIORES = {"R16", "QF", "SF", "3ER", "FINAL"}  # se bloquean juntas al inicio del último R32
 
 # âââ Helpers de Sheets ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -859,7 +848,7 @@ def ensure_jugadores_headers():
 
 def create_player_tab(tab_name: str):
     sh = state["sh"]
-    reserved = RESERVED_TABS
+    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas"}
 
     # Buscar pestaña de jugador existente para duplicar (la más limpia)
     template = None
@@ -1834,17 +1823,17 @@ async def favicon():
 
 @app.get("/icon-192.png")
 async def icon192():
-    for p in [DATA_DIR / "icon-192.png", Path(__file__).parent / "icon-192.png"]:
-        if p.exists():
-            return Response(content=p.read_bytes(), media_type="image/png")
+    p = Path(__file__).parent / "icon-192.png"
+    if p.exists():
+        return Response(content=p.read_bytes(), media_type="image/png")
     return Response(content=_make_png(192), media_type="image/png")
 
 
 @app.get("/icon-512.png")
 async def icon512():
-    for p in [DATA_DIR / "icon-512.png", Path(__file__).parent / "icon-512.png"]:
-        if p.exists():
-            return Response(content=p.read_bytes(), media_type="image/png")
+    p = Path(__file__).parent / "icon-512.png"
+    if p.exists():
+        return Response(content=p.read_bytes(), media_type="image/png")
     return Response(content=_make_png(512), media_type="image/png")
 
 
@@ -3154,7 +3143,7 @@ async def admin_player_delete(body: dict, ql_admin: str = Cookie(default="")):
                 _sheets_retry(lambda r=i: ws.delete_rows(r))
             if tab_nombre:
                 try:
-                    reserved = RESERVED_TABS
+                    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
                     if tab_nombre not in reserved:
                         tab_ws = _sheets_retry(lambda t=tab_nombre: state["sh"].worksheet(t))
                         _sheets_retry(lambda t=tab_ws: state["sh"].del_worksheet(t))
@@ -3470,7 +3459,7 @@ async def admin_upload_logo(file: UploadFile = File(...),
 
         data  = await file.read()
         img   = Image.open(io.BytesIO(data)).convert("RGBA")
-        base  = DATA_DIR
+        base  = Path(__file__).parent
 
         # Recorte cuadrado centrado
         w, h  = img.size
@@ -3510,10 +3499,13 @@ async def get_version():
 
 @app.get("/logo.png")
 async def get_logo():
-    for p in [DATA_DIR / "logo.png", DATA_DIR / "icon-192.png",
-              Path(__file__).parent / "logo.png", Path(__file__).parent / "icon-192.png"]:
-        if p.exists():
-            return Response(content=p.read_bytes(), media_type="image/png")
+    p = Path(__file__).parent / "logo.png"
+    if p.exists():
+        return Response(content=p.read_bytes(), media_type="image/png")
+    # Fallback al icon-192
+    p2 = Path(__file__).parent / "icon-192.png"
+    if p2.exists():
+        return Response(content=p2.read_bytes(), media_type="image/png")
     return Response(content=_make_png(256), media_type="image/png")
 
 
@@ -4089,7 +4081,7 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
     try:
-        RESERVED = RESERVED_TABS
+        RESERVED = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
         cfg       = state.get("cfg", {})
         fila_data = int(cfg.get("FILA_INICIO_DATOS", 3)) + 1
         total     = int(cfg.get("TOTAL_JUEGOS_F2", 32))
@@ -4368,7 +4360,7 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
             ws_h3.batch_update(restore_batch, value_input_option="RAW")
 
     # ── 2. Borrar picks en todas las pestañas de jugadores ────────────────────
-    reserved = RESERVED_TABS
+    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
     with _sheets_lock:
         all_ws = sh.worksheets()
 
@@ -4473,7 +4465,7 @@ async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")
         print(f"[reset] WARN archivo Drive: {e}")
 
     # ── 2. Resetear original ──
-    reserved = RESERVED_TABS
+    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
     with _sheets_lock:
         # Borrar pestañas de jugadores
         for ws in sh.worksheets():
@@ -4804,11 +4796,21 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
                 pass
 
             uid_filters = set()
+            ligas_sin_id = []
             for lg in leagues:
                 eid = ligas_map.get(lg, "")
                 if eid:
                     uid_filters.add(f"l:{eid}")
-                print(f"[admin-setup] Liga: {lg} | ESPN_ID: {eid or '(sin ID — usa endpoint directo)'}")
+                else:
+                    ligas_sin_id.append(lg)
+                print(f"[admin-setup] Liga: {lg} | ESPN_ID: {eid or '(NO CONFIGURADO)'}")
+
+            if ligas_sin_id:
+                state["_setup_status"] = (
+                    f"ERROR: Faltan ESPN_ID en la pestaña Ligas para: {', '.join(ligas_sin_id)}. "
+                    f"Agrega la columna ESPN_ID con el número correspondiente."
+                )
+                return
 
             summary_url = (f"{ESPN_BASE}/{leagues[0]}/summary" if len(leagues) == 1
                            else f"{ESPN_BASE}/all/summary")
@@ -5099,7 +5101,7 @@ async def stripe_webhook(request: Request):
         print(f"[stripe] ❌ Error: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, f"Error interno: {e}")
 
-# ─── Entry point ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ─── Entry point ───────────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import cfg as _cfg

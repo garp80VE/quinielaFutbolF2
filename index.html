@@ -5702,4 +5702,13 @@ function sorteoStartAnim(tipo, elegibles) {
         landedName = name;
         _sorteoRevealTarget = { name, ts: Date.now() };
       },
-      restart() { landed=false; landedName=null; decel=null; exciting=false; _sorteoRevealTar
+      restart() { landed=false; landedName=null; decel=null; exciting=false; _sorteoRevealTarget=null; },
+      stop() { running=false; if(frame) cancelAnimationFrame(frame); frame=null; },
+      onLanded: null
+    };
+  }  // fin if/else tipo animación
+}    // fin function sorteoIniciarAnimacion (o bloque equivalente)
+
+</script>
+</body>
+</html>
