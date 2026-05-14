@@ -3789,7 +3789,7 @@ async function loadAdminDashboard() {
     for (const [key, label] of Object.entries(cfgRes.labels)) {
       const val = cfgRes.fields[key] || '';
       // MODO_PRUEBA se gestiona desde el panel Modo Prueba, no aquí
-      if (key === 'MODO_PRUEBA') continue;
+      if (key === 'MODO_PRUEBA' || key === 'STRIPE_ACTIVO') continue;
       // F2 tiene esquema de puntuación fijo (no configurable), ocultar estos campos
       if (key === 'PTS_LOGRO' || key === 'PTS_GAN' || key === 'PTS_GOL1' || key === 'PTS_GOL2') continue;
       const div = document.createElement('div');
