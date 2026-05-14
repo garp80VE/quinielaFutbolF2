@@ -2547,15 +2547,21 @@ async function saveGroupAndBack() {
   }
 
   // Helper: detecta si un string es un nombre de equipo real (no placeholder, no TBD)
+  // Usa isPlaceholder() para cubrir todos los formatos: "Round of 32 X Winner",
+  // "Ganador Octavos de Final (1)", "Group A Winner", "Third Place Group...", etc.
   const _isSaveRealTeam = s => !!(s && s !== 'TBD'
-    && !s.startsWith('Ganador') && !s.startsWith('Perdedor') && !s.startsWith('Gan. '));
+    && !s.startsWith('Gan. ') && !isPlaceholder(s)
+    && !s.startsWith('Group ') && !/^Third Place/i.test(s));
 
   // Para R16+: resolver el equipo predicho desde el bracket del jugador.
   // Usa resolveTeamName (mira picks de rondas anteriores) + _inferBracketSlot (estructura bracket).
   // Solo retorna valor si el jugador hizo un pick completo (tiene ganador).
   const _resolvePickTeam = (game, slot, pickVal) => {
     const rawName = game[slot === 'eq1' ? 'eq1' : 'eq2'] || '';
-    if (_isSaveRealTeam(rawName)) return rawName;  // R32: equipo ya conocido en HORARIOS
+    // Para R16+: si el jugador ya tiene un equipo real guardado, preservarlo.
+    // No pisar con el equipo real de HORARIOS que pudo actualizarse tras la simulación de R32.
+    if (game.ronda !== 'R32' && _isSaveRealTeam(pickVal)) return pickVal;
+    if (_isSaveRealTeam(rawName)) return rawName;  // R32: equipo siempre conocido en HORARIOS
     // Sin ganador elegido = sin pick → no guardar equipo
     const gan = S.picks[String(game.jgo)]?.ganador || '';
     if (!gan) return '';
