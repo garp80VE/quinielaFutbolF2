@@ -59,6 +59,7 @@ let connectedPhone = null
 let groupId        = null
 let reconnecting   = false
 let pairingCode    = null
+let _explicitLogout = false
 
 // Cargar groupId persistido
 if (fs.existsSync(GROUP_ID_FILE)) {
@@ -196,20 +197,24 @@ async function connectToWhatsApp(pairingPhone = null, onCode = null) {
         reconnecting = true
         setTimeout(connectToWhatsApp, 5000)
       } else if (!shouldReconnect) {
-        // 401 = WhatsApp invalidó la sesión → borrar credenciales para no entrar en loop
-        pairingCode = null
-        groupId     = null
-        if (fs.existsSync(GROUP_ID_FILE)) fs.unlinkSync(GROUP_ID_FILE)
-        // Borrar archivos de credenciales (creds.json, keys, etc.) pero conservar group_id y opted_out
-        const KEEP = new Set(['group_id.txt', 'opted_out.json'])
-        if (fs.existsSync(SESSION_PATH)) {
-          for (const f of fs.readdirSync(SESSION_PATH)) {
-            if (!KEEP.has(f)) {
-              try { fs.rmSync(path.join(SESSION_PATH, f), { recursive: true, force: true }) } catch {}
+        if (_explicitLogout) {
+          // Logout explícito → borrar credenciales
+          _explicitLogout = false
+          pairingCode = null
+          groupId     = null
+          if (fs.existsSync(GROUP_ID_FILE)) fs.unlinkSync(GROUP_ID_FILE)
+          const KEEP = new Set(['group_id.txt', 'opted_out.json'])
+          if (fs.existsSync(SESSION_PATH)) {
+            for (const f of fs.readdirSync(SESSION_PATH)) {
+              if (!KEEP.has(f)) {
+                try { fs.rmSync(path.join(SESSION_PATH, f), { recursive: true, force: true }) } catch {}
+              }
             }
           }
+          console.log('[WA] Credenciales de sesión borradas (logout explícito)')
+        } else {
+          console.log('[WA] 401 recibido (posiblemente rolling deploy) — sesión en disco conservada')
         }
-        console.log('[WA] Credenciales de sesión borradas (401 logout)')
       }
     }
   })
@@ -485,6 +490,7 @@ app.post('/disconnect', async (req, res) => {
     pairingCode = null
     if (fs.existsSync(GROUP_ID_FILE)) fs.unlinkSync(GROUP_ID_FILE)
 
+    _explicitLogout = true
     if (sock) await sock.logout().catch(() => {})
 
     if (fs.existsSync(SESSION_PATH)) {

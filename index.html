@@ -227,6 +227,26 @@
   </div>
 
   <div class="scroll-area px-4 py-4 bg-gray-50 flex-1">
+    <!-- Banner de pago pendiente -->
+    <div id="payment-banner" style="display:none;background:linear-gradient(135deg,#fef3c7,#fde68a);border:1.5px solid #f59e0b;border-radius:14px;padding:14px 16px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:20px">💳</span>
+        <div>
+          <p style="font-weight:800;font-size:14px;color:#92400e;margin:0">Pago pendiente</p>
+          <p id="payment-amount-label" style="font-size:12px;color:#b45309;margin:0">Entrada a la quiniela</p>
+        </div>
+      </div>
+      <button onclick="stripeCheckout()" style="width:100%;background:#f59e0b;border:none;border-radius:10px;padding:10px;font-weight:800;font-size:14px;color:#1c1917;cursor:pointer">
+        💳 Pagar con tarjeta
+      </button>
+      <p style="font-size:10px;color:#b45309;text-align:center;margin:6px 0 0">Aceptamos cualquier tarjeta · Pago seguro vía Stripe</p>
+    </div>
+    <!-- Banner de pago confirmado (se muestra brevemente al volver de Stripe) -->
+    <div id="payment-success-banner" style="display:none;background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:1.5px solid #22c55e;border-radius:14px;padding:14px 16px;margin-bottom:12px;text-align:center">
+      <p style="font-size:22px;margin:0 0 4px">✅</p>
+      <p style="font-weight:800;font-size:14px;color:#15803d;margin:0">¡Pago confirmado!</p>
+      <p style="font-size:12px;color:#166534;margin:4px 0 0">Ya estás inscrito en la quiniela</p>
+    </div>
     <!-- Loading -->
     <div id="dash-loading" class="flex flex-col items-center justify-center py-16 gap-3">
       <div class="spinner"></div>
@@ -1447,6 +1467,7 @@ window.addEventListener('appinstalled', () => {
 // ─── Estado global ────────────────────────────────────────────────
 const S = {
   phone: null, nombre: null,
+  pagado: false, stripe_activo: false,
   games: [],       // todos los juegos del API
   picks: {},       // { "1": {eq1,gol1,gol2,eq2,ganador}, ... }
   teams: [],       // lista de equipos para selects F2
@@ -1546,6 +1567,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (phone) {
     try {
       const r = await api('POST','/api/auth/check',{phone});
+      if (r.registered) { S.pagado = r.pagado || false; S.stripe_activo = r.stripe_activo || false; }
       if (r.registered) {
         S.phone  = phone;
         S.nombre = r.nombre || sess.nombre || '';
@@ -1666,6 +1688,7 @@ async function doAuth() {
     const r = await api('POST','/api/auth/check',{phone});
     if (r.registered) {
       S.phone = phone; S.nombre = r.nombre;
+      S.pagado = r.pagado || false; S.stripe_activo = r.stripe_activo || false;
       saveSession(phone, r.nombre);
       await openDashboard();
     } else {
@@ -1789,12 +1812,74 @@ async function doLogout() {
   showScreen('s-auth');
 }
 
+// ─── Stripe ───────────────────────────────────────────────────────
+async function stripeCheckout() {
+  try {
+    const btn = document.querySelector('#payment-banner button');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Preparando pago...'; }
+    const r = await api('POST', '/api/stripe/create-checkout', {
+      phone:  S.phone || '',
+      nombre: S.nombre || '',
+      origin: window.location.origin,
+    });
+    if (r.checkout_url) {
+      window.location.href = r.checkout_url;
+    } else {
+      showToast('Error al crear el pago. Intenta de nuevo.');
+      if (btn) { btn.disabled = false; btn.textContent = '💳 Pagar con tarjeta'; }
+    }
+  } catch(e) {
+    showToast('Error: ' + e.message);
+  }
+}
+
+async function _checkPaymentStatus() {
+  // Leer config de Stripe para mostrar monto
+  try {
+    const cfg = await api('GET', '/api/stripe/config').catch(() => null);
+    if (cfg) {
+      const lbl = document.getElementById('payment-amount-label');
+      if (lbl) lbl.textContent = `$${cfg.amount_usd.toFixed(2)} USD (incl. comisión de pago)`;
+    }
+  } catch(e) {}
+
+  // Verificar si llegó de un pago exitoso
+  const params = new URLSearchParams(window.location.search);
+  const payStatus = params.get('payment');
+  if (payStatus === 'success') {
+    // Limpiar URL
+    window.history.replaceState({}, '', window.location.pathname);
+    // Esperar a que el webhook procese (max 5s)
+    await new Promise(r => setTimeout(r, 2000));
+    // Re-verificar estado del jugador
+    try {
+      const r = await api('POST', '/api/auth/check', { phone: S.phone });
+      if (r.pagado) S.pagado = true;
+    } catch(e) {}
+    document.getElementById('payment-banner').style.display = 'none';
+    document.getElementById('payment-success-banner').style.display = 'block';
+    setTimeout(() => {
+      document.getElementById('payment-success-banner').style.display = 'none';
+    }, 5000);
+    return;
+  }
+  if (payStatus === 'cancel') {
+    window.history.replaceState({}, '', window.location.pathname);
+    showToast('Pago cancelado. Puedes intentarlo cuando quieras.');
+  }
+
+  // Mostrar/ocultar banner según estado de pago y si Stripe está activo
+  const banner = document.getElementById('payment-banner');
+  if (banner) banner.style.display = (!S.pagado && S.stripe_activo) ? 'block' : 'none';
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────
 async function openDashboard() {
   document.getElementById('dash-name').textContent = (S.nombre||S.phone||'').split(' ')[0];
   _updateInstallBtn();
   showScreen('s-dashboard');
   await loadDashboard();
+  await _checkPaymentStatus();
   // Verificar estado del sorteo al entrar — muestra la pestaña si hay sorteo activo
   sorteoCheckEstado();
   // Polling de fondo ligero para detectar cuando el sorteo se activa
@@ -3846,6 +3931,7 @@ async function _loadAdminPrizeNow() {
     const res  = await api('GET', '/api/admin/prize-and-players');
     const p    = res.prize;
     const cost = p.costo || parseFloat(p.costo) || 10;
+    const stripeActivo = p.stripe_activo || false;
 
     // ── Distribución actual o reglas si aún sin pagados ───────────────
     const catColors = {A:'#15803d', B:'#0284c7', C:'#7c3aed', '-':'#94a3b8'};
@@ -3991,6 +4077,24 @@ async function _loadAdminPrizeNow() {
             <span style="font-size:11px;color:#92400e">se descuenta del pozo antes de repartir${p.fee_amt > 0 ? ' · <b>-$' + p.fee_amt.toFixed(2) + '</b>' : ''}</span>
           </div>
 
+          <!-- Toggle Stripe -->
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:#f0fdf4;border-radius:8px;border-left:3px solid #16a34a">
+            <label style="position:relative;display:inline-block;width:38px;height:22px;flex-shrink:0">
+              <input type="checkbox" id="adm-stripe-activo" ${stripeActivo ? 'checked' : ''}
+                onchange="toggleStripeActivo(this.checked)"
+                style="opacity:0;width:0;height:0">
+              <span style="position:absolute;cursor:pointer;inset:0;background:${stripeActivo ? '#16a34a' : '#cbd5e1'};border-radius:11px;transition:.2s"
+                id="adm-stripe-slider">
+                <span style="position:absolute;left:${stripeActivo ? '18px' : '2px'};top:2px;width:18px;height:18px;background:white;border-radius:50%;transition:.2s"
+                  id="adm-stripe-knob"></span>
+              </span>
+            </label>
+            <div>
+              <p style="font-size:12px;font-weight:700;color:#15803d;margin:0">Pago con tarjeta (Stripe)</p>
+              <p style="font-size:10px;color:#6b7280;margin:0" id="adm-stripe-label">${stripeActivo ? 'Activo — los jugadores ven el botón de pago' : 'Inactivo — banner de pago oculto'}</p>
+            </div>
+          </div>
+
           <button onclick="savePrizeConfig()"
             style="background:#002868;color:white;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:800;cursor:pointer;align-self:flex-end">
             💾 Guardar parámetros
@@ -4036,13 +4140,13 @@ async function _loadAdminPrizeNow() {
             style="flex-shrink:0;border:${pl.pagado?'none':'1.5px solid #e2e8f0'};border-radius:8px;padding:6px 12px;font-size:11px;font-weight:800;cursor:pointer;transition:all .15s;background:${pl.pagado?'#dcfce7':'#f8fafc'};color:${pl.pagado?'#15803d':'#64748b'}">
             ${pl.pagado ? '✓ Pagado' : 'Marcar'}
           </button>
-          <button onclick="adminEliminarJugador(this)"
+          ${!p.torneo_activo ? `<button onclick="adminEliminarJugador(this)"
             data-phone="${pl.phone||''}"
             data-nombre="${(pl.nombre||'?').replace(/"/g,'&quot;')}"
             title="Eliminar jugador"
             style="flex-shrink:0;border:none;border-radius:8px;padding:6px 8px;font-size:14px;cursor:pointer;background:#fff0f0;color:#ef4444;transition:background .15s">
             🗑
-          </button>
+          </button>` : ''}
         </div>`).join('');
     }
   } catch(e) {
@@ -4068,6 +4172,23 @@ function initAdmSections() {
   sorteoCheckEstado();
   if (!window._admSorteoInterval) {
     window._admSorteoInterval = setInterval(sorteoCheckEstado, 5000);
+  }
+}
+
+async function toggleStripeActivo(checked) {
+  const slider = document.getElementById('adm-stripe-slider');
+  const knob   = document.getElementById('adm-stripe-knob');
+  const label  = document.getElementById('adm-stripe-label');
+  if (slider) slider.style.background = checked ? '#16a34a' : '#cbd5e1';
+  if (knob)   knob.style.left         = checked ? '18px' : '2px';
+  if (label)  label.textContent       = checked
+    ? 'Activo — los jugadores ven el botón de pago'
+    : 'Inactivo — banner de pago oculto';
+  try {
+    await api('POST', '/api/admin/config', { fields: { STRIPE_ACTIVO: checked ? '1' : '0' } });
+    showToast(checked ? '✅ Pago con tarjeta activado' : '🔒 Pago con tarjeta desactivado');
+  } catch(e) {
+    showToast('Error guardando configuración');
   }
 }
 

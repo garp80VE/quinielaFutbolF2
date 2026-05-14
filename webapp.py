@@ -31,7 +31,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import gspread
 import requests
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File
+from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from google.oauth2.service_account import Credentials
 from pydantic import BaseModel
@@ -1931,10 +1931,15 @@ async def auth_check(body: AuthCheck, response: Response):
     # Usar teléfono como sesión si existe, si no email
     session_key = _normalize_phone(body.phone) if body.phone else body.email.strip().lower()
     _set_session_cookie(response, session_key)
+    pagado_raw = p.get("PAGADO", "").upper()
+    is_paid    = pagado_raw in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X")
+    stripe_activo = state.get("cfg", {}).get("STRIPE_ACTIVO", "0") == "1"
     return {"registered": True, "nombre": p.get("NOMBRE", ""),
             "tab": p.get("TAB_NOMBRE", ""),
             "phone": p.get("WHATSAPP","") or p.get("TELEFONO",""),
-            "email": p.get("EMAIL","")}
+            "email": p.get("EMAIL",""),
+            "pagado": is_paid,
+            "stripe_activo": stripe_activo}
 
 
 @app.post("/api/auth/register")
@@ -2652,6 +2657,7 @@ ADMIN_CONFIG_FIELDS = [
     ("SORTEO_FECHA",        "Fecha del sorteo en vivo — activa la pestaña sorteo"),
     ("SORTEO_HORA",         "Hora del sorteo en vivo (en UTC — España verano = UTC+2, réstale 2h)"),
     ("SORTEO_ANIM",         "Animación del sorteo"),
+    ("STRIPE_ACTIVO",       "Pago con tarjeta activo (1=sí, 0=no)"),
     ("FREEZE_EQUIPOS",      "Congelar nombres de equipos (1=no sobreescribir desde ESPN, 0=actualizar)"),
     ("MODO_PRUEBA",         "Modo Prueba (1=usar ESPN_ID_TEST para scores, 0=producción)"),
     ("PTS_RESULTADO",       "Puntos por ganador correcto"),
@@ -2906,6 +2912,8 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
                             tie_1st=tie_1st, tie_2nd=tie_2nd,
                             fee_pct=fee_pct)
         prize["costo"] = cost
+        prize["stripe_activo"] = cfg.get("STRIPE_ACTIVO", "0") == "1"
+        prize["torneo_activo"] = _torneo_activo().get("activo", False)
         return {"prize": prize, "players": players}
     except HTTPException:
         raise
@@ -3108,8 +3116,10 @@ async def admin_player_paid(body: dict, ql_admin: str = Cookie(default="")):
 
 @app.post("/api/admin/player-delete")
 async def admin_player_delete(body: dict, ql_admin: str = Cookie(default="")):
-    """Elimina un jugador de la hoja JUGADORES (borra la fila completa). Acepta email o phone."""
+    """Elimina un jugador de la hoja JUGADORES y su pestaña de picks."""
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    if _torneo_activo().get("activo"):
+        raise HTTPException(403, "No se puede eliminar jugadores una vez iniciado el torneo")
     email = (body.get("email") or "").strip().lower()
     phone = _normalize_phone(body.get("phone") or "")
     if not email and not phone:
@@ -3121,15 +3131,27 @@ async def admin_player_delete(body: dict, ql_admin: str = Cookie(default="")):
         if pk in headers:
             phone_col = headers.index(pk) + 1
             break
+    tab_col = headers.index("TAB_NOMBRE") + 1 if "TAB_NOMBRE" in headers else (
+              headers.index("TAB SHEET") + 1 if "TAB SHEET" in headers else None)
     for i, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
         row_email = (row[email_col - 1].strip().lower() if email_col and email_col - 1 < len(row) else "")
         row_phone = _normalize_phone(row[phone_col - 1] if phone_col and phone_col - 1 < len(row) else "")
         if (email and row_email == email) or (phone and row_phone == phone):
+            tab_nombre = row[tab_col - 1].strip() if tab_col and tab_col - 1 < len(row) else ""
             with _sheets_lock:
                 _sheets_retry(lambda r=i: ws.delete_rows(r))
-            # Limpiar cache
+            if tab_nombre:
+                try:
+                    reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
+                    if tab_nombre not in reserved:
+                        tab_ws = _sheets_retry(lambda t=tab_nombre: state["sh"].worksheet(t))
+                        _sheets_retry(lambda t=tab_ws: state["sh"].del_worksheet(t))
+                        print(f"[admin] Pestaña '{tab_nombre}' eliminada")
+                except Exception as e:
+                    print(f"[admin] No se pudo borrar pestaña '{tab_nombre}': {e}")
             if email: _cache["players"].pop(f"email:{email}", None)
             if phone: _cache["players"].pop(f"phone:{phone}", None)
+            _invalidate_players()
             return {"ok": True}
     raise HTTPException(404, "Jugador no encontrado")
 
@@ -4965,6 +4987,118 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True, "msg": "Setup iniciado"}
 
+
+
+# ─── Stripe ────────────────────────────────────────────────────────────────────
+STRIPE_PK          = os.getenv("STRIPE_PUBLISHABLE_KEY", "")
+STRIPE_SK          = os.getenv("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SEC = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+QUINIELA_FEE_USD   = float(os.getenv("QUINIELA_FEE_USD", "10.00"))
+_STRIPE_PCT        = 0.029
+_STRIPE_FLAT       = 0.30
+
+def _stripe_gross_up(net_usd: float) -> int:
+    """Retorna centavos a cobrar para que después de comisión Stripe quede net_usd."""
+    gross = (net_usd + _STRIPE_FLAT) / (1 - _STRIPE_PCT)
+    return round(gross * 100)
+
+def _mark_player_paid_internal(phone: str) -> bool:
+    """Marca jugador como pagado sin requerir autenticación admin (para webhook)."""
+    try:
+        phone = _normalize_phone(phone)
+        if not phone:
+            return False
+        ws, rows, header_idx, headers = _read_jugadores_cached()
+        if "PAGADO" not in headers:
+            col = len(headers) + 1
+            with _sheets_lock:
+                _sheets_retry(lambda: ws.update_cell(header_idx + 1, col, "PAGADO"))
+            headers.append("PAGADO")
+        pagado_col = headers.index("PAGADO") + 1
+        phone_col  = (headers.index("WHATSAPP") + 1 if "WHATSAPP" in headers
+                      else headers.index("TELEFONO") + 1 if "TELEFONO" in headers else None)
+        if not phone_col:
+            return False
+        for i, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
+            row_phone = _normalize_phone(row[phone_col - 1] if phone_col - 1 < len(row) else "")
+            if row_phone == phone:
+                with _sheets_lock:
+                    _sheets_retry(lambda r=i, c=pagado_col: ws.update_cell(r, c, "1"))
+                _invalidate_players()
+                print(f"[stripe] Jugador {phone} marcado como pagado")
+                return True
+        return False
+    except Exception as e:
+        print(f"[stripe] Error marcando pagado: {e}")
+        return False
+
+
+# ─── Stripe endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/api/stripe/config")
+async def stripe_config():
+    gross = _stripe_gross_up(QUINIELA_FEE_USD)
+    return {"publishable_key": STRIPE_PK, "amount_cents": gross,
+            "amount_usd": round(gross / 100, 2), "net_usd": QUINIELA_FEE_USD, "currency": "usd"}
+
+@app.post("/api/stripe/create-checkout")
+async def stripe_create_checkout(body: dict):
+    import stripe as _stripe
+    _stripe.api_key = STRIPE_SK
+    if not _stripe.api_key:
+        raise HTTPException(503, "Stripe no configurado")
+    phone  = body.get("phone", "")
+    nombre = body.get("nombre", "")
+    gross  = _stripe_gross_up(QUINIELA_FEE_USD)
+    base_url = body.get("base_url", "")
+    session = _stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{"price_data": {"currency": "usd",
+            "product_data": {"name": f"Quiniela WCF 2026 F2 — {nombre}"},
+            "unit_amount": gross}, "quantity": 1}],
+        mode="payment",
+        success_url=f"{base_url}/?payment=success&phone={phone}",
+        cancel_url=f"{base_url}/?payment=cancel",
+        metadata={"phone": phone, "nombre": nombre},
+    )
+    return {"url": session.url}
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request):
+    import stripe as _stripe, traceback, json as _json
+    payload = await request.body()
+    sig     = request.headers.get("stripe-signature", "")
+    try:
+        if STRIPE_WEBHOOK_SEC and sig:
+            try:
+                event = _stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SEC)
+            except Exception as e:
+                print(f"[stripe] Firma inválida: {e}")
+                raise HTTPException(400, "Firma inválida")
+        else:
+            event = _json.loads(payload)
+        if hasattr(event, "to_dict"):
+            event = event.to_dict()
+        elif not isinstance(event, dict):
+            event = _json.loads(_json.dumps(event))
+        event_type = event.get("type", "")
+        print(f"[stripe] Evento: {event_type}")
+        if event_type == "checkout.session.completed":
+            session  = event.get("data", {}).get("object", {})
+            metadata = session.get("metadata", {})
+            phone    = metadata.get("phone", "")
+            nombre   = metadata.get("nombre", "")
+            amount   = session.get("amount_total", 0)
+            print(f"[stripe] Pago: {nombre} ({phone}) — ${amount/100:.2f} USD")
+            if phone:
+                ok = _mark_player_paid_internal(phone)
+                print(f"[stripe] {'✅' if ok else '⚠️'} {phone} {'marcado' if ok else 'no encontrado'}")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[stripe] ❌ Error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, f"Error interno: {e}")
 
 # ─── Entry point ───────────────────────────────────────────────────────────────────────────────────
 
