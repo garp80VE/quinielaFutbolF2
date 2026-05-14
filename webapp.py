@@ -5001,10 +5001,45 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
 
                 ronda = parse_ronda(comp, ev.get("ev_data"), eq1, eq2)
 
+                # ── Extraer ESPN bracket slot (posición en el bracket de ESPN) ──
+                # ESPN numera los juegos por posición de bracket, no por fecha.
+                # Guardamos este valor para poder traducirlo al orden cronológico
+                # que usamos en HORARIOS (Opción B - fix permanente de cruces).
+                espn_slot = None
+                for _bf in ['bracketOrder', 'bracketGameNumber', 'bracketNumber', 'bracketSequence']:
+                    _v = comp.get(_bf)
+                    if _v is not None:
+                        espn_slot = _v
+                        break
+                if espn_slot is None:
+                    _t = comp.get('type', {})
+                    if isinstance(_t, dict):
+                        espn_slot = _t.get('bracketOrder') or _t.get('bracketGameNumber')
+                # Intentar también en data["competitions"] (distinto de header)
+                if espn_slot is None:
+                    _fc_list = data.get('competitions', [])
+                    if _fc_list:
+                        _fc = _fc_list[0]
+                        for _bf in ['bracketOrder', 'bracketGameNumber', 'bracketNumber']:
+                            _v = _fc.get(_bf)
+                            if _v is not None:
+                                espn_slot = _v
+                                break
+                # Intentar en el ev_data del scoreboard
+                if espn_slot is None:
+                    _ev_comps = (ev.get("ev_data") or {}).get("competitions", [{}])
+                    if _ev_comps:
+                        _ec = _ev_comps[0]
+                        espn_slot = (_ec.get('bracketOrder') or _ec.get('bracketGameNumber')
+                                     or _ec.get('bracketNumber'))
+                if espn_slot is not None:
+                    print(f"  [admin-setup] ESPN bracketSlot={espn_slot} para id={ev['id']} ({eq1} vs {eq2})")
+
                 juegos.append({"id": ev["id"], "eq1": eq1, "eq2": eq2,
                                "fecha": fecha_str, "hora": hora_str,
                                "ronda": ronda,
-                               "fecha_raw": ev.get("fecha_raw", "")})
+                               "fecha_raw": ev.get("fecha_raw", ""),
+                               "espn_slot": espn_slot})
                 time.sleep(0.3)
 
             # ── Fallback por posición: si parse_ronda no pudo determinar la ronda ─
@@ -5014,6 +5049,62 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
             for idx_j, j in enumerate(juegos):
                 if not j["ronda"]:  # parse_ronda devolvió ""
                     j["ronda"] = BRACKET_RONDAS[idx_j] if idx_j < len(BRACKET_RONDAS) else "R32"
+
+            # ── Opción B: traducir ESPN bracket slots → posición cronológica ────
+            # ESPN numera cada juego por su posición de bracket (no por fecha).
+            # "Round of 32 3 Winner" en ESPN puede referirse al JGO que nosotros
+            # tenemos en la posición 1 cronológicamente.  Para que _propagate_bracket
+            # resuelva correctamente, reescribimos esos refs con nuestra posición.
+            #
+            # Cómo funciona:
+            #   1. Para cada ronda, ordenar los juegos por fecha (ya están así).
+            #      El índice 1-based de cada juego en esa ronda es su posición cronológica.
+            #   2. Si ESPN proporcionó bracketOrder para un juego, guardamos
+            #      espn_slot → posición_cronológica en un mapa por ronda.
+            #   3. Para juegos de rondas posteriores (R16, QF, …) cuyo eq1/eq2
+            #      es "Round of X Y Winner", reemplazamos Y (slot ESPN) por Y' (nuestro
+            #      orden cronológico), siempre que tengamos el mapa para esa ronda.
+
+            # Mapa por ronda: {ronda_label: {espn_slot_int: chrono_pos_int}}
+            _espn_to_chrono: dict = {}
+            _RONDAS_BRACKET = ['R32', 'R16', 'QF', 'SF']
+            _RONDA_SIZE     = {'R32': 32, 'R16': 16, 'QF': 8, 'SF': 4}
+
+            for _rlbl in _RONDAS_BRACKET:
+                _rj = [j for j in juegos if j.get('ronda') == _rlbl]
+                _sm: dict = {}
+                for _chrono, _j in enumerate(_rj, start=1):
+                    _slot = _j.get('espn_slot')
+                    if _slot is not None:
+                        try:
+                            _sm[int(_slot)] = _chrono
+                        except (ValueError, TypeError):
+                            pass
+                if _sm:
+                    _espn_to_chrono[_rlbl] = _sm
+                    print(f"[admin-setup] Bracket slot map {_rlbl}: {_sm}")
+
+            if _espn_to_chrono:
+                _translated = 0
+                for _j in juegos:
+                    for _fld in ('eq1', 'eq2'):
+                        _ref = _parse_bracket_ref(_j[_fld])
+                        if _ref and _ref['ronda'] in _espn_to_chrono:
+                            _sm    = _espn_to_chrono[_ref['ronda']]
+                            _espot = _ref['nth']
+                            _cpos  = _sm.get(_espot)
+                            if _cpos is not None and _cpos != _espot:
+                                _rsize = _RONDA_SIZE.get(_ref['ronda'], 32)
+                                _old   = _j[_fld]
+                                _j[_fld] = f"Round of {_rsize} {_cpos} Winner"
+                                print(f"[admin-setup] bracket-translate: {_old!r} → {_j[_fld]!r} "
+                                      f"(ESPN slot {_espot} → chrono {_cpos})")
+                                _translated += 1
+                print(f"[admin-setup] Opción-B: {_translated} refs de bracket traducidos.")
+            else:
+                print("[admin-setup] AVISO: ESPN no proporcionó bracketOrder. "
+                      "Los cruces de bracket quedan con el orden ESPN. "
+                      "Verifica manualmente si los R16 están correctos.")
 
             # ── Asignar jornada a juegos sin grupo ───────────────────────────────
             jornada_base = int(cfg.get("JORNADA", 1) or 1)
