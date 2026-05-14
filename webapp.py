@@ -201,9 +201,13 @@ def idx_col(n):
 # El SW usa este valor en el nombre del caché, forzando invalidación en iOS/Android.
 APP_VERSION = str(int(time.time()))
 
+# ─── Directorio persistente (Railway Volume montado en /data) ─────────────────
+DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 # ─── Push Notifications (VAPID) ───────────────────────────────────────────────
-_VAPID_FILE = Path(__file__).parent / "vapid_keys.json"
-_SUBS_FILE  = Path(__file__).parent / "push_subs.json"
+_VAPID_FILE = DATA_DIR / "vapid_keys.json"
+_SUBS_FILE  = DATA_DIR / "push_subs.json"
 _push_subs: list = []   # [{endpoint, keys:{p256dh, auth}, _phone, _email}]
 
 def _subs_load():
@@ -1823,17 +1827,17 @@ async def favicon():
 
 @app.get("/icon-192.png")
 async def icon192():
-    p = Path(__file__).parent / "icon-192.png"
-    if p.exists():
-        return Response(content=p.read_bytes(), media_type="image/png")
+    for p in [DATA_DIR / "icon-192.png", Path(__file__).parent / "icon-192.png"]:
+        if p.exists():
+            return Response(content=p.read_bytes(), media_type="image/png")
     return Response(content=_make_png(192), media_type="image/png")
 
 
 @app.get("/icon-512.png")
 async def icon512():
-    p = Path(__file__).parent / "icon-512.png"
-    if p.exists():
-        return Response(content=p.read_bytes(), media_type="image/png")
+    for p in [DATA_DIR / "icon-512.png", Path(__file__).parent / "icon-512.png"]:
+        if p.exists():
+            return Response(content=p.read_bytes(), media_type="image/png")
     return Response(content=_make_png(512), media_type="image/png")
 
 
@@ -3459,7 +3463,7 @@ async def admin_upload_logo(file: UploadFile = File(...),
 
         data  = await file.read()
         img   = Image.open(io.BytesIO(data)).convert("RGBA")
-        base  = Path(__file__).parent
+        base  = DATA_DIR
 
         # Recorte cuadrado centrado
         w, h  = img.size
@@ -3499,13 +3503,10 @@ async def get_version():
 
 @app.get("/logo.png")
 async def get_logo():
-    p = Path(__file__).parent / "logo.png"
-    if p.exists():
-        return Response(content=p.read_bytes(), media_type="image/png")
-    # Fallback al icon-192
-    p2 = Path(__file__).parent / "icon-192.png"
-    if p2.exists():
-        return Response(content=p2.read_bytes(), media_type="image/png")
+    for p in [DATA_DIR / "logo.png", DATA_DIR / "icon-192.png",
+              Path(__file__).parent / "logo.png", Path(__file__).parent / "icon-192.png"]:
+        if p.exists():
+            return Response(content=p.read_bytes(), media_type="image/png")
     return Response(content=_make_png(256), media_type="image/png")
 
 
@@ -4796,21 +4797,11 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
                 pass
 
             uid_filters = set()
-            ligas_sin_id = []
             for lg in leagues:
                 eid = ligas_map.get(lg, "")
                 if eid:
                     uid_filters.add(f"l:{eid}")
-                else:
-                    ligas_sin_id.append(lg)
-                print(f"[admin-setup] Liga: {lg} | ESPN_ID: {eid or '(NO CONFIGURADO)'}")
-
-            if ligas_sin_id:
-                state["_setup_status"] = (
-                    f"ERROR: Faltan ESPN_ID en la pestaña Ligas para: {', '.join(ligas_sin_id)}. "
-                    f"Agrega la columna ESPN_ID con el número correspondiente."
-                )
-                return
+                print(f"[admin-setup] Liga: {lg} | ESPN_ID: {eid or '(sin ID — usa endpoint directo)'}")
 
             summary_url = (f"{ESPN_BASE}/{leagues[0]}/summary" if len(leagues) == 1
                            else f"{ESPN_BASE}/all/summary")
@@ -5112,3 +5103,4 @@ if __name__ == "__main__":
     os.environ["QL_PORT"]  = str(args.port)
 
     uvicorn.run(app, host="0.0.0.0", port=args.port)
+                                                                                                                                                                                                                                                                                                                                                                                      
