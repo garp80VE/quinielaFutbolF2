@@ -5432,4 +5432,73 @@ function sorteoStartAnim(tipo, elegibles) {
       // ── Nombres en segmentos ────────────────────────────────────────
       names.forEach((name,i) => {
         const mid=angle+i*sliceA+sliceA/2;
-        const isWin=lan
+        const isWin=landed&&name.toLowerCase()===landedName?.toLowerCase();
+        ctx.save();
+        ctx.translate(cx+Ri*0.60*Math.cos(mid), cy+Ri*0.60*Math.sin(mid));
+        ctx.rotate(mid+Math.PI/2);
+        const fs=Math.max(8,Math.min(12,Ri*sliceA*0.38));
+        ctx.font=`bold ${fs}px system-ui`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillStyle = isWin ? '#1a0a3e' : '#f1f5f9';
+        let txt=name;
+        const mw=Ri*sliceA*0.75;
+        while(ctx.measureText(txt).width>mw&&txt.length>3) txt=txt.slice(0,-1);
+        if(txt!==name) txt+='…';
+        ctx.fillText(txt,0,0);
+        ctx.restore();
+      });
+
+      // ── Hub central ─────────────────────────────────────────────────
+      const hg=ctx.createRadialGradient(cx-Rh*.3,cy-Rh*.3,Rh*.05,cx,cy,Rh);
+      hg.addColorStop(0,'#f1f5f9'); hg.addColorStop(0.5,'#94a3b8'); hg.addColorStop(1,'#334155');
+      ctx.beginPath(); ctx.arc(cx,cy,Rh,0,Math.PI*2);
+      ctx.fillStyle=hg; ctx.fill();
+      ctx.strokeStyle='#ca8a04'; ctx.lineWidth=2; ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx,cy,Rh*.25,0,Math.PI*2);
+      ctx.fillStyle='#1e293b'; ctx.fill();
+
+      // ── Puntero fijo arriba ─────────────────────────────────────────
+      ctx.beginPath();
+      ctx.moveTo(cx, cy-Ri+2);
+      ctx.lineTo(cx-7, cy-R*0.88);
+      ctx.lineTo(cx+7, cy-R*0.88);
+      ctx.closePath();
+      ctx.fillStyle = landed ? '#fbbf24' : '#f8fafc';
+      ctx.fill();
+      ctx.strokeStyle = landed ? '#b45309' : '#475569';
+      ctx.lineWidth=1.5; ctx.stroke();
+
+      // ── Overlay ganador ─────────────────────────────────────────────
+      if (landed && landedName) {
+        ctx.fillStyle='rgba(12,10,26,.9)';
+        ctx.beginPath(); ctx.roundRect(cx-W*.42,cy-40,W*.84,80,16); ctx.fill();
+        ctx.strokeStyle='#fbbf24'; ctx.lineWidth=2.5; ctx.stroke();
+        ctx.fillStyle='#fbbf24';
+        ctx.font=`bold ${Math.min(12,W*.033)}px system-ui`;
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText('🏆 GANADOR', cx, cy-18);
+        ctx.fillStyle='white';
+        ctx.font=`bold ${Math.min(19,W*.052)}px system-ui`;
+        ctx.fillText(landedName, cx, cy+16);
+      }
+
+      frame=requestAnimationFrame(drawRuleta);
+    }
+    drawRuleta();
+
+    _sorteoAnim = {
+      excite() { exciting=true; setTimeout(()=>{ exciting=false; },3000); },
+      reveal(name) {
+        landedName = name;
+        _sorteoRevealTarget = { name, ts: Date.now() };
+      },
+      restart() { landed=false; landedName=null; decel=null; exciting=false; _sorteoRevealTarget=null; },
+      stop() { running=false; if(frame) cancelAnimationFrame(frame); frame=null; },
+      onLanded: null
+    };
+  }  // fin if/else tipo animación
+}    // fin function sorteoIniciarAnimacion (o bloque equivalente)
+
+</script>
+</body>
+</html>
