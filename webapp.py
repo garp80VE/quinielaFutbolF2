@@ -656,6 +656,57 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
         _invalidate_games()
         print(f"[propagate-bracket] {len(changes)} cambios: {changes}")
 
+    # ── Paso 3: actualizar PICK_EQ1/PICK_EQ2/PICK_GANADOR en tabs de jugadores ──
+    # Reemplaza placeholder_map keys ("Round of 32 3 Winner", "Ganador Octavos de Final (1)", …)
+    # por el nombre real del equipo en las columnas de picks de cada jugador.
+    if placeholder_map:
+        try:
+            if not _players_cache_ok():
+                _load_players_cache()
+
+            seen_tabs: set = set()
+            tab_names: list = []
+            for k, v in _cache["players"].items():
+                if k.startswith("phone:") and v.get("TAB_NOMBRE"):
+                    tab = v["TAB_NOMBRE"]
+                    if tab not in seen_tabs:
+                        seen_tabs.add(tab)
+                        tab_names.append(tab)
+
+            fila_fin_p = fila_inicio + total_juegos - 1
+            # Columnas de picks: F=PICK_EQ1(5), I=PICK_EQ2(8), J=PICK_GANADOR(9) — 0-indexed
+            PICK_COLS = [("F", 5), ("I", 8), ("J", 9)]
+
+            for tab_name in tab_names:
+                try:
+                    with _sheets_lock:
+                        ws_p  = sh.worksheet(tab_name)
+                        rows  = ws_p.get(f"A{fila_inicio}:J{fila_fin_p}")
+                    pick_batch = []
+                    for i, row in enumerate(rows):
+                        def _c(idx, r=row): return r[idx].strip() if len(r) > idx else ""
+                        row_num = fila_inicio + i
+                        jgo_val = _c(0)
+                        for col_letter, col_idx in PICK_COLS:
+                            val = _c(col_idx)
+                            if val in placeholder_map:
+                                new_val = placeholder_map[val]
+                                pick_batch.append({
+                                    "range":  f"{col_letter}{row_num}",
+                                    "values": [[new_val]],
+                                })
+                                changes.append(
+                                    f"[{tab_name}] JGO {jgo_val} {col_letter}: {val!r} → {new_val!r}"
+                                )
+                    if pick_batch:
+                        with _sheets_lock:
+                            ws_p.batch_update(pick_batch, value_input_option="RAW")
+                        print(f"[propagate-bracket] {tab_name}: {len(pick_batch)} picks actualizados")
+                except Exception as _e_tab:
+                    print(f"[propagate-bracket] error actualizando tab {tab_name}: {_e_tab}")
+        except Exception as _e_picks:
+            print(f"[propagate-bracket] error en Paso 3 (picks): {_e_picks}")
+
     return changes
 
 
