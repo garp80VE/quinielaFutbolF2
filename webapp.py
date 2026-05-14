@@ -513,6 +513,21 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
     for k in ronda_games:
         ronda_games[k].sort(key=lambda g: int(g['jgo']) if g['jgo'].isdigit() else 0)
 
+    # ── WC2026: traducir ESPN bracket slot → posición cronológica en R32 ─────
+    # ESPN numera los R32 por posición de bracket (no por fecha de juego).
+    # Cuando HORARIOS tiene "Round of 32 X Winner", X es el slot ESPN, no el JGO.
+    # Esta tabla convierte: ESPN_slot → posición cronológica entre los R32 juegos.
+    # Derivada del bracket FIFA WC2026 publicado.
+    _WC2026_R32 = {
+        1:3, 2:6, 3:1, 4:4, 5:12, 6:11, 7:10, 8:9,
+        9:2, 10:5, 11:7, 12:8, 13:15, 14:14, 15:13, 16:16
+    }
+    _use_wc2026 = (
+        "fifa"  in cfg.get("ESPN_LEAGUE", "").lower() or
+        "world" in cfg.get("ESPN_LEAGUE", "").lower() or
+        cfg.get("BRACKET_SLOT_MAP", "").strip().upper() == "WC2026"
+    )
+
     def resolve(name, depth=0):
         if not name or depth > 8:
             return name
@@ -520,10 +535,14 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
         if not ref:
             return name
         lst = ronda_games.get(ref['ronda'], [])
-        nth = ref['nth'] - 1
-        if nth < 0 or nth >= len(lst):
+        nth = ref['nth']
+        # Para R32 en WC2026: ESPN slot ≠ nuestro orden cronológico → traducir
+        if ref['ronda'] == 'R32' and _use_wc2026 and len(lst) == 16:
+            nth = _WC2026_R32.get(nth, nth)
+        idx = nth - 1
+        if idx < 0 or idx >= len(lst):
             return name
-        g = lst[nth]
+        g = lst[idx]
         if not g['ganador']:
             return name   # sin resultado aún
         if ref['type'] == 'loser':
@@ -4200,6 +4219,141 @@ async def admin_propagate_bracket(ql_admin: str = Cookie(default="")):
         raise HTTPException(500, str(e))
 
 
+@app.post("/api/admin/refresh-bracket-refs")
+async def admin_refresh_bracket_refs(ql_admin: str = Cookie(default="")):
+    """
+    Resetea EQ1/EQ2 de juegos R16+ volviendo a la data de ESPN (placeholders
+    originales como 'Round of 32 X Winner'), luego corre propagate-bracket.
+    Necesario cuando los cruces quedaron mal por el mismatch ESPN-slot vs JGO.
+    """
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+
+    def _run():
+        try:
+            cfg      = state["cfg"]
+            league   = cfg.get("ESPN_LEAGUE", "fifa.world")
+            leagues  = [l.strip() for l in league.split(",") if l.strip()]
+            fila_ini = int(cfg.get("FILA_INICIO_DATOS", 3))
+            total    = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+            fila_fin = fila_ini + total - 1
+            sh       = state["sh"]
+
+            state["_setup_status"] = "running — leyendo HORARIOS..."
+            with _sheets_lock:
+                ws_h  = sh.worksheet("HORARIOS")
+                filas = ws_h.get(f"A{fila_ini}:G{fila_fin}")
+
+            summary_base = f"{ESPN_BASE}/{leagues[0]}/summary"
+
+            # WC2026 ESPN slot → posición cronológica para R32
+            _WC_R32 = {1:3, 2:6, 3:1, 4:4, 5:12, 6:11, 7:10, 8:9,
+                       9:2, 10:5, 11:7, 12:8, 13:15, 14:14, 15:13, 16:16}
+            _is_wc  = ("fifa"  in league.lower() or "world" in league.lower())
+
+            batch = []
+            refreshed = 0
+            skipped   = 0
+
+            for i, fila in enumerate(filas):
+                def c(idx, f=fila): return f[idx].strip() if len(f) > idx else ""
+                ronda    = c(1)
+                if ronda not in ('R16', 'QF', 'SF', '3ER', 'FINAL'):
+                    continue
+                espn_id = c(6)
+                if not espn_id:
+                    skipped += 1
+                    continue
+
+                row = fila_ini + i
+                state["_setup_status"] = f"running — JGO {c(0)} ({ronda}) fetching ESPN..."
+
+                data = (espn_get(summary_base, {"event": espn_id, "lang": "es"}) or
+                        espn_get(ESPN_FALLBACK,  {"event": espn_id, "lang": "es"}))
+                if not data:
+                    skipped += 1
+                    time.sleep(0.3)
+                    continue
+
+                try:
+                    comp = data["header"]["competitions"][0]
+                except (KeyError, IndexError):
+                    skipped += 1
+                    time.sleep(0.3)
+                    continue
+
+                competitors = comp.get("competitors", [])
+                new_eq1 = new_eq2 = None
+
+                for cx in competitors:
+                    name = cx.get("team", {}).get("displayName", "") or ""
+                    name = name.strip()
+                    if not name:
+                        continue
+                    # Si ESPN devuelve "Round of 32 X Winner" y es WC2026,
+                    # traducir slot ESPN → nuestra posición cronológica
+                    ref = _parse_bracket_ref(name)
+                    if ref and ref['ronda'] == 'R32' and _is_wc:
+                        new_nth = _WC_R32.get(ref['nth'])
+                        if new_nth and new_nth != ref['nth']:
+                            print(f"[refresh-bracket] slot {ref['nth']} → JGO {new_nth}: {name!r}")
+                            name = f"Round of 32 {new_nth} Winner"
+                    # Si ESPN ya devuelve equipos reales, úsalos tal cual
+                    is_home = cx.get("homeAway") == "home"
+                    if is_home:
+                        new_eq1 = name
+                    else:
+                        new_eq2 = name
+
+                # Fallback si homeAway no está definido
+                if not new_eq1 and len(competitors) > 0:
+                    new_eq1 = (competitors[0].get("team", {}).get("displayName", "") or "").strip()
+                if not new_eq2 and len(competitors) > 1:
+                    new_eq2 = (competitors[1].get("team", {}).get("displayName", "") or "").strip()
+
+                cur_eq1 = c(4)
+                cur_eq2 = c(5)
+                changed = False
+                if new_eq1 and new_eq1 != cur_eq1:
+                    batch.append({"range": f"E{row}", "values": [[new_eq1]]})
+                    print(f"[refresh-bracket] JGO {c(0)} EQ1: {cur_eq1!r} → {new_eq1!r}")
+                    changed = True
+                if new_eq2 and new_eq2 != cur_eq2:
+                    batch.append({"range": f"F{row}", "values": [[new_eq2]]})
+                    print(f"[refresh-bracket] JGO {c(0)} EQ2: {cur_eq2!r} → {new_eq2!r}")
+                    changed = True
+                if changed:
+                    refreshed += 1
+                time.sleep(0.3)
+
+            if batch:
+                with _sheets_lock:
+                    ws_h.batch_update(batch, value_input_option="RAW")
+                _invalidate_games()
+                print(f"[refresh-bracket] {len(batch)} celdas actualizadas en {refreshed} juegos")
+
+            # Propagar con resolve() ya corregido (WC2026 slot mapping activo)
+            state["_setup_status"] = "running — propagando bracket..."
+            try:
+                chgs = _propagate_bracket(ws_h=ws_h)
+                print(f"[refresh-bracket] propagate: {len(chgs)} cambios")
+            except Exception as _pe:
+                print(f"[refresh-bracket] propagate error: {_pe}")
+
+            state["_setup_status"] = (
+                f"done — {refreshed} juegos actualizados desde ESPN, bracket propagado."
+            )
+
+        except Exception as e:
+            import traceback
+            print(f"[refresh-bracket] ERROR: {traceback.format_exc()}")
+            state["_setup_status"] = f"ERROR: {e}"
+
+    state["_setup_status"] = "running"
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "msg": "Refresh bracket iniciado"}
+
+
 @app.post("/api/admin/sync-real-results")
 async def admin_sync_real_results(ql_admin: str = Cookie(default="")):
     """
@@ -5102,9 +5256,28 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
                                 _translated += 1
                 print(f"[admin-setup] Opción-B: {_translated} refs de bracket traducidos.")
             else:
-                print("[admin-setup] AVISO: ESPN no proporcionó bracketOrder. "
-                      "Los cruces de bracket quedan con el orden ESPN. "
-                      "Verifica manualmente si los R16 están correctos.")
+                # Fallback WC2026 hardcodeado cuando ESPN no da bracketOrder
+                _r32_cnt = sum(1 for _j in juegos if _j.get("ronda") == "R32")
+                _is_wc26 = ("fifa" in league.lower() or "world" in league.lower()) and _r32_cnt == 16
+                if _is_wc26:
+                    _WC_FALLBACK = {1:3, 2:6, 3:1, 4:4, 5:12, 6:11, 7:10, 8:9,
+                                   9:2, 10:5, 11:7, 12:8, 13:15, 14:14, 15:13, 16:16}
+                    _wc_translated = 0
+                    for _j in juegos:
+                        for _fld in ("eq1", "eq2"):
+                            _ref = _parse_bracket_ref(_j[_fld])
+                            if _ref and _ref["ronda"] == "R32":
+                                _cpos = _WC_FALLBACK.get(_ref["nth"])
+                                if _cpos and _cpos != _ref["nth"]:
+                                    _old = _j[_fld]
+                                    _j[_fld] = f"Round of 32 {_cpos} Winner"
+                                    print(f"[admin-setup] WC2026-fallback: {_old!r} -> {_j[_fld]!r}")
+                                    _wc_translated += 1
+                    print(f"[admin-setup] WC2026 fallback: {_wc_translated} refs traducidos.")
+                else:
+                    print("[admin-setup] AVISO: ESPN no proporcionó bracketOrder. "
+                          "Los cruces de bracket quedan con el orden ESPN. "
+                          "Verifica manualmente si los R16 están correctos.")
 
             # ── Asignar jornada a juegos sin grupo ───────────────────────────────
             jornada_base = int(cfg.get("JORNADA", 1) or 1)
@@ -5138,6 +5311,7 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
                 _sheets_retry(lambda v=valores, r=rng: ws_h.update(v, r, value_input_option="RAW"))
                 print(f"[admin-setup] {len(valores)} filas escritas en HORARIOS")
 
+            # ── Actualizar TOTAL_JUEGOS_F2 en CONFIG con el valor real ────────
             # ── Actualizar TOTAL_JUEGOS_F2 en CONFIG con el valor real ────────
             if valores:
                 try:

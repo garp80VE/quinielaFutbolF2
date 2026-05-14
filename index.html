@@ -678,6 +678,13 @@
           </button>
           <div id="propagate-result" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;font-size:12px;color:#374151;max-height:140px;overflow-y:auto"></div>
 
+          <!-- Refrescar cruces de bracket desde ESPN -->
+          <button onclick="adminRefreshBracketRefs()" id="btn-refresh-bracket"
+            style="width:100%;background:linear-gradient(135deg,#0369a1,#0284c7);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
+            🔄 Refrescar cruces de bracket (ESPN)
+          </button>
+          <div id="refresh-bracket-result" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 12px;font-size:12px;color:#1e40af;max-height:80px;overflow-y:auto"></div>
+
           <!-- Fix fórmulas de scoring -->
           <button onclick="adminFixScoringFormulas()" id="btn-fix-scoring"
             style="width:100%;background:linear-gradient(135deg,#d97706,#b45309);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
@@ -4856,6 +4863,35 @@ async function adminPropagateBracket() {
     showToast('❌ ' + e.message);
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🔗 Propagar bracket al sheet'; }
+  }
+}
+
+async function adminRefreshBracketRefs() {
+  const btn = document.getElementById('btn-refresh-bracket');
+  const res = document.getElementById('refresh-bracket-result');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Refrescando desde ESPN...'; }
+  if (res) { res.style.display='none'; res.textContent=''; }
+  try {
+    const r = await api('POST', '/api/admin/refresh-bracket-refs');
+    if (res) { res.style.display='block'; res.textContent = r.msg || 'Procesando en background — revisa el status del setup.'; }
+    showToast('🔄 Refresh bracket iniciado — espera el status...');
+    // Poll setup-status
+    let polls = 0;
+    const iv = setInterval(async () => {
+      try {
+        const s = await api('GET', '/api/admin/setup-status');
+        const st = s.status || '';
+        if (res) res.textContent = st;
+        if (st.startsWith('done') || st.startsWith('ERROR') || ++polls > 60) {
+          clearInterval(iv);
+          if (btn) { btn.disabled=false; btn.textContent='🔄 Refrescar cruces de bracket (ESPN)'; }
+          try { const g = await api('GET','/api/games'); if(g.games){S.games=g.games;S.groups={};for(const gm of S.games){const k=gm.ronda||gm.grupo||'?';if(!S.groups[k])S.groups[k]=[];S.groups[k].push(gm);}buildGroupsGrid();} } catch(_){}
+        }
+      } catch(_) { clearInterval(iv); }
+    }, 2000);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+    if (btn) { btn.disabled=false; btn.textContent='🔄 Refrescar cruces de bracket (ESPN)'; }
   }
 }
 
