@@ -600,7 +600,11 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                     continue   # ganador aún no es concreto
                 if dst[slot] == src['ganador']:
                     continue   # ya está correcto, no hacer nada
-                # Sobreescribir siempre (también cuando tiene valor incorrecto como clubs test)
+                # NO sobreescribir si Paso 1 ya resolvió un equipo concreto distinto
+                # (el emparejamiento secuencial de Paso 2 puede no coincidir con el bracket real de ESPN)
+                if dst[slot] and not _parse_bracket_ref(dst[slot]):
+                    continue   # ya tiene un equipo concreto — resuelto por Paso 1, no pisar
+                # Sobreescribir solo si el slot está vacío o es aún un placeholder
                 old_val = dst[slot] or "''"
                 if dst[slot] and _parse_bracket_ref(dst[slot]):
                     placeholder_map[dst[slot]] = src['ganador']
@@ -5095,14 +5099,4 @@ async def stripe_webhook(request: Request):
         print(f"[stripe] ❌ Error: {e}\n{traceback.format_exc()}")
         raise HTTPException(500, f"Error interno: {e}")
 
-# ─── Entry point ───────────────────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    import cfg as _cfg
-    args = _cfg.load("Quiniela WFC 2026 - F2 Webapp")
-
-    os.environ["QL_CREDS"] = args.creds
-    os.environ["QL_SHEET"] = args.sheet
-    os.environ["QL_PORT"]  = str(args.port)
-
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+# ─── Entry point ───────────────────────────────────────────────────────────────�
