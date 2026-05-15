@@ -4413,15 +4413,15 @@ async def admin_fix_bracket_wc2026(ql_admin: str = Cookie(default="")):
         # Cada entry: row → (formula_EQ1, formula_EQ2)
         bracket: dict = {}
 
-        # R16
-        bracket[row_of(17)] = (f"={kref(2)}",    f"={kref(5)}")    # P89: W2  vs W5
-        bracket[row_of(18)] = (f"={kref(1)}",    f"={kref(4)}")    # P90: W1  vs W4
-        bracket[row_of(19)] = (f"={kref(3)}",    f"={kref(7)}")    # P91: W3  vs W7
-        bracket[row_of(20)] = (f"={kref(6)}",    f"={kref(9)}")    # P92: W6  vs W9
-        bracket[row_of(21)] = (f"={kref(12)}",   f"={kref(11)}")   # P93: W12 vs W11
-        bracket[row_of(22)] = (f"={kref(10)}",   f"={kref(8)}")    # P94: W10 vs W8
-        bracket[row_of(23)] = (f"={kref(13)}",   f"={kref(15)}")   # P96: W13 vs W15
-        bracket[row_of(24)] = (f"={kref(14)}",   f"={kref(16)}")   # P95: W14 vs W16
+        # R16  (cruce oficial FIFA WC2026 — verificado vs. template xlsx)
+        bracket[row_of(17)] = (f"={kref(1)}",    f"={kref(4)}")    # W1  vs W4
+        bracket[row_of(18)] = (f"={kref(3)}",    f"={kref(6)}")    # W3  vs W6
+        bracket[row_of(19)] = (f"={kref(2)}",    f"={kref(5)}")    # W2  vs W5
+        bracket[row_of(20)] = (f"={kref(7)}",    f"={kref(8)}")    # W7  vs W8
+        bracket[row_of(21)] = (f"={kref(12)}",   f"={kref(11)}")   # W12 vs W11
+        bracket[row_of(22)] = (f"={kref(10)}",   f"={kref(9)}")    # W10 vs W9
+        bracket[row_of(23)] = (f"={kref(15)}",   f"={kref(14)}")   # W15 vs W14
+        bracket[row_of(24)] = (f"={kref(13)}",   f"={kref(16)}")   # W13 vs W16
 
         # QF
         bracket[row_of(25)] = (f"={kref(17)}",   f"={kref(18)}")   # P97:  W17 vs W18
