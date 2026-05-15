@@ -572,6 +572,15 @@
           🔄 Recargar partidos de ESPN
         </button>
       </div>
+        <!-- Fijar cruces bracket WC2026 (FIFA oficial) -->
+        <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:12px;padding:12px">
+          <p style="font-size:11px;font-weight:700;color:#065f46;margin:0 0 6px">⚙️ Setup bracket (hacer una vez antes del torneo)</p>
+          <button onclick="adminFixBracketWC2026()" id="btn-fix-bracket-wc2026"
+            style="width:100%;background:linear-gradient(135deg,#047857,#065f46);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+            🏆 Fijar cruces WC2026 (bracket oficial FIFA)
+          </button>
+          <div id="fix-bracket-wc2026-result" style="display:none;margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;font-size:12px;color:#065f46;max-height:120px;overflow-y:auto"></div>
+        </div>
       </div><!-- /adm-body-horarios -->
     </div>
 
@@ -677,13 +686,6 @@
             🔗 Propagar bracket al sheet
           </button>
           <div id="propagate-result" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;font-size:12px;color:#374151;max-height:140px;overflow-y:auto"></div>
-
-          <!-- Fijar cruces bracket WC2026 (FIFA oficial) -->
-          <button onclick="adminFixBracketWC2026()" id="btn-fix-bracket-wc2026"
-            style="width:100%;background:linear-gradient(135deg,#047857,#065f46);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
-            🏆 Fijar cruces WC2026 (bracket oficial FIFA)
-          </button>
-          <div id="fix-bracket-wc2026-result" style="display:none;background:#ecfdf5;border:1px solid #6ee7b7;border-radius:10px;padding:10px 12px;font-size:12px;color:#065f46;max-height:120px;overflow-y:auto"></div>
 
           <!-- Refrescar cruces de bracket desde ESPN -->
           <button onclick="adminRefreshBracketRefs()" id="btn-refresh-bracket"
