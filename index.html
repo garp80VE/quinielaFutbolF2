@@ -2814,8 +2814,21 @@ async function loadTabla(force=false) {
     function renderRow(row, i) {
       const pos    = posIdx >= 0 ? parseInt(row[posIdx]) : i + 1;
       const nombre = nombreIdx >= 0 ? (row[nombreIdx] || '') : '';
-      const badge  = prizeBadge[pos] || prizeBadge[`sorteo:${nombre.trim().toLowerCase()}`];
       const elim   = getElimStatus(nombre);
+
+      // Badge de premio: solo mostrar cuando está matemáticamente garantizado
+      // (univ_1st>=99 para 1ro, univ_2nd>=99 para 2do, sorteo siempre)
+      const pProb  = probMap[nombre.trim().toLowerCase()];
+      const sortBadge = prizeBadge[`sorteo:${nombre.trim().toLowerCase()}`];
+      let badge = sortBadge || null;
+      if (!badge && probHasData && pProb) {
+        if (pos === 1 && pProb.univ_1st >= 99)           badge = prizeBadge[1] || null;
+        else if (pos === 2 && pProb.univ_2nd >= 99 && pProb.univ_1st === 0) badge = prizeBadge[2] || null;
+        else if (pos >= 3 && pProb.univ_1st === 0 && pProb.univ_2nd === 0)  badge = prizeBadge[pos] || null;
+      } else if (!badge && !probHasData) {
+        // Sin datos de probabilidad aún (torneo no empezado) → no mostrar badge
+        badge = null;
+      }
 
       // Colores según estado
       const elimStyles = {

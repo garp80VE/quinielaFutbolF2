@@ -598,45 +598,17 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                 if raw and _parse_bracket_ref(raw):
                     placeholder_map[raw] = resolved  # para actualizar picks de jugadores
 
-    # ── Paso 2: rellenar EQ1/EQ2 vacíos usando ganadores de ronda anterior ──────
-    # Orden secuencial: pares de juegos src alimentan cada juego dst
-    # R32[0]+R32[1]→R16[0], R32[2]+R32[3]→R16[1], … mismo para R16→QF, QF→SF
-    RONDA_CHAIN = [('R32','R16'), ('R16','QF'), ('QF','SF')]
+    # ── Paso 2: DESHABILITADO ─────────────────────────────────────────────────
+    # El emparejamiento secuencial R32[0]+R32[1]→R16[0] NO aplica para WC2026
+    # donde el orden cronológico de ESPN ≠ orden de bracket.
+    # Los EQ1/EQ2 de R16+ se gestionan de dos formas:
+    #   a) Fórmulas en HORARIOS (=K4, =K7, etc.) → las pestañas de jugadores
+    #      las leen automáticamente via VLOOKUP — no hace falta código aquí.
+    #   b) Placeholders "Round of 32 X Winner" con mapping WC2026 en Paso 1.
+    # Paso 2 se eliminó porque pisaba celdas vacías con equipos incorrectos.
 
     def sorted_by_jgo(lst):
         return sorted(lst, key=lambda g: int(g['jgo']) if str(g['jgo']).isdigit() else 0)
-
-    for src_r, dst_r in RONDA_CHAIN:
-        src_lst = sorted_by_jgo(ronda_games.get(src_r, []))
-        dst_lst = sorted_by_jgo(ronda_games.get(dst_r, []))
-        for di, dst in enumerate(dst_lst):
-            for offset, (slot, col) in enumerate([('eq1','E'), ('eq2','F')]):
-                si = di * 2 + offset
-                if si >= len(src_lst):
-                    continue
-                src = src_lst[si]
-                if not src['ganador'] or _parse_bracket_ref(src['ganador']):
-                    continue   # ganador aún no es concreto
-                if dst[slot] == src['ganador']:
-                    continue   # ya está correcto, no hacer nada
-                # NO sobreescribir si Paso 1 ya resolvió un equipo concreto distinto
-                # (el emparejamiento secuencial de Paso 2 puede no coincidir con el bracket real de ESPN)
-                if dst[slot] and not _parse_bracket_ref(dst[slot]):
-                    continue   # ya tiene un equipo concreto — resuelto por Paso 1, no pisar
-                # NO sobreescribir si el slot tiene una referencia de bracket válida:
-                # significa que Paso 1 aún no pudo resolverla (R32 sin ganador aún).
-                # Paso 2 NO debe pisar esa referencia con emparejamiento secuencial incorrecto;
-                # Paso 1 la resolverá correctamente cuando llegue el ganador real.
-                if dst[slot] and _parse_bracket_ref(dst[slot]):
-                    continue   # esperar a que Paso 1 resuelva con el bracket correcto
-                # Solo aplicar emparejamiento secuencial si el slot está completamente vacío
-                # (hoja nueva sin placeholders de bracket definidos)
-                if dst[slot]:
-                    continue   # cualquier valor existente — no pisar
-                old_val = "''"
-                batch.append({"range": f"{col}{dst['row']}", "values": [[src['ganador']]]})
-                changes.append(f"JGO {dst['jgo']} {slot.upper()}: {old_val} → {src['ganador']!r} [seq-fallback]")
-                dst[slot] = src['ganador']
 
     # SF → FINAL (ganadores) y SF → 3ER (perdedores)
     sf_lst  = sorted_by_jgo(ronda_games.get('SF',    []))
@@ -1485,6 +1457,10 @@ def _updater_loop():
                 eq1_espn  = sc.get("eq1", "")
                 eq2_espn  = sc.get("eq2", "")
                 freeze = cfg.get("FREEZE_EQUIPOS", "0").strip() not in ("", "0", "false", "no")
+                # Congelar EQ1/EQ2 también para juegos R16+ (el usuario usa fórmulas en
+                # HORARIOS; el updater no debe pisarlas con datos ESPN de otro partido)
+                _ronda_cur = cel(col_idx("B"))
+                freeze = freeze or _ronda_cur in ('R16', 'QF', 'SF', '3ER', 'FINAL')
                 teams_changed = not freeze and ((eq1_espn and eq1_espn != eq1_sheet) or (eq2_espn and eq2_espn != eq2_sheet))
                 if (sc["estado"] == estado_prev and sc["gol1"] == cel(cGOL1) and
                         sc["gol2"] == cel(cGOL2) and sc["ganador"] == cel(cGANADOR) and not teams_changed):
