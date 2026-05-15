@@ -945,7 +945,8 @@ def _init_player_tab(ws, cfg=None):
     v_gan   = int(cfg.get("PTS_GAN",   2) or 2)
     v_gol1  = int(cfg.get("PTS_GOL1",  1) or 1)
     v_gol2  = int(cfg.get("PTS_GOL2",  1) or 1)
-    v_max   = v_logro + v_gan + v_gol1 + v_gol2
+    v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
+    v_max   = v_logro + v_gan + v_gol1 + v_gol2 + v_campeon
     headers = [
         "JGO", "RONDA", "FECHA", "EQ1 REAL", "EQ2 REAL",
         "PICK EQ1", "PICK GOL1", "PICK GOL2", "PICK EQ2", "PICK GANADOR",
@@ -992,8 +993,8 @@ def _init_player_tab(ws, cfg=None):
             f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{v_gol1};0);"")' ,
             # R: PTS_GOL2 — pts si el gol del equipo 2 predicho coincide con el real
             f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{v_gol2};0);"")' ,
-            # S: PTS_TOTAL — máx {v_max} pts
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0);"")' ,
+            # S: PTS_TOTAL — máx {v_max} pts (incluye bono campeón en fila FINAL)
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{v_campeon};0);0);"")' ,
         ])
     ws.update(rows, f"A4:S{last_row}", value_input_option="USER_ENTERED")
 
@@ -2564,7 +2565,11 @@ def _compute_compare_picks() -> dict:
                 pts_gol1 = _v_gol1 if (g1_known and pick_gol1 == real_g1) else 0
                 # PTS_GOL2: gol EQ2 coincide
                 pts_gol2 = _v_gol2 if (g2_known and pick_gol2 == real_g2) else 0
-                pts = pts_logro + pts_gan + pts_gol1 + pts_gol2
+                # PTS_CAMPEON: bono si es la FINAL y acertó al ganador
+                _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
+                pts_campeon = _v_campeon if (_v_campeon and game.get("ronda","").upper() == "FINAL"
+                                             and gan_known and pick_gan == real_gan) else 0
+                pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_campeon
 
             game_picks.append({
                 "nombre":    p.get("NOMBRE", "?"),
@@ -2740,6 +2745,7 @@ ADMIN_CONFIG_FIELDS = [
     ("PTS_GAN",             "Puntos por ganador correcto (extra/penales)"),
     ("PTS_GOL1",            "Puntos por gol equipo 1 correcto"),
     ("PTS_GOL2",            "Puntos por gol equipo 2 correcto"),
+    ("PTS_CAMPEON",         "Bono por acertar al campeón del torneo (ganador de la Final)"),
     # TOTAL_JUEGOS_F2 se actualiza automáticamente al recargar partidos
 ]
 
@@ -4181,7 +4187,8 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
                 f_gan   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{v_gan};0);"")'
                 f_gol1  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{v_gol1};0);"")'
                 f_gol2  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{v_gol2};0);"")'
-                f_total = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0);"")'
+                v_campeon_fs = int(cfg.get('PTS_CAMPEON', 0) or 0)
+                f_total = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{v_campeon_fs};0);0);"")'
                 batch += [{"range": f"O{r}", "values": [[f_logro]]},
                           {"range": f"P{r}", "values": [[f_gan]]},
                           {"range": f"Q{r}", "values": [[f_gol1]]},

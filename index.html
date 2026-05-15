@@ -786,6 +786,19 @@
               <span style="font-size:12px;color:#64748b">pts</span>
             </div>
 
+            <!-- PTS_CAMPEON: Bono campeón -->
+            <div style="display:flex;align-items:center;gap:10px;background:#fefce8;border-radius:10px;padding:10px 12px;border:1.5px dashed #fbbf24">
+              <span style="font-size:20px">🌟</span>
+              <div style="flex:1">
+                <p style="font-size:12px;font-weight:700;color:#b45309;margin:0">Bono campeón</p>
+                <p style="font-size:11px;color:#64748b;margin:0">Acertar al campeón del torneo (ganador de la Final)</p>
+              </div>
+              <input id="adm-pts-campeon" type="number" min="0" max="99" step="1"
+                style="width:52px;border:1.5px solid #fde68a;border-radius:8px;padding:5px 8px;font-size:16px;font-weight:800;color:#b45309;text-align:center;outline:none;background:white"
+                onfocus="this.style.borderColor='#f59e0b'" onblur="this.style.borderColor='#fde68a'">
+              <span style="font-size:12px;color:#64748b">pts</span>
+            </div>
+
           </div>
           <button onclick="savePtsConfig()"
             style="background:#15803d;color:white;border:none;border-radius:10px;padding:10px 16px;font-size:13px;font-weight:800;cursor:pointer;align-self:flex-end;margin-top:4px">
@@ -3769,10 +3782,12 @@ async function loadAdminDashboard() {
     const ganEl   = document.getElementById('adm-pts-gan');
     const g1El    = document.getElementById('adm-pts-g1');
     const g2El    = document.getElementById('adm-pts-g2');
-    if (logroEl) logroEl.value = f.PTS_LOGRO ?? 2;
-    if (ganEl)   ganEl.value   = f.PTS_GAN   ?? 2;
-    if (g1El)    g1El.value    = f.PTS_GOL1  ?? 1;
-    if (g2El)    g2El.value    = f.PTS_GOL2  ?? 1;
+    const campeonEl = document.getElementById('adm-pts-campeon');
+    if (logroEl)   logroEl.value   = f.PTS_LOGRO   ?? 1;
+    if (ganEl)     ganEl.value     = f.PTS_GAN     ?? 2;
+    if (g1El)      g1El.value      = f.PTS_GOL1    ?? 1;
+    if (g2El)      g2El.value      = f.PTS_GOL2    ?? 1;
+    if (campeonEl) campeonEl.value = f.PTS_CAMPEON  ?? 0;
   } catch(_) {}
   // Verificar si el torneo está activo (bloqueo de admin)
   try {
@@ -3817,7 +3832,7 @@ async function loadAdminDashboard() {
       // MODO_PRUEBA se gestiona desde el panel Modo Prueba, no aquí
       if (key === 'MODO_PRUEBA' || key === 'STRIPE_ACTIVO') continue;
       // F2 tiene esquema de puntuación fijo (no configurable), ocultar estos campos
-      if (key === 'PTS_LOGRO' || key === 'PTS_GAN' || key === 'PTS_GOL1' || key === 'PTS_GOL2') continue;
+      if (key === 'PTS_LOGRO' || key === 'PTS_GAN' || key === 'PTS_GOL1' || key === 'PTS_GOL2' || key === 'PTS_CAMPEON') continue;
       const div = document.createElement('div');
 
       const SEL_STYLE = `width:100%;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 12px;
@@ -3970,7 +3985,7 @@ async function loadAdminDashboard() {
             ${animOpts}
           </select>`;
 
-      } else if (key === 'PTS_LOGRO' || key === 'PTS_GAN' || key === 'PTS_GOL1' || key === 'PTS_GOL2') {
+      } else if (key === 'PTS_LOGRO' || key === 'PTS_GAN' || key === 'PTS_GOL1' || key === 'PTS_GOL2' || key === 'PTS_CAMPEON') {
         // Manejado por la sección dedicada "Sistema de puntos" — no renderizar aquí
         continue;
 
@@ -4334,20 +4349,23 @@ function updatePct2Preview() {
 }
 
 async function savePtsConfig() {
-  const logroEl = document.getElementById('adm-pts-logro');
-  const ganEl   = document.getElementById('adm-pts-gan');
-  const g1El    = document.getElementById('adm-pts-g1');
-  const g2El    = document.getElementById('adm-pts-g2');
+  const logroEl   = document.getElementById('adm-pts-logro');
+  const ganEl     = document.getElementById('adm-pts-gan');
+  const g1El      = document.getElementById('adm-pts-g1');
+  const g2El      = document.getElementById('adm-pts-g2');
+  const campeonEl = document.getElementById('adm-pts-campeon');
   if (!logroEl || !ganEl || !g1El || !g2El) return;
-  const logro = parseInt(logroEl.value), gan = parseInt(ganEl.value);
-  const g1 = parseInt(g1El.value), g2 = parseInt(g2El.value);
-  if ([logro,gan,g1,g2].some(v => isNaN(v) || v < 0 || v > 99)) {
+  const logro   = parseInt(logroEl.value),   gan     = parseInt(ganEl.value);
+  const g1      = parseInt(g1El.value),      g2      = parseInt(g2El.value);
+  const campeon = campeonEl ? parseInt(campeonEl.value) : 0;
+  if ([logro,gan,g1,g2,campeon].some(v => isNaN(v) || v < 0 || v > 99)) {
     showToast('Valores entre 0 y 99'); return;
   }
   try {
     await api('POST', '/api/admin/config', { fields: {
       PTS_LOGRO: String(logro), PTS_GAN: String(gan),
-      PTS_GOL1:  String(g1),   PTS_GOL2: String(g2)
+      PTS_GOL1:  String(g1),   PTS_GOL2: String(g2),
+      PTS_CAMPEON: String(campeon)
     }});
     showToast('Puntos guardados ✓');
   } catch(e) { showToast('Error: ' + e.message); }
