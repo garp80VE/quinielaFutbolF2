@@ -4367,6 +4367,104 @@ async def admin_refresh_bracket_refs(ql_admin: str = Cookie(default="")):
     return {"ok": True, "msg": "Refresh bracket iniciado"}
 
 
+
+
+@app.post("/api/admin/fix-bracket-wc2026")
+async def admin_fix_bracket_wc2026(ql_admin: str = Cookie(default="")):
+    """
+    Escribe las fórmulas de cruce correctas (WC2026) en HORARIOS cols E/F para
+    R16, QF, SF, 3ER y FINAL, basándose en el bracket oficial de FIFA.
+    No depende de ESPN para los cruces — usa la estructura de K-cells del propio HORARIOS.
+
+    Mapeo derivado del bracket FIFA WC2026 + ESPN IDs:
+      ESPN_ID = FIFA_P + 760413  →  P73=JGO1, P74=JGO2, P75=JGO4, P76=JGO3,
+      P77=JGO5, P78=JGO7, P79=JGO6, P80=JGO9, P81=JGO10, P82=JGO8,
+      P83=JGO12, P84=JGO11, P85=JGO13, P86=JGO14, P87=JGO15, P88=JGO16
+
+    R16:
+      JGO17=P89: W_JGO2  vs W_JGO5   JGO18=P90: W_JGO1  vs W_JGO4
+      JGO19=P91: W_JGO3  vs W_JGO7   JGO20=P92: W_JGO6  vs W_JGO9
+      JGO21=P93: W_JGO12 vs W_JGO11  JGO22=P94: W_JGO10 vs W_JGO8
+      JGO23=P96: W_JGO13 vs W_JGO15  JGO24=P95: W_JGO14 vs W_JGO16
+    QF:
+      JGO25=P97:  W_JGO17 vs W_JGO18  JGO26=P98:  W_JGO21 vs W_JGO22
+      JGO27=P99:  W_JGO19 vs W_JGO20  JGO28=P100: W_JGO24 vs W_JGO23
+    SF:
+      JGO29=P101: W_JGO25 vs W_JGO26  JGO30=P102: W_JGO27 vs W_JGO28
+    3ER: JGO31=P103: Loser_JGO29 vs Loser_JGO30
+    FINAL: JGO32=P104: W_JGO29 vs W_JGO30
+    """
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+    try:
+        cfg        = state.get("cfg", {})
+        fila_ini   = int(cfg.get("FILA_INICIO_DATOS", 3))
+        total      = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+
+        def row_of(jgo_n: int) -> int:
+            """Fila de HORARIOS para el JGO N."""
+            return fila_ini + jgo_n - 1
+
+        def kref(jgo_n: int) -> str:
+            """Referencia a la celda GANADOR (col K) del JGO N."""
+            return f"K{row_of(jgo_n)}"
+
+        # ── Estructura de cruces WC2026 ───────────────────────────────────────
+        # Cada entry: row → (formula_EQ1, formula_EQ2)
+        bracket: dict = {}
+
+        # R16
+        bracket[row_of(17)] = (f"={kref(2)}",    f"={kref(5)}")    # P89: W2  vs W5
+        bracket[row_of(18)] = (f"={kref(1)}",    f"={kref(4)}")    # P90: W1  vs W4
+        bracket[row_of(19)] = (f"={kref(3)}",    f"={kref(7)}")    # P91: W3  vs W7
+        bracket[row_of(20)] = (f"={kref(6)}",    f"={kref(9)}")    # P92: W6  vs W9
+        bracket[row_of(21)] = (f"={kref(12)}",   f"={kref(11)}")   # P93: W12 vs W11
+        bracket[row_of(22)] = (f"={kref(10)}",   f"={kref(8)}")    # P94: W10 vs W8
+        bracket[row_of(23)] = (f"={kref(13)}",   f"={kref(15)}")   # P96: W13 vs W15
+        bracket[row_of(24)] = (f"={kref(14)}",   f"={kref(16)}")   # P95: W14 vs W16
+
+        # QF
+        bracket[row_of(25)] = (f"={kref(17)}",   f"={kref(18)}")   # P97:  W17 vs W18
+        bracket[row_of(26)] = (f"={kref(21)}",   f"={kref(22)}")   # P98:  W21 vs W22
+        bracket[row_of(27)] = (f"={kref(19)}",   f"={kref(20)}")   # P99:  W19 vs W20
+        bracket[row_of(28)] = (f"={kref(24)}",   f"={kref(23)}")   # P100: W24 vs W23
+
+        # SF
+        bracket[row_of(29)] = (f"={kref(25)}",   f"={kref(26)}")   # P101: W25 vs W26
+        bracket[row_of(30)] = (f"={kref(27)}",   f"={kref(28)}")   # P102: W27 vs W28
+
+        # 3ER — perdedores de SF
+        r29, r30 = row_of(29), row_of(30)
+        bracket[row_of(31)] = (
+            f"=IF(K{r29}=E{r29};F{r29};E{r29})",   # perdedor JGO29
+            f"=IF(K{r30}=E{r30};F{r30};E{r30})"    # perdedor JGO30
+        )
+
+        # FINAL
+        bracket[row_of(32)] = (f"={kref(29)}",   f"={kref(30)}")   # P104: W29 vs W30
+
+        # ── Escribir en HORARIOS ──────────────────────────────────────────────
+        batch_upd = []
+        changes   = []
+        for row, (eq1_f, eq2_f) in sorted(bracket.items()):
+            jgo_n = row - fila_ini + 1
+            batch_upd.append({"range": f"E{row}", "values": [[eq1_f]]})
+            batch_upd.append({"range": f"F{row}", "values": [[eq2_f]]})
+            changes.append(f"JGO {jgo_n}: E{row}={eq1_f}  F{row}={eq2_f}")
+
+        with _sheets_lock:
+            ws_h = state["sh"].worksheet("HORARIOS")
+            _sheets_retry(lambda: ws_h.batch_update(batch_upd, value_input_option="USER_ENTERED"))
+
+        _invalidate_games()
+        print(f"[fix-bracket-wc2026] {len(changes)} celdas actualizadas")
+        return {"ok": True, "changes": changes, "total": len(changes)}
+
+    except Exception as e:
+        import traceback
+        print(f"[fix-bracket-wc2026] ERROR: {e}\n{traceback.format_exc()}")
+        raise HTTPException(500, str(e))
+
 @app.post("/api/admin/sync-real-results")
 async def admin_sync_real_results(ql_admin: str = Cookie(default="")):
     """
