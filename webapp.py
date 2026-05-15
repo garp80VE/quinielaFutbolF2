@@ -1410,6 +1410,14 @@ def _updater_loop():
             except Exception as e:
                 print(f"[updater-reminder] {e}")
 
+            # ── En MODO_PRUEBA: no pollear ESPN — los resultados se controlan manualmente ──
+            # El updater podría sobrescribir simulaciones con datos ESPN (PROG) via race condition.
+            if modo_prueba:
+                elapsed = time.time() - t0
+                sleep_t = max(0, interval - elapsed)
+                time.sleep(sleep_t)
+                continue
+
             batch, n = [], 0
 
             for i, fila in enumerate(filas):
