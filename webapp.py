@@ -941,12 +941,12 @@ def _init_player_tab(ws, cfg=None):
     Usa ';' como separador (locale español de Google Sheets)."""
     if cfg is None:
         cfg = state.get("cfg", {})
-    v_logro = int(cfg.get("PTS_LOGRO", 1) or 1)
-    v_gan   = int(cfg.get("PTS_GAN",   2) or 2)
-    v_gol1  = int(cfg.get("PTS_GOL1",  1) or 1)
-    v_gol2  = int(cfg.get("PTS_GOL2",  1) or 1)
-    v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
-    v_max   = v_logro + v_gan + v_gol1 + v_gol2 + v_campeon
+    # Fórmulas dinámicas — leen el valor de CONFIG en tiempo real (no hardcoded)
+    _VL = 'IFERROR(VLOOKUP("PTS_LOGRO";CONFIG!$A:$B;2;0)*1;1)'
+    _VG = 'IFERROR(VLOOKUP("PTS_GAN";CONFIG!$A:$B;2;0)*1;2)'
+    _V1 = 'IFERROR(VLOOKUP("PTS_GOL1";CONFIG!$A:$B;2;0)*1;1)'
+    _V2 = 'IFERROR(VLOOKUP("PTS_GOL2";CONFIG!$A:$B;2;0)*1;1)'
+    _VC = 'IFERROR(VLOOKUP("PTS_CAMPEON";CONFIG!$A:$B;2;0)*1;0)'
     headers = [
         "JGO", "RONDA", "FECHA", "EQ1 REAL", "EQ2 REAL",
         "PICK EQ1", "PICK GOL1", "PICK GOL2", "PICK EQ2", "PICK GANADOR",
@@ -986,15 +986,15 @@ def _init_player_tab(ws, cfg=None):
             # N: ESTADO    (HORARIOS col H = índice 8)
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;8;FALSE);"")' ,
             # O: PTS_LOGRO — pts si el resultado a 90min (1/X/2) predicho coincide con real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{v_logro};0);"")' ,
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{_VL};0);"")' ,
             # P: PTS_GAN — pts si el ganador predicho coincide con el ganador real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{v_gan};0);"")' ,
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{_VG};0);"")' ,
             # Q: PTS_GOL1 — pts si el gol del equipo 1 predicho coincide con el real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{v_gol1};0);"")' ,
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")' ,
             # R: PTS_GOL2 — pts si el gol del equipo 2 predicho coincide con el real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{v_gol2};0);"")' ,
-            # S: PTS_TOTAL — máx {v_max} pts (incluye bono campeón en fila FINAL)
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{v_campeon};0);0);"")' ,
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")' ,
+            # S: PTS_TOTAL (incluye bono campeón en fila FINAL)
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")' ,
         ])
     ws.update(rows, f"A4:S{last_row}", value_input_option="USER_ENTERED")
 
@@ -2205,6 +2205,11 @@ async def get_public_config():
         "color_scheme": cfg.get("COLOR_SCHEME", "wfc2026"),
         "premios_reglas": cfg.get("PREMIOS_REGLAS", ""),
         "costo_quiniela": cfg.get("COSTO_QUINIELA", "10"),
+        "pts_logro":   int(cfg.get("PTS_LOGRO",   1) or 1),
+        "pts_gan":     int(cfg.get("PTS_GAN",     2) or 2),
+        "pts_gol1":    int(cfg.get("PTS_GOL1",    1) or 1),
+        "pts_gol2":    int(cfg.get("PTS_GOL2",    1) or 1),
+        "pts_campeon": int(cfg.get("PTS_CAMPEON",  0) or 0),
     }
 
 
@@ -4180,10 +4185,11 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
         total     = int(cfg.get("TOTAL_JUEGOS_F2", 32))
         with _sheets_lock:
             worksheets = state["sh"].worksheets()
-        v_logro = int(cfg.get("PTS_LOGRO", 1) or 1)
-        v_gan   = int(cfg.get("PTS_GAN",   2) or 2)
-        v_gol1  = int(cfg.get("PTS_GOL1",  1) or 1)
-        v_gol2  = int(cfg.get("PTS_GOL2",  1) or 1)
+        _VL = 'IFERROR(VLOOKUP("PTS_LOGRO";CONFIG!$A:$B;2;0)*1;1)'
+        _VG = 'IFERROR(VLOOKUP("PTS_GAN";CONFIG!$A:$B;2;0)*1;2)'
+        _V1 = 'IFERROR(VLOOKUP("PTS_GOL1";CONFIG!$A:$B;2;0)*1;1)'
+        _V2 = 'IFERROR(VLOOKUP("PTS_GOL2";CONFIG!$A:$B;2;0)*1;1)'
+        _VC = 'IFERROR(VLOOKUP("PTS_CAMPEON";CONFIG!$A:$B;2;0)*1;0)'
         updated = 0
         for ws in worksheets:
             if ws.title in RESERVED:
@@ -4191,12 +4197,11 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
             batch = []
             for i in range(total):
                 r = fila_data + i
-                f_logro = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{v_logro};0);"")'
-                f_gan   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{v_gan};0);"")'
-                f_gol1  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{v_gol1};0);"")'
-                f_gol2  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{v_gol2};0);"")'
-                v_campeon_fs = int(cfg.get('PTS_CAMPEON', 0) or 0)
-                f_total = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{v_campeon_fs};0);0);"")'
+                f_logro = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{_VL};0);"")'
+                f_gan   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{_VG};0);"")'
+                f_gol1  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")'
+                f_gol2  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")'
+                f_total = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")'
                 batch += [{"range": f"O{r}", "values": [[f_logro]]},
                           {"range": f"P{r}", "values": [[f_gan]]},
                           {"range": f"Q{r}", "values": [[f_gol1]]},
@@ -4273,11 +4278,11 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
         cfg       = state.get("cfg", {})
         fila_data = int(cfg.get("FILA_INICIO_DATOS", 3)) + 1
         total     = int(cfg.get("TOTAL_JUEGOS_F2", 32))
-        v_logro   = int(cfg.get("PTS_LOGRO",   1) or 1)
-        v_gan     = int(cfg.get("PTS_GAN",     2) or 2)
-        v_gol1    = int(cfg.get("PTS_GOL1",    1) or 1)
-        v_gol2    = int(cfg.get("PTS_GOL2",    1) or 1)
-        v_camp    = int(cfg.get("PTS_CAMPEON",  0) or 0)
+        _VL = 'IFERROR(VLOOKUP("PTS_LOGRO";CONFIG!$A:$B;2;0)*1;1)'
+        _VG = 'IFERROR(VLOOKUP("PTS_GAN";CONFIG!$A:$B;2;0)*1;2)'
+        _V1 = 'IFERROR(VLOOKUP("PTS_GOL1";CONFIG!$A:$B;2;0)*1;1)'
+        _V2 = 'IFERROR(VLOOKUP("PTS_GOL2";CONFIG!$A:$B;2;0)*1;1)'
+        _VC = 'IFERROR(VLOOKUP("PTS_CAMPEON";CONFIG!$A:$B;2;0)*1;0)'
         with _sheets_lock:
             worksheets = state["sh"].worksheets()
         tabs_ok = 0
@@ -4288,11 +4293,11 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
             for i in range(total):
                 r = fila_data + i
                 batch_s += [
-                    {"range": f"O{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{v_logro};0);"")' ]]},
-                    {"range": f"P{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{v_gan};0);"")' ]]},
-                    {"range": f"Q{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{v_gol1};0);"")' ]]},
-                    {"range": f"R{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{v_gol2};0);"")' ]]},
-                    {"range": f"S{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{v_camp};0);0);"")' ]]},
+                    {"range": f"O{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{_VL};0);"")' ]]},
+                    {"range": f"P{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{_VG};0);"")' ]]},
+                    {"range": f"Q{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")' ]]},
+                    {"range": f"R{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")' ]]},
+                    {"range": f"S{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")' ]]},
                 ]
             try:
                 with _sheets_lock:
@@ -5669,15 +5674,15 @@ async def stripe_webhook(request: Request):
             print(f"[stripe] Pago: {nombre} ({phone}) — ${amount/100:.2f} USD")
             if phone:
                 ok = _mark_player_paid_internal(phone)
-                print(f"[stripe] {'✅' if ok else '⚠️'} {phone} {'marcado' if ok else 'no encontrado'}")
+                print(f"[stripe] {chr(9989) if ok else chr(9888)} {phone} {chr(109) if ok else chr(110)}arcado")
         return {"ok": True}
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[stripe] ❌ Error: {e}\n{traceback.format_exc()}")
+        print(f"[stripe] Error: {e}")
         raise HTTPException(500, f"Error interno: {e}")
 
-# ─── Entry point ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+# ─── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import cfg as _cfg
