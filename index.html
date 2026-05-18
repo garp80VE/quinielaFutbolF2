@@ -3552,7 +3552,23 @@ function _inferBracketSlot(game, slot) {
     return loser || `Perdedor SF${sfIdx+1}`;
   }
 
-  const feedIdx = slot === 'eq1' ? myIdx * 2 : myIdx * 2 + 1;
+  // Mapa WC2026: [myIdx] → [feedIdx_eq1, feedIdx_eq2]
+  // Derivado del bracket FIFA oficial (mismo que fix-bracket-wc2026 en el backend).
+  // feedGames están ordenados por JGO dentro de su ronda.
+  const WC2026_MAP = {
+    'R16':  [[0,3],[2,5],[1,4],[6,7],[11,10],[9,8],[14,13],[12,15]],
+    'QF':   [[0,1],[4,5],[2,3],[7,6]],
+    'SF':   [[0,1],[2,3]],
+    'FINAL':[[0,1]],
+  };
+  const slotIdx = slot === 'eq1' ? 0 : 1;
+  let feedIdx;
+  const rondaMap = WC2026_MAP[game.ronda];
+  if (rondaMap && myIdx < rondaMap.length) {
+    feedIdx = rondaMap[myIdx][slotIdx];
+  } else {
+    feedIdx = slot === 'eq1' ? myIdx * 2 : myIdx * 2 + 1; // fallback secuencial
+  }
   const feedGame = feedGames[feedIdx];
   if (!feedGame) return null;
 

@@ -4759,29 +4759,9 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
         # Borrar H:M = estado, gol1, gol2, ganador, timestamp, ESPN_ID_TEST
         clear_h_ranges.append(f"H{sheet_row}:M{sheet_row}")
 
-        # Para R16+: restaurar placeholders en E:F en lugar de dejarlos vacíos
-        # Así _propagate_bracket puede rellenarlos con equipos reales tras simular
-        if ronda != "R32":
-            src = _SRC_RONDA.get(ronda, "")
-            if ronda == "3ER":
-                # 3er puesto: perdedores de SF 1 y SF 2
-                ph_eq1 = "Perdedor Semifinal 1"
-                ph_eq2 = "Perdedor Semifinal 2"
-            elif ronda == "FINAL":
-                ph_eq1 = "Ganador Semifinal 1"
-                ph_eq2 = "Ganador Semifinal 2"
-            else:
-                n1 = _ph_counter.get(src, 0) + 1
-                n2 = n1 + 1
-                _ph_counter[src] = n2
-                label = _RONDA_LABEL.get(src, ("",))[0]
-                ph_eq1 = f"Ganador {label} ({n1})" if label else ""
-                ph_eq2 = f"Ganador {label} ({n2})" if label else ""
-            if ph_eq1 and ph_eq2:
-                restore_batch.append({
-                    "range":  f"E{sheet_row}:F{sheet_row}",
-                    "values": [[ph_eq1, ph_eq2]]
-                })
+        # Para R16+: restaurar fórmulas WC2026 correctas (=Kx) en lugar de placeholders
+        # secuenciales que causarían cruces incorrectos al propagar el bracket.
+        # Las fórmulas se auto-resuelven cuando los resultados de R32 vuelvan a existir.
         log.append(f"HORARIOS row {sheet_row} ({ronda}) → limpiado")
 
     if clear_h_ranges:
@@ -4789,10 +4769,37 @@ async def admin_reset_test(body: dict = None, ql_admin: str = Cookie(default="")
             ws_h2 = sh.worksheet("HORARIOS")
             ws_h2.batch_clear(clear_h_ranges)
 
-    if restore_batch:
-        with _sheets_lock:
-            ws_h3 = sh.worksheet("HORARIOS")
-            ws_h3.batch_update(restore_batch, value_input_option="RAW")
+    # ── Restaurar fórmulas WC2026 correctas en HORARIOS E/F para JGOs 17-32 ────
+    # Siempre se aplica al resetear (independiente de from_idx) para garantizar
+    # que los cruces del bracket sean correctos tras cualquier reset.
+    _fi = fila_inicio
+    def _ro(n): return _fi + n - 1
+    def _kr(n): return f"K{_ro(n)}"
+    _r29, _r30 = _ro(29), _ro(30)
+    _bracket_formulas = [
+        (f"E{_ro(17)}", f"={_kr(1)}"),  (f"F{_ro(17)}", f"={_kr(4)}"),
+        (f"E{_ro(18)}", f"={_kr(3)}"),  (f"F{_ro(18)}", f"={_kr(6)}"),
+        (f"E{_ro(19)}", f"={_kr(2)}"),  (f"F{_ro(19)}", f"={_kr(5)}"),
+        (f"E{_ro(20)}", f"={_kr(7)}"),  (f"F{_ro(20)}", f"={_kr(8)}"),
+        (f"E{_ro(21)}", f"={_kr(12)}"), (f"F{_ro(21)}", f"={_kr(11)}"),
+        (f"E{_ro(22)}", f"={_kr(10)}"), (f"F{_ro(22)}", f"={_kr(9)}"),
+        (f"E{_ro(23)}", f"={_kr(15)}"), (f"F{_ro(23)}", f"={_kr(14)}"),
+        (f"E{_ro(24)}", f"={_kr(13)}"), (f"F{_ro(24)}", f"={_kr(16)}"),
+        (f"E{_ro(25)}", f"={_kr(17)}"), (f"F{_ro(25)}", f"={_kr(18)}"),
+        (f"E{_ro(26)}", f"={_kr(21)}"), (f"F{_ro(26)}", f"={_kr(22)}"),
+        (f"E{_ro(27)}", f"={_kr(19)}"), (f"F{_ro(27)}", f"={_kr(20)}"),
+        (f"E{_ro(28)}", f"={_kr(24)}"), (f"F{_ro(28)}", f"={_kr(23)}"),
+        (f"E{_ro(29)}", f"={_kr(25)}"), (f"F{_ro(29)}", f"={_kr(26)}"),
+        (f"E{_ro(30)}", f"={_kr(27)}"), (f"F{_ro(30)}", f"={_kr(28)}"),
+        (f"E{_ro(31)}", f"=IF(K{_r29}=E{_r29};F{_r29};E{_r29})"),
+        (f"F{_ro(31)}", f"=IF(K{_r30}=E{_r30};F{_r30};E{_r30})"),
+        (f"E{_ro(32)}", f"={_kr(29)}"), (f"F{_ro(32)}", f"={_kr(30)}"),
+    ]
+    _bracket_batch = [{"range": cell, "values": [[formula]]} for cell, formula in _bracket_formulas]
+    with _sheets_lock:
+        ws_hb = sh.worksheet("HORARIOS")
+        ws_hb.batch_update(_bracket_batch, value_input_option="USER_ENTERED")
+    log.append(f"HORARIOS E/F JGOs 17-32 → fórmulas WC2026 restauradas")
 
     # ── 2. Borrar picks en todas las pestañas de jugadores ────────────────────
     reserved = RESERVED_TABS
