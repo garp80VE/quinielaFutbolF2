@@ -2433,24 +2433,13 @@ async def get_game_picks(jgo: int = Query(...)):
             pick_eq2  = row_data[8].strip() if len(row_data) > 8 else ""   # I
             pick_gan  = row_data[9].strip() if len(row_data) > 9 else ""   # J
 
-            pts = None
-            if game["estado"] and game["estado"] != "PROG":
-                real_eq1 = game.get("eq1", "")
-                real_eq2 = game.get("eq2", "")
-                real_gan = game.get("ganador", "")
-                # Pick incompleto: requiere marcador (gol1+gol2) Y ganador para recibir puntos
-                if not pick_gol1 or not pick_gol2 or not pick_gan:
-                    pts = 0
-                else:
-                    # Liberation check — fallback to ganador for old picks without eq1/eq2
-                    liberation = (pick_eq1 in (real_eq1, real_eq2) or
-                                  pick_eq2 in (real_eq1, real_eq2) or
-                                  (bool(pick_gan) and pick_gan in (real_eq1, real_eq2)))
-                    pts_gol1 = 1 if str(pick_gol1) == str(game.get("gol1","")) else 0
-                    pts_gol2 = 1 if str(pick_gol2) == str(game.get("gol2","")) else 0
-                    gan_in_match = pick_gan in (real_eq1, real_eq2)
-                    pts_gan = 3 if (liberation and gan_in_match and pick_gan == real_gan) else 0
-                    pts = (pts_gol1 + pts_gol2 + pts_gan) if liberation else 0
+            # Leer pts directamente de col S (PTS_TOTAL) de la pestaña del jugador
+            # — la fórmula en la hoja ya hace el cálculo correcto con valores de CONFIG
+            pts_raw = row_data[18].strip() if len(row_data) > 18 else ""
+            try:
+                pts = int(float(pts_raw)) if pts_raw != "" else (0 if game["estado"] not in ("", "PROG") else None)
+            except (ValueError, TypeError):
+                pts = None
 
             return {"nombre": player.get("NOMBRE","?"),
                     "pick_eq1": pick_eq1, "pick_gol1": pick_gol1,
