@@ -572,14 +572,14 @@
           🔄 Recargar partidos de ESPN
         </button>
       </div>
-        <!-- Fijar cruces bracket WC2026 (FIFA oficial) -->
+        <!-- Botón único de correcciones -->
         <div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:12px;padding:12px">
-          <p style="font-size:11px;font-weight:700;color:#065f46;margin:0 0 6px">⚙️ Setup bracket (hacer una vez antes del torneo)</p>
-          <button onclick="adminFixBracketWC2026()" id="btn-fix-bracket-wc2026"
-            style="width:100%;background:linear-gradient(135deg,#047857,#065f46);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
-            🏆 Fijar cruces WC2026 (bracket oficial FIFA)
+          <p style="font-size:11px;font-weight:700;color:#065f46;margin:0 0 6px">⚙️ Configuración inicial (ejecutar una vez antes del torneo)</p>
+          <button onclick="adminSetupAll()" id="btn-setup-all"
+            style="width:100%;background:linear-gradient(135deg,#047857,#065f46);color:white;border:none;border-radius:10px;padding:13px;font-weight:800;font-size:14px;cursor:pointer">
+            🔧 Reparar todo (cruces + scoring + bracket)
           </button>
-          <div id="fix-bracket-wc2026-result" style="display:none;margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;font-size:12px;color:#065f46;max-height:120px;overflow-y:auto"></div>
+          <div id="setup-all-result" style="display:none;margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;font-size:12px;color:#065f46;max-height:140px;overflow-y:auto"></div>
         </div>
       </div><!-- /adm-body-horarios -->
     </div>
@@ -679,27 +679,6 @@
               </button>
             </div>
           </div>
-
-          <!-- Propagar bracket -->
-          <button onclick="adminPropagateBracket()" id="btn-propagate"
-            style="width:100%;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
-            🔗 Propagar bracket al sheet
-          </button>
-          <div id="propagate-result" style="display:none;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;font-size:12px;color:#374151;max-height:140px;overflow-y:auto"></div>
-
-          <!-- Refrescar cruces de bracket desde ESPN -->
-          <button onclick="adminRefreshBracketRefs()" id="btn-refresh-bracket"
-            style="width:100%;background:linear-gradient(135deg,#0369a1,#0284c7);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
-            🔄 Refrescar cruces de bracket (ESPN)
-          </button>
-          <div id="refresh-bracket-result" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 12px;font-size:12px;color:#1e40af;max-height:80px;overflow-y:auto"></div>
-
-          <!-- Fix fórmulas de scoring -->
-          <button onclick="adminFixScoringFormulas()" id="btn-fix-scoring"
-            style="width:100%;background:linear-gradient(135deg,#d97706,#b45309);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
-            🧮 Recalcular fórmulas de scoring
-          </button>
-          <div id="fix-scoring-result" style="display:none;background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 12px;font-size:12px;color:#92400e;max-height:80px;overflow-y:auto"></div>
 
           <!-- Sincronizar resultados reales -->
           <button onclick="adminSyncRealResults()" id="btn-sync-real"
@@ -2616,7 +2595,9 @@ async function saveGroupAndBack() {
     const ganador = p.ganador || '';
 
     picks.push({jgo:parseInt(jgo), eq1, gol1, gol2, eq2, ganador});
-    if (ganador) {
+    // Conservar en estado local si hay al menos un campo con valor (gol1, gol2, ganador, etc.)
+    // Borrar solo si todo está vacío, para que los datos no "desaparezcan" en la misma sesión
+    if (eq1 || gol1 || gol2 || eq2 || ganador) {
       S.picks[String(jgo)] = {eq1, gol1, gol2, eq2, ganador};
     } else {
       delete S.picks[String(jgo)];
@@ -4863,6 +4844,28 @@ async function adminSimRange() {
     showToast('❌ '+e.message);
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🎲 Simular rango'; }
+  }
+}
+
+async function adminSetupAll() {
+  const btn = document.getElementById('btn-setup-all');
+  const res = document.getElementById('setup-all-result');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Aplicando correcciones...'; }
+  if (res) { res.style.display='none'; res.innerHTML=''; }
+  try {
+    const r = await api('POST', '/api/admin/setup-all');
+    const lines = [...(r.log||[]), ...(r.errors||[])];
+    if (res) {
+      res.style.display='block';
+      res.innerHTML = lines.map(l=>`• ${l}`).join('<br>');
+    }
+    showToast(r.ok ? '✅ Todo reparado correctamente' : '⚠️ Completado con errores');
+    try { const g = await api('GET','/api/games'); if(g.games){S.games=g.games;S.groups={};for(const gm of S.games){const k=gm.ronda||gm.grupo||'?';if(!S.groups[k])S.groups[k]=[];S.groups[k].push(gm);}buildGroupsGrid();} } catch(_){}
+  } catch(e) {
+    if (res) { res.style.display='block'; res.innerHTML='❌ '+e.message; }
+    showToast('❌ '+e.message);
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='🔧 Reparar todo (cruces + scoring + bracket)'; }
   }
 }
 

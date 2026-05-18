@@ -922,7 +922,7 @@ def create_player_tab(tab_name: str):
 
     if template:
         new_ws = sh.duplicate_sheet(template.id, new_sheet_name=tab_name)
-        new_ws.batch_clear([f"F4:H{last_row}"])  # limpiar picks del template
+        new_ws.batch_clear([f"F4:J{last_row}"])  # limpiar TODOS los picks del template (F-J)
     else:
         new_ws = sh.add_worksheet(title=tab_name, rows=last_row + 10, cols=16)
         _init_player_tab(new_ws)
@@ -4214,6 +4214,110 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
                 "msg": f"✅ Fórmulas actualizadas en {updated} pestañas"}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.post("/api/admin/setup-all")
+async def admin_setup_all(ql_admin: str = Cookie(default="")):
+    """
+    Acción única de corrección: fijar cruces WC2026 + scoring formulas + propagar bracket.
+    Equivale a ejecutar fix-bracket-wc2026, fix-scoring-formulas y propagate-bracket en secuencia.
+    """
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+    import traceback
+    log = []
+    errors = []
+
+    # 1. Fijar cruces bracket WC2026 en HORARIOS
+    try:
+        cfg        = state.get("cfg", {})
+        fila_ini   = int(cfg.get("FILA_INICIO_DATOS", 3))
+        def row_of(n): return fila_ini + n - 1
+        def kref(n):   return f"K{row_of(n)}"
+        bracket = {}
+        bracket[row_of(17)] = (f"={kref(1)}",  f"={kref(4)}")
+        bracket[row_of(18)] = (f"={kref(3)}",  f"={kref(6)}")
+        bracket[row_of(19)] = (f"={kref(2)}",  f"={kref(5)}")
+        bracket[row_of(20)] = (f"={kref(7)}",  f"={kref(8)}")
+        bracket[row_of(21)] = (f"={kref(12)}", f"={kref(11)}")
+        bracket[row_of(22)] = (f"={kref(10)}", f"={kref(9)}")
+        bracket[row_of(23)] = (f"={kref(15)}", f"={kref(14)}")
+        bracket[row_of(24)] = (f"={kref(13)}", f"={kref(16)}")
+        bracket[row_of(25)] = (f"={kref(17)}", f"={kref(18)}")
+        bracket[row_of(26)] = (f"={kref(21)}", f"={kref(22)}")
+        bracket[row_of(27)] = (f"={kref(19)}", f"={kref(20)}")
+        bracket[row_of(28)] = (f"={kref(24)}", f"={kref(23)}")
+        bracket[row_of(29)] = (f"={kref(25)}", f"={kref(26)}")
+        bracket[row_of(30)] = (f"={kref(27)}", f"={kref(28)}")
+        r29, r30 = row_of(29), row_of(30)
+        bracket[row_of(31)] = (
+            f"=IF(K{r29}=E{r29};F{r29};E{r29})",
+            f"=IF(K{r30}=E{r30};F{r30};E{r30})"
+        )
+        bracket[row_of(32)] = (f"={kref(29)}", f"={kref(30)}")
+        batch_b = []
+        for row, (eq1_f, eq2_f) in sorted(bracket.items()):
+            batch_b.append({"range": f"E{row}", "values": [[eq1_f]]})
+            batch_b.append({"range": f"F{row}", "values": [[eq2_f]]})
+        with _sheets_lock:
+            ws_h = state["sh"].worksheet("HORARIOS")
+            _sheets_retry(lambda: ws_h.batch_update(batch_b, value_input_option="USER_ENTERED"))
+        _invalidate_games()
+        log.append(f"✅ Cruces WC2026: {len(batch_b)//2} juegos actualizados")
+    except Exception as e:
+        errors.append(f"❌ Cruces: {e}")
+
+    # 2. Recalcular fórmulas de scoring en todas las pestañas de jugadores
+    try:
+        RESERVED = RESERVED_TABS
+        cfg       = state.get("cfg", {})
+        fila_data = int(cfg.get("FILA_INICIO_DATOS", 3)) + 1
+        total     = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+        v_logro   = int(cfg.get("PTS_LOGRO",   1) or 1)
+        v_gan     = int(cfg.get("PTS_GAN",     2) or 2)
+        v_gol1    = int(cfg.get("PTS_GOL1",    1) or 1)
+        v_gol2    = int(cfg.get("PTS_GOL2",    1) or 1)
+        v_camp    = int(cfg.get("PTS_CAMPEON",  0) or 0)
+        with _sheets_lock:
+            worksheets = state["sh"].worksheets()
+        tabs_ok = 0
+        for ws in worksheets:
+            if ws.title in RESERVED:
+                continue
+            batch_s = []
+            for i in range(total):
+                r = fila_data + i
+                batch_s += [
+                    {"range": f"O{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{v_logro};0);"")' ]]},
+                    {"range": f"P{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{v_gan};0);"")' ]]},
+                    {"range": f"Q{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{v_gol1};0);"")' ]]},
+                    {"range": f"R{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{v_gol2};0);"")' ]]},
+                    {"range": f"S{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{v_camp};0);0);"")' ]]},
+                ]
+            try:
+                with _sheets_lock:
+                    _sheets_retry(lambda w=ws, b=batch_s: w.batch_update(b, value_input_option="USER_ENTERED"))
+                tabs_ok += 1
+                time.sleep(1.2)
+            except Exception as _e:
+                errors.append(f"❌ Scoring {ws.title}: {_e}")
+        log.append(f"✅ Scoring: {tabs_ok} pestaña(s) actualizadas")
+    except Exception as e:
+        errors.append(f"❌ Scoring: {e}")
+
+    # 3. Propagar bracket (ganadores → siguiente ronda)
+    try:
+        changes = _propagate_bracket()
+        log.append(f"✅ Bracket propagado: {len(changes)} cambio(s)")
+    except Exception as e:
+        errors.append(f"❌ Propagación: {e}")
+
+    return {
+        "ok":     len(errors) == 0,
+        "log":    log,
+        "errors": errors,
+        "msg":    " | ".join(log) if not errors else " | ".join(log + errors)
+    }
 
 
 @app.post("/api/admin/propagate-bracket")
