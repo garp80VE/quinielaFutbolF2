@@ -2248,46 +2248,6 @@ async def get_standings():
 
 # ââ Mis Puntos ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-@app.get("/api/debug-standings")
-async def debug_standings():
-    """Diagnostico: muestra que lee _update_standings de cada pestana."""
-    try:
-        sh  = state["sh"]
-        cfg = state.get("cfg", {})
-        total_juegos = int(cfg.get("TOTAL_JUEGOS_F2", 32))
-        last_row     = 3 + total_juegos
-        ws_j   = sh.worksheet("JUGADORES")
-        j_rows = ws_j.get_all_values()
-        hi, headers = _jugadores_headers(j_rows)
-        players = []
-        for row in j_rows[hi + 1:]:
-            if not any(c.strip() for c in row): continue
-            d = _normalize_player({headers[k]: (row[k].strip() if k < len(row) else "") for k in range(len(headers))})
-            if d.get("NOMBRE") and d.get("TAB_NOMBRE"):
-                players.append(d)
-        tab_data_map = _batch_read_player_tabs(sh, players, last_row)
-        result = {}
-        for p in players:
-            tab_data = tab_data_map.get(p["TAB_NOMBRE"], [])
-            rows_info = []
-            pts_total = 0
-            for fila in tab_data:
-                def cv(i, f=fila): return f[i].strip() if len(f) > i else ""
-                estado = cv(13)
-                if not estado or estado == "PROG" or not cv(0): continue
-                t_val = cv(19)
-                try: pts = int(float(t_val)) if t_val else 0
-                except: pts = 0
-                pts_total += pts
-                rows_info.append({"jgo": cv(0), "estado": estado, "col_T": t_val, "pts": pts, "row_len": len(fila)})
-            result[p["TAB_NOMBRE"]] = {"pts_total": pts_total, "filas": rows_info}
-        result["_cache_standings"] = _cache.get("standings_rows", "EMPTY")
-        return result
-    except Exception as e:
-        import traceback
-        return {"error": str(e), "trace": traceback.format_exc()}
-
-
 @app.get("/api/my-points")
 async def get_my_points(email: str = Query(""), phone: str = Query("")):
     try:
