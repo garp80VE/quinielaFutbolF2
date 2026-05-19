@@ -801,7 +801,7 @@ def _ensure_base_sheets(sh):
     # POSICIONES
     if "POSICIONES" not in existing:
         ws = sh.add_worksheet(title="POSICIONES", rows=100, cols=6)
-        ws.update([["POS", "NOMBRE", "PTS", "DIF"]], "A1")
+        ws.update([["TABLA DE POSICIONES"]], "A1")
         print("[init] Hoja POSICIONES creada")
 
     # Eliminar Sheet1 / Hoja1 vacía inicial si existe
