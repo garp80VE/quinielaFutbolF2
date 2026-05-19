@@ -993,16 +993,16 @@ def _init_player_tab(ws, cfg=None):
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;11;FALSE);"")' ,
             # N: ESTADO    (HORARIOS col H = índice 8)
             f'=IFERROR(VLOOKUP(A{r};HORARIOS!$A:$L;8;FALSE);"")' ,
-            # O: PTS_LOGRO — pts si el resultado a 90min (1/X/2) predicho coincide con real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{_VL};0);"")' ,
-            # P: PTS_GAN — pts si el ganador predicho coincide con el ganador real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{_VG};0);"")' ,
-            # Q: PTS_GOL1 — pts si el gol del equipo 1 predicho coincide con el real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")' ,
-            # R: PTS_GOL2 — pts si el gol del equipo 2 predicho coincide con el real
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")' ,
-            # S: PTS_CAMPEON — bono solo en fila FINAL si acertó al campeón
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")' ,
+            # O: PTS_LOGRO — pts si resultado coincide Y al menos 1 equipo pick sigue vivo
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X")));{_VL};0);"")' ,
+            # P: PTS_GAN — pts si ganador coincide Y al menos 1 equipo pick sigue vivo
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};J{r}=M{r});{_VG};0);"")' ,
+            # Q: PTS_GOL1 — pts si gol EQ1 coincide Y al menos 1 equipo pick sigue vivo
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};G{r}&""=K{r}&"");{_V1};0);"")' ,
+            # R: PTS_GOL2 — pts si gol EQ2 coincide Y al menos 1 equipo pick sigue vivo
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};H{r}&""=L{r}&"");{_V2};0);"")' ,
+            # S: PTS_CAMPEON — bono FINAL si ganador coincide Y al menos 1 equipo pick sigue vivo
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(B{r}="FINAL";IF(AND({lib};J{r}=M{r});{_VC};0);0);"")' ,
             # T: PTS_TOTAL = suma de O:S
             f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:S{r});0);"")' ,
         ])
@@ -2594,8 +2594,15 @@ def _compute_compare_picks() -> dict:
 
             real_eq1 = game.get("eq1", "")
             real_eq2 = game.get("eq2", "")
-            # Pick incompleto: requiere marcador (gol1+gol2) Y ganador
-            if not pick_gol1 or not pick_gol2 or not pick_gan:
+            # Regla F2: al menos 1 equipo del pick debe estar jugando en el partido real
+            team_alive = (
+                not real_eq1 or not real_eq2 or
+                (pick_eq1 and (pick_eq1 == real_eq1 or pick_eq1 == real_eq2)) or
+                (pick_eq2 and (pick_eq2 == real_eq1 or pick_eq2 == real_eq2)) or
+                (pick_gan and (pick_gan == real_eq1 or pick_gan == real_eq2))
+            )
+            # Pick incompleto o ningún equipo con vida: sin puntos
+            if not pick_gol1 or not pick_gol2 or not pick_gan or not team_alive:
                 pts = 0
                 pts_gol1 = pts_gol2 = pts_gan = pts_logro = 0
             else:
@@ -3969,6 +3976,64 @@ async def admin_recalc_standings(ql_admin: str = Cookie(default="")):
         return {"ok": True, "msg": "Tabla de posiciones recalculada"}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.post("/api/admin/update-scoring-f2")
+async def admin_update_scoring_f2(ql_admin: str = Cookie(default="")):
+    """Actualiza SOLO las fórmulas de puntos (O-S) en todas las tabs de jugadores,
+    sin tocar los picks (F-J). Aplica la regla equipo-vivo para R16+."""
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+    sh  = state.get("sh")
+    cfg = state.get("cfg", {})
+    if not sh:
+        raise HTTPException(500, "Sheet no conectado")
+
+    total    = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    last_row = 3 + total
+    _VL = 'IFERROR(VLOOKUP("PTS_LOGRO";CONFIG!$A:$B;2;0)*1;1)'
+    _VG = 'IFERROR(VLOOKUP("PTS_GAN";CONFIG!$A:$B;2;0)*1;2)'
+    _V1 = 'IFERROR(VLOOKUP("PTS_GOL1";CONFIG!$A:$B;2;0)*1;1)'
+    _V2 = 'IFERROR(VLOOKUP("PTS_GOL2";CONFIG!$A:$B;2;0)*1;1)'
+    _VC = 'IFERROR(VLOOKUP("PTS_CAMPEON";CONFIG!$A:$B;2;0)*1;0)'
+
+    with _sheets_lock:
+        ws_j   = sh.worksheet("JUGADORES")
+        j_rows = ws_j.get_all_values()
+    hi, headers = _jugadores_headers(j_rows)
+    players = []
+    for row in j_rows[hi + 1:]:
+        if not any(c.strip() for c in row):
+            continue
+        d = _normalize_player({headers[k]: (row[k].strip() if k < len(row) else "")
+                                for k in range(len(headers))})
+        if d.get("TAB_NOMBRE"):
+            players.append(d)
+
+    updated = 0
+    for p in players:
+        try:
+            formula_rows = []
+            for i in range(1, total + 1):
+                r = i + 3
+                lib = f"OR(F{r}=D{r};F{r}=E{r};I{r}=D{r};I{r}=E{r};J{r}=D{r};J{r}=E{r})"
+                formula_rows.append([
+                    f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X")));{_VL};0);"")',
+                    f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};J{r}=M{r});{_VG};0);"")',
+                    f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};G{r}&""=K{r}&"");{_V1};0);"")',
+                    f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(AND({lib};H{r}&""=L{r}&"");{_V2};0);"")',
+                    f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(B{r}="FINAL";IF(AND({lib};J{r}=M{r});{_VC};0);0);"")',
+                    f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:S{r});0);"")'
+                ])
+            with _sheets_lock:
+                ws_p = sh.worksheet(p["TAB_NOMBRE"])
+                ws_p.update(formula_rows, f"O4:T{last_row}", value_input_option="USER_ENTERED")
+            updated += 1
+            time.sleep(0.4)
+        except Exception as e:
+            print(f"[update-scoring-f2] Error en {p.get('TAB_NOMBRE','?')}: {e}")
+
+    return {"ok": True, "msg": f"Fórmulas O-S actualizadas en {updated} tab(s)"}
 
 
 @app.post("/api/admin/reinit-formulas")
