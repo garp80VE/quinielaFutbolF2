@@ -668,7 +668,7 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
             # Solo actualizar nombres de equipos (PICK_EQ1/EQ2) para display.
             # NUNCA tocar PICK_GANADOR (J) — es la prediccion del jugador.
             # Tampoco tocar picks de partidos ya jugados.
-            PICK_COLS = [("F", 5), ("I", 8)]  # EQ1 y EQ2 solo, NO ganador
+            PICK_COLS = []  # Paso 3 deshabilitado: los picks del jugador son intocables
             ESTADOS_CERRADOS = ("FINAL", "PRORROGA", "PENALES")
 
             for tab_name in tab_names:
