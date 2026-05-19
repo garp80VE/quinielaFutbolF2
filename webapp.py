@@ -1243,7 +1243,7 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
     for start in range(0, len(players), CHUNK):
         chunk = players[start:start + CHUNK]
         # Comillas simples alrededor del nombre para tabs con espacios/caracteres especiales
-        ranges = [f"'{p['TAB_NOMBRE']}'!A4:S{last_row}" for p in chunk]
+        ranges = [f"'{p['TAB_NOMBRE']}'!A4:T{last_row}" for p in chunk]
         try:
             with _sheets_lock:
                 resp = sh.values_batch_get(ranges)
@@ -1256,7 +1256,7 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
                 try:
                     with _sheets_lock:
                         ws_p = sh.worksheet(p["TAB_NOMBRE"])
-                        result_map[p["TAB_NOMBRE"]] = ws_p.get(f"A4:S{last_row}")
+                        result_map[p["TAB_NOMBRE"]] = ws_p.get(f"A4:T{last_row}")
                     time.sleep(0.2)
                 except Exception as e2:
                     print(f"[batch-read] {p['TAB_NOMBRE']}: {e2}")
@@ -1368,6 +1368,8 @@ def _update_standings():
     _cache["top3_text"] = " · ".join(
         f"{r[0]}. {r[1]} ({r[2]}pts)" for r in rows_out[:3] if len(r) >= 3
     )
+    # Caché en memoria para /api/standings (evita leer Sheets en cada request)
+    _cache["standings_rows"] = [["POS", "NOMBRE", "Ptos", "Diferencia"]] + rows_out
 
     ws_pos = sh.worksheet("POSICIONES")
     fila_fin_clear = max(len(standings) + 10, 50)
@@ -1753,6 +1755,18 @@ async def lifespan(app: FastAPI):
     # Arrancar updater en hilo de fondo (daemon = se cierra solo al cerrar el webapp)
     t = threading.Thread(target=_updater_loop, daemon=True)
     t.start()
+
+    # Calcular standings al arrancar para poblar caché desde el inicio
+    def _standings_on_start():
+        time.sleep(3)   # esperar a que el updater loop arranque
+        try:
+            _update_standings()
+            global _standings_last_update
+            _standings_last_update = time.time()
+            print("[webapp] standings iniciales calculados")
+        except Exception as e:
+            print(f"[webapp] standings startup error: {e}")
+    threading.Thread(target=_standings_on_start, daemon=True, name="standings-init").start()
 
     yield
 
@@ -2219,11 +2233,13 @@ async def get_public_config():
 @app.get("/api/standings")
 async def get_standings():
     try:
+        # Servir desde caché en memoria si está disponible (actualizada por _update_standings)
+        cached = _cache.get("standings_rows")
+        if cached:
+            return {"rows": cached}
+        # Fallback: leer desde Sheets si la caché aún no se ha poblado
         ws   = state["sh"].worksheet("POSICIONES")
         rows = ws.get_all_values()
-        # Fila 1 = título "TABLA DE POSICIONES" (mergeada), fila 2 = headers de columnas
-        # El frontend espera: rows[0]=headers, rows[1:]=datos
-        # Saltamos la fila de título y devolvemos desde la fila 2 en adelante
         data = [r for r in rows[1:] if any(c.strip() for c in r)]
         return {"rows": data}
     except Exception:
@@ -5697,7 +5713,7 @@ async def stripe_webhook(request: Request):
         print(f"[stripe] Error: {e}")
         raise HTTPException(500, f"Error interno: {e}")
 
-# \u2500\u2500\u2500 Entry point \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# --- Entry point ---
 
 if __name__ == "__main__":
     import cfg as _cfg
