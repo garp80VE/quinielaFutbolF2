@@ -931,13 +931,14 @@ def create_player_tab(tab_name: str):
 
 
 def _init_player_tab(ws, cfg=None):
-    """Crea pestaña F2 desde cero con headers y fórmulas (19 columnas A-S).
+    """Crea pestaña F2 desde cero con headers y fórmulas (20 columnas A-T).
     Estructura:
       A: JGO  B: RONDA  C: FECHA  D: EQ1_REAL  E: EQ2_REAL
       F: PICK_EQ1  G: PICK_GOL1  H: PICK_GOL2  I: PICK_EQ2  J: PICK_GANADOR
       K: GOL1_REAL  L: GOL2_REAL  M: GAN_REAL  N: ESTADO
-      O: PTS_LOGRO  P: PTS_GAN  Q: PTS_GOL1  R: PTS_GOL2  S: PTS_TOTAL
-    Puntuación F2: configurable via cfg (PTS_LOGRO/PTS_GAN/PTS_GOL1/PTS_GOL2)
+      O: PTS_LOGRO  P: PTS_GAN  Q: PTS_GOL1  R: PTS_GOL2
+      S: PTS_CAMPEON  T: PTS_TOTAL
+    Puntuación F2: configurable via cfg (PTS_LOGRO/PTS_GAN/PTS_GOL1/PTS_GOL2/PTS_CAMPEON)
     Usa ';' como separador (locale español de Google Sheets)."""
     if cfg is None:
         cfg = state.get("cfg", {})
@@ -951,9 +952,9 @@ def _init_player_tab(ws, cfg=None):
         "JGO", "RONDA", "FECHA", "EQ1 REAL", "EQ2 REAL",
         "PICK EQ1", "PICK GOL1", "PICK GOL2", "PICK EQ2", "PICK GANADOR",
         "GOL1 REAL", "GOL2 REAL", "GAN REAL", "ESTADO",
-        "PTS LOGRO", "PTS GAN", "PTS GOL1", "PTS GOL2", "PTS TOTAL"
+        "PTS LOGRO", "PTS GAN", "PTS GOL1", "PTS GOL2", "PTS CAMPEON", "PTS TOTAL"
     ]
-    ws.update([headers], "A1:S1")
+    ws.update([headers], "A1:T1")
 
     total    = int(state.get("cfg", {}).get("TOTAL_JUEGOS_F2", 32))
     last_row = 3 + total
@@ -993,10 +994,12 @@ def _init_player_tab(ws, cfg=None):
             f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")' ,
             # R: PTS_GOL2 — pts si el gol del equipo 2 predicho coincide con el real
             f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")' ,
-            # S: PTS_TOTAL (incluye bono campeón en fila FINAL)
-            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")' ,
+            # S: PTS_CAMPEON — bono solo en fila FINAL si acertó al campeón
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")' ,
+            # T: PTS_TOTAL = suma de O:S
+            f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:S{r});0);"")' ,
         ])
-    ws.update(rows, f"A4:S{last_row}", value_input_option="USER_ENTERED")
+    ws.update(rows, f"A4:T{last_row}", value_input_option="USER_ENTERED")
 
 
 # âââ FastAPI ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
@@ -1040,7 +1043,7 @@ def _top_by_day(fecha: str) -> str:
                 for g in day_games:
                     row_idx = int(g["jgo"]) - 1  # jgo 1 → índice 0 en tab
                     if row_idx < len(tab) and len(tab[row_idx]) >= 19:
-                        try: pts_day += float(tab[row_idx][18])  # col S = PTS_TOTAL F2
+                        try: pts_day += float(tab[row_idx][19])  # col T = PTS_TOTAL F2
                         except: pass
                 scores.append((p["NOMBRE"], pts_day))
             except Exception:
@@ -1309,18 +1312,18 @@ def _update_standings():
 
             for fila in tab_data:
                 def c(i, f=fila): return f[i].strip() if len(f) > i else ""
-                estado = c(13)   # col N — ESTADO (F2: cols O-S = indices 14-18)
+                estado = c(13)   # col N — ESTADO (F2: cols O-T = indices 14-19)
                 if not estado or estado == "PROG" or not c(0):
                     continue
                 jugados += 1
-                # PTS por columna F2: O=PTS_LOGRO(14), P=PTS_GAN(15), Q=PTS_GOL1(16), R=PTS_GOL2(17), S=PTS_TOTAL(18)
+                # PTS por columna F2: O=PTS_LOGRO(14), P=PTS_GAN(15), Q=PTS_GOL1(16), R=PTS_GOL2(17), S=PTS_CAMPEON(18), T=PTS_TOTAL(19)
                 try: g1_acert  += int(float(c(14))) > 0   # logro acertado
                 except: pass
                 try: g2_acert  += int(float(c(15))) > 0   # ganador acertado
                 except: pass
                 try: gan_acert += int(float(c(16))) > 0   # gol1 acertado
                 except: pass
-                try: pts_total += int(float(c(18))) if c(18) else 0
+                try: pts_total += int(float(c(19))) if c(19) else 0
                 except: pass
 
             standings.append({
@@ -2257,7 +2260,7 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
             estado = c(13)   # col N — ESTADO (F2)
             if not jgo or not estado or estado == "PROG":
                 continue
-            try: pts = int(float(c(18))) if c(18) else 0  # col S = PTS_TOTAL F2
+            try: pts = int(float(c(19))) if c(19) else 0  # col T = PTS_TOTAL F2
             except: pts = 0
 
             game  = next((g for g in games if g["jgo"] == jgo), None)
@@ -2435,7 +2438,7 @@ async def get_game_picks(jgo: int = Query(...)):
 
             # Leer pts directamente de col S (PTS_TOTAL) de la pestaña del jugador
             # — la fórmula en la hoja ya hace el cálculo correcto con valores de CONFIG
-            pts_raw = row_data[18].strip() if len(row_data) > 18 else ""
+            pts_raw = row_data[19].strip() if len(row_data) > 19 else ""
             try:
                 pts = int(float(pts_raw)) if pts_raw != "" else (0 if game["estado"] not in ("", "PROG") else None)
             except (ValueError, TypeError):
@@ -4186,16 +4189,18 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
             batch = []
             for i in range(total):
                 r = fila_data + i
-                f_logro = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{_VL};0);"")'
-                f_gan   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{_VG};0);"")'
-                f_gol1  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")'
-                f_gol2  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")'
-                f_total = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")'
+                f_logro  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(IF(G{r}*1>H{r}*1;"1";IF(G{r}*1<H{r}*1;"2";"X"))=IF(K{r}*1>L{r}*1;"1";IF(K{r}*1<L{r}*1;"2";"X"));{_VL};0);"")'
+                f_gan    = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{_VG};0);"")'
+                f_gol1   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")'
+                f_gol2   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")'
+                f_camp   = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")'
+                f_total  = f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:S{r});0);"")'
                 batch += [{"range": f"O{r}", "values": [[f_logro]]},
                           {"range": f"P{r}", "values": [[f_gan]]},
                           {"range": f"Q{r}", "values": [[f_gol1]]},
                           {"range": f"R{r}", "values": [[f_gol2]]},
-                          {"range": f"S{r}", "values": [[f_total]]}]
+                          {"range": f"S{r}", "values": [[f_camp]]},
+                          {"range": f"T{r}", "values": [[f_total]]}]
             try:
                 with _sheets_lock:
                     _sheets_retry(lambda w=ws, b=batch: w.batch_update(b, value_input_option="USER_ENTERED"))
@@ -4286,7 +4291,8 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
                     {"range": f"P{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(J{r}=M{r};{_VG};0);"")' ]]},
                     {"range": f"Q{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(G{r}&""=K{r}&"";{_V1};0);"")' ]]},
                     {"range": f"R{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(H{r}&""=L{r}&"";{_V2};0);"")' ]]},
-                    {"range": f"S{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:R{r});0)+IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")' ]]},
+                    {"range": f"S{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IF(B{r}="FINAL";IF(J{r}=M{r};{_VC};0);0);"")' ]]},
+                    {"range": f"T{r}", "values": [[f'=IF(AND(N{r}<>"";N{r}<>"PROG");IFERROR(SUM(O{r}:S{r});0);"")' ]]},
                 ]
             try:
                 with _sheets_lock:
@@ -4997,7 +5003,7 @@ def _compute_probabilities() -> dict:
                 "g2pick":    c(7),   # H – PICK_GOL2
                 "ganpick":   c(9),   # J – PICK_GANADOR
                 "estado":    c(13),  # N – ESTADO
-                "pts_total": c(18),  # S – PTS_TOTAL F2
+                "pts_total": c(19),  # T – PTS_TOTAL F2
             }
         player_tabs[nombre] = games_data
 
