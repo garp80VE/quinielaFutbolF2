@@ -1632,6 +1632,17 @@ def _updater_loop():
                         _update_standings()
                         global _standings_last_update
                         _standings_last_update = time.time()
+                        # Pre-calentar cachés de probabilidades y comparar
+                        try:
+                            result = _compute_probabilities()
+                            _cache["prob"]    = result
+                            _cache["prob_ts"] = time.time()
+                        except Exception as ep:
+                            print(f"[standings-async] prob ERROR: {ep}")
+                        try:
+                            _compute_compare_picks()
+                        except Exception as ec:
+                            print(f"[standings-async] compare ERROR: {ec}")
                     except Exception as e:
                         print(f"[standings-async] ERROR: {e}")
                     finally:
@@ -1756,9 +1767,9 @@ async def lifespan(app: FastAPI):
     t = threading.Thread(target=_updater_loop, daemon=True)
     t.start()
 
-    # Calcular standings al arrancar para poblar caché desde el inicio
-    def _standings_on_start():
-        time.sleep(3)   # esperar a que el updater loop arranque
+    # Pre-calentar todas las cachés al arrancar (standings, prob, comparar)
+    def _warmup_caches():
+        time.sleep(3)
         try:
             _update_standings()
             global _standings_last_update
@@ -1766,7 +1777,19 @@ async def lifespan(app: FastAPI):
             print("[webapp] standings iniciales calculados")
         except Exception as e:
             print(f"[webapp] standings startup error: {e}")
-    threading.Thread(target=_standings_on_start, daemon=True, name="standings-init").start()
+        try:
+            result = _compute_probabilities()
+            _cache["prob"]    = result
+            _cache["prob_ts"] = time.time()
+            print("[webapp] probabilidades iniciales calculadas")
+        except Exception as e:
+            print(f"[webapp] prob startup error: {e}")
+        try:
+            _compute_compare_picks()
+            print("[webapp] comparar iniciales calculado")
+        except Exception as e:
+            print(f"[webapp] compare startup error: {e}")
+    threading.Thread(target=_warmup_caches, daemon=True, name="warmup").start()
 
     yield
 
