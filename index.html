@@ -2386,7 +2386,7 @@ function renderGames(games) {
             <span class="bg-green-50 text-green-700 text-xs px-2.5 py-1 rounded-full font-semibold">⚡ Logro: ${S.pts.logro} pt${S.pts.logro!==1?'s':''}</span>
             <span class="bg-purple-50 text-purple-700 text-xs px-2.5 py-1 rounded-full font-semibold">🏆 Ganador: ${S.pts.gan} pts</span>
             <span class="bg-blue-50 text-blue-600 text-xs px-2.5 py-1 rounded-full font-semibold">🎯 Goles c/u: ${S.pts.gol1} pt${S.pts.gol1!==1?'s':''}</span>
-            ${S.pts.campeon ? `<span class="bg-yellow-50 text-yellow-700 text-xs px-2.5 py-1 rounded-full font-semibold">⭐ Campeón: +${S.pts.campeon} pts</span>` : ''}
+            ${S.pts.campeon && g.ronda === 'FINAL' ? `<span class="bg-yellow-50 text-yellow-700 text-xs px-2.5 py-1 rounded-full font-semibold">⭐ Campeón: +${S.pts.campeon} pts</span>` : ''}
           </div>`}
       </div>`;
     list.appendChild(card);
