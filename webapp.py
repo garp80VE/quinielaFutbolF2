@@ -666,18 +666,24 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
 
             fila_fin_p = fila_inicio + total_juegos - 1
             # Columnas de picks: F=PICK_EQ1(5), I=PICK_EQ2(8), J=PICK_GANADOR(9) — 0-indexed
+            # Leemos hasta col N (estado, idx 13) para no tocar picks de partidos ya FINAL
             PICK_COLS = [("F", 5), ("I", 8), ("J", 9)]
+            ESTADOS_CERRADOS = ("FINAL", "PRORROGA", "PENALES")
 
             for tab_name in tab_names:
                 try:
                     with _sheets_lock:
                         ws_p  = sh.worksheet(tab_name)
-                        rows  = ws_p.get(f"A{fila_inicio}:J{fila_fin_p}")
+                        rows  = ws_p.get(f"A{fila_inicio}:N{fila_fin_p}")
                     pick_batch = []
                     for i, row in enumerate(rows):
                         def _c(idx, r=row): return r[idx].strip() if len(r) > idx else ""
                         row_num = fila_inicio + i
                         jgo_val = _c(0)
+                        estado_p = _c(13)  # col N — ESTADO del partido
+                        # No modificar picks de partidos ya jugados
+                        if estado_p in ESTADOS_CERRADOS:
+                            continue
                         for col_letter, col_idx in PICK_COLS:
                             val = _c(col_idx)
                             if val in placeholder_map:
