@@ -665,9 +665,10 @@ def _propagate_bracket(sh=None, ws_h=None) -> list:
                         tab_names.append(tab)
 
             fila_fin_p = fila_inicio + total_juegos - 1
-            # Columnas de picks: F=PICK_EQ1(5), I=PICK_EQ2(8), J=PICK_GANADOR(9) — 0-indexed
-            # Leemos hasta col N (estado, idx 13) para no tocar picks de partidos ya FINAL
-            PICK_COLS = [("F", 5), ("I", 8), ("J", 9)]
+            # Solo actualizar nombres de equipos (PICK_EQ1/EQ2) para display.
+            # NUNCA tocar PICK_GANADOR (J) — es la prediccion del jugador.
+            # Tampoco tocar picks de partidos ya jugados.
+            PICK_COLS = [("F", 5), ("I", 8)]  # EQ1 y EQ2 solo, NO ganador
             ESTADOS_CERRADOS = ("FINAL", "PRORROGA", "PENALES")
 
             for tab_name in tab_names:
