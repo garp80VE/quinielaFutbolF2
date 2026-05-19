@@ -1555,6 +1555,7 @@ const S = {
   hasFinals: false,
   isNewUser: false,
   pts: { logro:1, gan:2, gol1:1, gol2:1, campeon:0 },  // valores desde public-config
+  get ptsMax() { return this.pts.logro + this.pts.gan + this.pts.gol1 + this.pts.gol2; },
 };
 
 // ─── Session ──────────────────────────────────────────────────────
@@ -2379,7 +2380,7 @@ function renderGames(games) {
         <!-- Puntos si FINAL -->
         ${pts !== null ? `
           <div class="mt-3 flex items-center justify-center gap-2">
-            <span class="pts ${pts>=5?'pts-hi':pts>=2?'pts-mid':'pts-lo'}">${pts} pts</span>
+            <span class="pts ${pts>=S.ptsMax?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts} pts</span>
           </div>` : `
           <div class="mt-3 flex gap-1.5 flex-wrap">
             <span class="bg-green-50 text-green-700 text-xs px-2.5 py-1 rounded-full font-semibold">⚡ Logro: ${S.pts.logro} pt${S.pts.logro!==1?'s':''}</span>
@@ -3225,7 +3226,7 @@ async function loadPuntos(force=false) {
       card.className = 'card-open';
       card.style.cssText = 'border-radius:14px;overflow:hidden;margin-bottom:12px';
       const fecha = day.fecha ? new Date(day.fecha + 'T00:00:00').toLocaleDateString('es', {weekday:'short',day:'2-digit',month:'short'}) : 'Sin fecha';
-      const ptsCls = day.pts >= 3 ? 'pts-hi' : day.pts >= 1 ? 'pts-mid' : 'pts-lo';
+      const ptsCls = day.pts >= S.ptsMax ? 'pts-hi' : day.pts >= 1 ? 'pts-mid' : 'pts-lo';
 
       const header = document.createElement('div');
       header.style.cssText = 'background:#f8fafc;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e8eaf0;cursor:pointer';
@@ -3247,7 +3248,7 @@ async function loadPuntos(force=false) {
         const hasMarcador = pg1 !== '' && pg2 !== '';
         const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
         const ganTxt = (hasMarcador && pgan) ? pgan : '—';
-        row.innerHTML = `<div style="flex:1;min-width:0"><p style="font-size:12px;font-weight:600;color:#1e293b;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${eq1} vs ${eq2}</p><p style="font-size:11px;color:#64748b;margin:2px 0 0">Pick: ${pickStr} · ${ganTxt}</p></div><span class="pts ${pts>=3?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts}p</span>`;
+        row.innerHTML = `<div style="flex:1;min-width:0"><p style="font-size:12px;font-weight:600;color:#1e293b;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${eq1} vs ${eq2}</p><p style="font-size:11px;color:#64748b;margin:2px 0 0">Pick: ${pickStr} · ${ganTxt}</p></div><span class="pts ${pts>=S.ptsMax?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts}p</span>`;
         games.appendChild(row);
       });
 
@@ -3738,7 +3739,7 @@ async function loadApuestasDetail(game) {
                 const pg2 = p.pick_gol2 ?? p.g2 ?? '';
                 const pgan = p.pick_gan ?? p.gan ?? '';
                 const hasMarcador = pg1 !== '' && pg2 !== '';
-                const ptsCls = p.pts >= 4 ? 'pts-hi' : p.pts >= 1 ? 'pts-mid' : p.pts === 0 ? 'pts-lo' : '';
+                const ptsCls = p.pts >= S.ptsMax ? 'pts-hi' : p.pts >= 1 ? 'pts-mid' : p.pts === 0 ? 'pts-lo' : '';
                 const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
                 // Solo mostrar ganador si hay marcador completo
                 const ganDisp = (hasMarcador && pgan) ? pgan : '—';
