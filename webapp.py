@@ -4186,6 +4186,17 @@ async def admin_fix_scoring_formulas(ql_admin: str = Cookie(default="")):
         for ws in worksheets:
             if ws.title in RESERVED:
                 continue
+            # Expandir a 20 columnas (A-T) si la pestaña tiene menos
+            try:
+                with _sheets_lock:
+                    if ws.col_count < 20:
+                        _sheets_retry(lambda w=ws: w.resize(rows=w.row_count, cols=20))
+                        # Escribir header col T si falta
+                        _sheets_retry(lambda w=ws: w.update([["PTS TOTAL"]], "T1"))
+                        # Renombrar col S header a PTS CAMPEON
+                        _sheets_retry(lambda w=ws: w.update([["PTS CAMPEON"]], "S1"))
+            except Exception as e:
+                print(f"[fix-scoring] No se pudo expandir {ws.title}: {e}")
             batch = []
             for i in range(total):
                 r = fila_data + i
@@ -4283,6 +4294,15 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
         for ws in worksheets:
             if ws.title in RESERVED:
                 continue
+            # Expandir a 20 columnas (A-T) si la pestaña tiene menos
+            try:
+                with _sheets_lock:
+                    if ws.col_count < 20:
+                        _sheets_retry(lambda w=ws: w.resize(rows=w.row_count, cols=20))
+                        _sheets_retry(lambda w=ws: w.update([["PTS CAMPEON"]], "S1"))
+                        _sheets_retry(lambda w=ws: w.update([["PTS TOTAL"]], "T1"))
+            except Exception as _ex:
+                errors.append(f"⚠️ Expand {ws.title}: {_ex}")
             batch_s = []
             for i in range(total):
                 r = fila_data + i
@@ -5666,10 +5686,10 @@ async def stripe_webhook(request: Request):
             phone    = metadata.get("phone", "")
             nombre   = metadata.get("nombre", "")
             amount   = session.get("amount_total", 0)
-            print(f"[stripe] Pago: {nombre} ({phone}) — ${amount/100:.2f} USD")
+            print(f"[stripe] Pago: {nombre} ({phone}) \u2014 ${amount/100:.2f} USD")
             if phone:
                 ok = _mark_player_paid_internal(phone)
-                print(f"[stripe] {chr(9989) if ok else chr(9888)} {phone} {chr(109) if ok else chr(110)}arcado")
+                print(f"[stripe] {chr(9989) if ok else chr(9888)} {phone} {'marcado' if ok else 'no encontrado'}")
         return {"ok": True}
     except HTTPException:
         raise
@@ -5677,7 +5697,7 @@ async def stripe_webhook(request: Request):
         print(f"[stripe] Error: {e}")
         raise HTTPException(500, f"Error interno: {e}")
 
-# ─── Entry point ────────────────────────────────────────────────────────────────
+# \u2500\u2500\u2500 Entry point \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 
 if __name__ == "__main__":
     import cfg as _cfg
