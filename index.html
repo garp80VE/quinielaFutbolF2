@@ -2243,7 +2243,7 @@ function renderGames(games) {
     // su predicción original ("México 0–1 Portugal, Portugal gana → 0 pts") en vez
     // de los equipos reales ("Corea del Sur vs Argentina") que confunden la lectura.
     const _pickIsRealName = s => !!(s && s !== 'TBD' && !s.startsWith('Ganador') && !s.startsWith('Perdedor') && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
-    if (locked && isFinal && g.ronda && g.ronda !== 'R32') {
+    if (g.ronda && g.ronda !== 'R32') {
       if (_pickIsRealName(p.eq1)) rEq1 = p.eq1;
       if (_pickIsRealName(p.eq2)) rEq2 = p.eq2;
     }
