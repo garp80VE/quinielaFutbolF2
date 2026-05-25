@@ -823,6 +823,41 @@
       </div>
     </div>
 
+    <!-- Sección: Vista DB SQLite -->
+    <div class="card-open rounded-3xl overflow-hidden" style="border-color:#e9d5ff">
+      <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-db','chev-db');if(document.getElementById('adm-body-db').style.display!=='none')loadDbView()">
+        <p style="font-weight:800;font-size:14px;color:#1e293b;margin:0">🗄️ Vista SQLite</p>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span onclick="event.stopPropagation();loadDbView()" style="color:#7c3aed;font-size:13px;font-weight:700;cursor:pointer;padding:2px 6px">↻</span>
+          <svg id="chev-db" class="adm-sec-chev" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+        </div>
+      </div>
+      <div id="adm-body-db" class="adm-section-body" style="display:none">
+        <div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+
+          <!-- Totales rápidos -->
+          <div id="db-totals" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+
+          <!-- Tabs -->
+          <div style="display:flex;gap:6px;border-bottom:2px solid #e9d5ff;padding-bottom:6px">
+            <button onclick="showDbTab('horarios')" id="dbtab-horarios"
+              style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;border:none;cursor:pointer;background:#7c3aed;color:white">⚽ Partidos</button>
+            <button onclick="showDbTab('jugadores')" id="dbtab-jugadores"
+              style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;border:none;cursor:pointer;background:#f1f5f9;color:#64748b">👤 Jugadores</button>
+            <button onclick="showDbTab('picks')" id="dbtab-picks"
+              style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;border:none;cursor:pointer;background:#f1f5f9;color:#64748b">🎯 Picks</button>
+            <button onclick="showDbTab('config')" id="dbtab-config"
+              style="font-size:11px;font-weight:800;padding:4px 10px;border-radius:20px;border:none;cursor:pointer;background:#f1f5f9;color:#64748b">⚙️ Config</button>
+          </div>
+
+          <div id="db-tab-content" style="font-size:12px;max-height:480px;overflow-y:auto">
+            <p style="color:#94a3b8;text-align:center;padding:16px">Toca ↻ para cargar datos</p>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
     <!-- Sección: Pozo y Jugadores -->
     <div class="card-open rounded-3xl overflow-hidden">
       <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-pozo','chev-pozo')">
@@ -2138,8 +2173,8 @@ function buildGroupsGrid() {
   const RONDA_COLOR = {'R32':'#002868','R16':'#1d4ed8','QF':'#7c3aed',
                        'SF':'#be185d','3ER':'#047857','FINAL':'#b45309'};
 
-  // Ordenar rondas presentes según RONDA_ORDER
-  const sortedRounds = RONDA_ORDER.filter(r => S.groups[r] && S.groups[r].length > 0);
+  // Mostrar siempre las 6 rondas del bracket (aunque no haya partidos aún)
+  const sortedRounds = RONDA_ORDER;
 
   sortedRounds.forEach(key => {
     const games  = S.groups[key];
@@ -5149,6 +5184,171 @@ async function saveAllGames() {
     }
   }
   showToast(errors.length ? `⚠️ ${ok} ok, ${errors.length} errores` : `✅ ${ok} partidos guardados`);
+}
+
+// ── Vista SQLite ──────────────────────────────────────────────────────────────
+let _dbDump = null;
+let _dbActiveTab = 'horarios';
+
+const _RONDA_COLORS = {
+  R32:'#002868', R16:'#1d4ed8', QF:'#7c3aed',
+  SF:'#be185d', '3ER':'#047857', FINAL:'#b45309', '?':'#94a3b8'
+};
+const _EST_COLORS = {
+  FINAL:{bg:'#dcfce7',txt:'#166534'},
+  LIVE: {bg:'#fee2e2',txt:'#dc2626'},
+  PROG: {bg:'#f1f5f9',txt:'#64748b'},
+};
+
+async function loadDbView() {
+  const cont = document.getElementById('db-tab-content');
+  const tot  = document.getElementById('db-totals');
+  if (cont) cont.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:16px">⏳ Cargando…</p>';
+  try {
+    _dbDump = await api('GET', '/api/admin/db-dump');
+    // Totales
+    if (tot) {
+      const t = _dbDump.totals;
+      tot.innerHTML = [
+        ['⚽ Partidos', t.horarios,  '#ddd6fe','#5b21b6'],
+        ['👤 Jugadores',t.jugadores, '#d1fae5','#065f46'],
+        ['🎯 Picks',    t.picks,     '#fef9c3','#92400e'],
+      ].map(([lbl,val,bg,txt]) =>
+        `<div style="flex:1;min-width:80px;background:${bg};border-radius:10px;padding:8px 10px;text-align:center">
+          <div style="font-size:18px;font-weight:900;color:${txt}">${val}</div>
+          <div style="font-size:10px;font-weight:700;color:${txt};opacity:.8">${lbl}</div>
+        </div>`
+      ).join('');
+    }
+    showDbTab(_dbActiveTab);
+  } catch(e) {
+    if (cont) cont.innerHTML = `<p style="color:#dc2626;text-align:center;padding:16px">❌ ${e.message}</p>`;
+  }
+}
+
+function showDbTab(tab) {
+  _dbActiveTab = tab;
+  ['horarios','jugadores','picks','config'].forEach(t => {
+    const btn = document.getElementById(`dbtab-${t}`);
+    if (btn) {
+      btn.style.background = t===tab ? '#7c3aed' : '#f1f5f9';
+      btn.style.color      = t===tab ? 'white'   : '#64748b';
+    }
+  });
+  if (!_dbDump) return;
+  const cont = document.getElementById('db-tab-content');
+  if (!cont) return;
+
+  if (tab === 'horarios') {
+    const RONDA_ORDER = ['R32','R16','QF','SF','3ER','FINAL','?',''];
+    const byRonda = {};
+    for (const h of _dbDump.horarios) {
+      const k = h.grupo || '?';
+      if (!byRonda[k]) byRonda[k] = [];
+      byRonda[k].push(h);
+    }
+    const keys = RONDA_ORDER.filter(k => byRonda[k]);
+    const unknownKeys = Object.keys(byRonda).filter(k => !RONDA_ORDER.includes(k));
+    unknownKeys.forEach(k => keys.push(k));
+
+    cont.innerHTML = keys.map(k => {
+      const games = byRonda[k];
+      const rColor = _RONDA_COLORS[k] || '#94a3b8';
+      const rows = games.map(h => {
+        const ec = _EST_COLORS[h.estado] || _EST_COLORS.PROG;
+        const score = (h.gol1!==null && h.gol1!=='' && h.gol2!==null && h.gol2!=='')
+          ? `<span style="font-weight:800;color:#0369a1">${h.gol1}-${h.gol2}</span>`
+          : '<span style="color:#cbd5e1">-</span>';
+        const gan = h.ganador ? `<span style="font-size:10px;color:#7c3aed;font-weight:700">🏆${h.ganador}</span>` : '';
+        return `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="padding:5px 6px;font-weight:800;color:#0369a1;white-space:nowrap">JGO ${h.jgo}</td>
+          <td style="padding:5px 4px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${h.eq1||'<span style="color:#cbd5e1">—</span>'}</td>
+          <td style="padding:5px 4px;text-align:center">${score}</td>
+          <td style="padding:5px 4px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${h.eq2||'<span style="color:#cbd5e1">—</span>'}</td>
+          <td style="padding:5px 4px;text-align:center"><span style="font-size:9px;font-weight:800;padding:2px 5px;border-radius:10px;background:${ec.bg};color:${ec.txt}">${h.estado||'PROG'}</span></td>
+          <td style="padding:5px 4px">${gan}</td>
+        </tr>`;
+      }).join('');
+      return `<div style="margin-bottom:10px">
+        <div style="background:${rColor};color:white;font-size:10px;font-weight:900;padding:4px 10px;border-radius:6px;margin-bottom:4px;display:inline-block">
+          ${k==='?'?'SIN RONDA':k} (${games.length})
+        </div>
+        <table style="width:100%;border-collapse:collapse">${rows}</table>
+      </div>`;
+    }).join('') || '<p style="color:#94a3b8;text-align:center;padding:16px">Sin partidos</p>';
+
+  } else if (tab === 'jugadores') {
+    if (!_dbDump.jugadores.length) {
+      cont.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:16px">Sin jugadores registrados</p>';
+      return;
+    }
+    // Picks por celular
+    const picksMap = {};
+    for (const p of _dbDump.picks_summary) picksMap[p.celular] = p;
+    cont.innerHTML = `<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#f8fafc;font-size:10px;color:#64748b;font-weight:800">
+        <th style="padding:6px 8px;text-align:left">Jugador</th>
+        <th style="padding:6px 4px;text-align:center">Picks</th>
+        <th style="padding:6px 4px;text-align:left;font-size:9px">Registrado</th>
+      </tr></thead>
+      <tbody>${_dbDump.jugadores.map((j,i) => {
+        const pk = picksMap[j.celular];
+        const pickCount = pk ? pk.con_ganador : 0;
+        const pickTotal = pk ? pk.total : 0;
+        return `<tr style="border-bottom:1px solid #f1f5f9;background:${i%2?'#fafafa':'white'}">
+          <td style="padding:6px 8px">
+            <div style="font-weight:700;font-size:12px">${j.nombre}</div>
+            <div style="font-size:10px;color:#94a3b8">${j.celular}</div>
+          </td>
+          <td style="padding:6px 4px;text-align:center">
+            <span style="font-weight:800;font-size:12px;color:${pickCount>0?'#15803d':'#94a3b8'}">${pickCount}/${pickTotal}</span>
+          </td>
+          <td style="padding:6px 4px;font-size:9px;color:#94a3b8">${(j.created_at||'').substring(0,16)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+
+  } else if (tab === 'picks') {
+    if (!_dbDump.picks_summary.length) {
+      cont.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:16px">Sin picks registrados</p>';
+      return;
+    }
+    const jugMap = {};
+    for (const j of _dbDump.jugadores) jugMap[j.celular] = j.nombre;
+    cont.innerHTML = `<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#f8fafc;font-size:10px;color:#64748b;font-weight:800">
+        <th style="padding:6px 8px;text-align:left">Jugador</th>
+        <th style="padding:6px 4px;text-align:center">Con ganador</th>
+        <th style="padding:6px 4px;text-align:center">Total filas</th>
+      </tr></thead>
+      <tbody>${_dbDump.picks_summary.map((p,i) => {
+        const nombre = jugMap[p.celular] || p.celular;
+        const pct = p.total > 0 ? Math.round(p.con_ganador/p.total*100) : 0;
+        return `<tr style="border-bottom:1px solid #f1f5f9;background:${i%2?'#fafafa':'white'}">
+          <td style="padding:6px 8px;font-weight:700;font-size:12px">${nombre}</td>
+          <td style="padding:6px 4px;text-align:center">
+            <span style="font-weight:800;color:${pct>=80?'#15803d':pct>=40?'#92400e':'#94a3b8'}">${p.con_ganador}</span>
+            <span style="font-size:10px;color:#94a3b8"> (${pct}%)</span>
+          </td>
+          <td style="padding:6px 4px;text-align:center;font-size:11px;color:#64748b">${p.total}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+
+  } else if (tab === 'config') {
+    const entries = Object.entries(_dbDump.config);
+    if (!entries.length) {
+      cont.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:16px">Sin config</p>';
+      return;
+    }
+    cont.innerHTML = `<table style="width:100%;border-collapse:collapse">
+      ${entries.map(([k,v],i) => `
+        <tr style="border-bottom:1px solid #f1f5f9;background:${i%2?'#fafafa':'white'}">
+          <td style="padding:5px 8px;font-weight:700;font-size:11px;color:#5b21b6;width:45%;word-break:break-all">${k}</td>
+          <td style="padding:5px 8px;font-size:11px;color:#1e293b;word-break:break-all">${v||'<span style="color:#cbd5e1">—</span>'}</td>
+        </tr>`).join('')}
+    </table>`;
+  }
 }
 
 async function adminResetTest() {

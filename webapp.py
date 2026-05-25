@@ -3860,6 +3860,52 @@ async def wa_disconnect(body: dict = None, ql_admin: str = Cookie(default="")):
 
 
 
+# ─── Admin: db-dump (vista general SQLite) ────────────────────────────────────
+
+@app.get("/api/admin/db-dump")
+async def admin_db_dump(ql_admin: str = Cookie(default="")):
+    """Devuelve un snapshot completo de SQLite para el panel admin."""
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+
+    conn = _db.get_conn()
+    conn.row_factory = _db.sqlite3.Row
+
+    # Horarios
+    horarios = [dict(r) for r in conn.execute(
+        "SELECT jgo, grupo, fecha, hora, eq1, eq2, estado, gol1, gol2, ganador FROM horarios ORDER BY CAST(jgo AS INTEGER)"
+    ).fetchall()]
+
+    # Jugadores
+    jugadores = [dict(r) for r in conn.execute(
+        "SELECT nombre, celular, email, created_at FROM jugadores ORDER BY created_at"
+    ).fetchall()]
+
+    # Picks por jugador
+    picks_raw = conn.execute(
+        "SELECT celular, COUNT(*) as total, SUM(CASE WHEN ganador IS NOT NULL AND ganador != '' THEN 1 ELSE 0 END) as con_ganador FROM picks GROUP BY celular"
+    ).fetchall()
+    picks_summary = [dict(r) for r in picks_raw]
+
+    # Config
+    cfg_raw = conn.execute("SELECT key, value FROM config ORDER BY key").fetchall()
+    config = {r["key"]: r["value"] for r in cfg_raw}
+
+    conn.close()
+
+    return {
+        "horarios":      horarios,
+        "jugadores":     jugadores,
+        "picks_summary": picks_summary,
+        "config":        config,
+        "totals": {
+            "horarios":  len(horarios),
+            "jugadores": len(jugadores),
+            "picks":     sum(p["total"] for p in picks_summary),
+        }
+    }
+
+
 # ─── Admin: setup ESPN / bracket / test-mode ──────────────────────────────────
 
 @app.get("/api/admin/setup-status")
