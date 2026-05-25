@@ -53,6 +53,57 @@ ESPN_BASE     = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 ESPN_FALLBACK = f"{ESPN_BASE}/all/summary"
 # ESPN_SUMMARY se construye dinámicamente desde state["cfg"]["ESPN_LEAGUE"]
 
+def parse_grupo(comp: dict, event: dict = None) -> str:
+    """
+    Para F2 (fase eliminatoria WC2026): detecta la ronda desde ESPN y la mapea
+    a los nombres internos de F2 (R32, R16, QF, SF, 3ER, FINAL).
+    Fallback: retorna el valor bruto de ESPN o cadena vacía.
+    """
+    import re as _re
+
+    _ROUND_MAP = [
+        (_re.compile(r"round of 32|dieciseisavos|32avos",           _re.I), "R32"),
+        (_re.compile(r"round of 16|octavos|round of sixteen",       _re.I), "R16"),
+        (_re.compile(r"quarter.?final|cuartos",                     _re.I), "QF"),
+        (_re.compile(r"third.?place|tercer.?lugar|3.?er",           _re.I), "3ER"),
+        (_re.compile(r"semi.?final",                                 _re.I), "SF"),
+        (_re.compile(r"\bfinal\b",                                   _re.I), "FINAL"),
+    ]
+
+    # Fuentes donde ESPN suele poner el nombre de la ronda
+    fuentes = []
+    if comp.get("notes"):
+        for n in comp["notes"]:
+            fuentes.append(n.get("headline", ""))
+            fuentes.append(n.get("type",     ""))
+    fuentes.append(comp.get("series", {}).get("summary", ""))
+    groups = comp.get("groups", {})
+    if isinstance(groups, dict):
+        fuentes.append(groups.get("name", ""))
+    elif isinstance(groups, list) and groups:
+        fuentes.append(groups[0].get("name", ""))
+    if event:
+        for c in event.get("competitions", [{}])[:1]:
+            for n in c.get("notes", []):
+                fuentes.append(n.get("headline", ""))
+        fuentes.append(str(event.get("name", "")))
+        fuentes.append(str(event.get("shortName", "")))
+
+    for raw in fuentes:
+        if not raw:
+            continue
+        for pat, ronda in _ROUND_MAP:
+            if pat.search(raw):
+                return ronda
+
+    # Fallback: grupo de liga (por si hay fase de grupos mezclada)
+    for raw in fuentes:
+        m = _re.search(r"Grup[oa]\s+([A-L])", raw, _re.IGNORECASE)
+        if m:
+            return m.group(1).upper()
+
+    return ""
+
 STATUS_MAP = {
     "STATUS_FINAL": "FINAL", "STATUS_FULL_TIME": "FINAL",
     "STATUS_IN_PROGRESS": "EN VIVO", "STATUS_HALFTIME": "MEDIO TIEMPO",
@@ -4285,6 +4336,7 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
                f"({', '.join(rondas_a_limpiar)}) y picks eliminados."
     }
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Quiniela Futbol F2 — Backend")
     parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
@@ -4301,4 +4353,3 @@ if __name__ == "__main__":
         os.environ["QL_CREDS"] = args.creds
 
     uvicorn.run(app, host="0.0.0.0", port=args.port)
-
