@@ -33,11 +33,8 @@ import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-_Req = Request
 from google.oauth2.service_account import Credentials
 from pydantic import BaseModel
-import db as _db
 
 # âââ Constantes âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
@@ -52,57 +49,6 @@ ESTADOS_BLOQUEADOS = {"EN VIVO", "MEDIO TIEMPO", "FINAL", "PRORROGA", "PENALES",
 ESPN_BASE     = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 ESPN_FALLBACK = f"{ESPN_BASE}/all/summary"
 # ESPN_SUMMARY se construye dinámicamente desde state["cfg"]["ESPN_LEAGUE"]
-
-def parse_grupo(comp: dict, event: dict = None) -> str:
-    """
-    Para F2 (fase eliminatoria WC2026): detecta la ronda desde ESPN y la mapea
-    a los nombres internos de F2 (R32, R16, QF, SF, 3ER, FINAL).
-    Fallback: retorna el valor bruto de ESPN o cadena vacía.
-    """
-    import re as _re
-
-    _ROUND_MAP = [
-        (_re.compile(r"round of 32|dieciseisavos|32avos",           _re.I), "R32"),
-        (_re.compile(r"round of 16|octavos|round of sixteen",       _re.I), "R16"),
-        (_re.compile(r"quarter.?final|cuartos",                     _re.I), "QF"),
-        (_re.compile(r"third.?place|tercer.?lugar|3.?er",           _re.I), "3ER"),
-        (_re.compile(r"semi.?final",                                 _re.I), "SF"),
-        (_re.compile(r"\bfinal\b",                                   _re.I), "FINAL"),
-    ]
-
-    # Fuentes donde ESPN suele poner el nombre de la ronda
-    fuentes = []
-    if comp.get("notes"):
-        for n in comp["notes"]:
-            fuentes.append(n.get("headline", ""))
-            fuentes.append(n.get("type",     ""))
-    fuentes.append(comp.get("series", {}).get("summary", ""))
-    groups = comp.get("groups", {})
-    if isinstance(groups, dict):
-        fuentes.append(groups.get("name", ""))
-    elif isinstance(groups, list) and groups:
-        fuentes.append(groups[0].get("name", ""))
-    if event:
-        for c in event.get("competitions", [{}])[:1]:
-            for n in c.get("notes", []):
-                fuentes.append(n.get("headline", ""))
-        fuentes.append(str(event.get("name", "")))
-        fuentes.append(str(event.get("shortName", "")))
-
-    for raw in fuentes:
-        if not raw:
-            continue
-        for pat, ronda in _ROUND_MAP:
-            if pat.search(raw):
-                return ronda
-
-    # Fallback: grupo de liga (por si hay fase de grupos mezclada)
-    for raw in fuentes:
-        m = _re.search(r"Grup[oa]\s+([A-L])", raw, _re.IGNORECASE)
-        if m:
-            return m.group(1).upper()
-
-    return ""
 
 STATUS_MAP = {
     "STATUS_FINAL": "FINAL", "STATUS_FULL_TIME": "FINAL",
@@ -367,7 +313,7 @@ def _send_push_one(sub: dict, payload_str: str) -> bool:
         try: body = ex.response.text[:200] if ex.response else ""
         except: pass
         print(f"[push] WebPushException HTTP {code}: {ex} | body: {body}")
-        return code not in (400, 404, 410)
+        return code not in (404, 410)
     except Exception as ex:
         import traceback
         print(f"[push] Error: {ex}")
@@ -426,55 +372,55 @@ PROB_TTL     = 180  # segundos antes de recalcular probabilidades (3 min)
 
 
 def _load_players_cache():
-    """Carga jugadores desde SQLite, indexados por email y telefono."""
-    jugadores = _db.db_get_jugadores()
+    """Carga TODOS los jugadores de una vez, indexados por email y telefono."""
+    with _sheets_lock:
+        ws   = _sheets_retry(lambda: state["sh"].worksheet("JUGADORES"), base_delay=5)
+        rows = ws.get_all_values()
+    hi, headers = _jugadores_headers(rows)
     new_cache = {}
-    for p in jugadores:
-        d = _jugador_db_to_cache(p)
+    for row in rows[hi + 1:]:
+        if not any(c.strip() for c in row):
+            continue
+        d = _normalize_player({headers[k]: (row[k].strip() if k < len(row) else "")
+                               for k in range(len(headers))})
         if d.get("EMAIL"):
             new_cache["email:" + d["EMAIL"].lower()] = d
-        phone_val = _normalize_phone(d.get("WHATSAPP", "") or d.get("TELEFONO", ""))
+        phone_val = _normalize_phone(d.get("WHATSAPP","") or d.get("TELEFONO",""))
         if phone_val:
             new_cache["phone:" + phone_val] = d
     _cache["players"]    = new_cache
     _cache["players_ts"] = time.time()
-    print(f"[players-cache] {len([k for k in new_cache if k.startswith('email:')])} jugadores desde SQLite")
+    print(f"[players-cache] {len([k for k in new_cache if k.startswith('email:')])} jugadores cargados")
 
 
 def _players_cache_ok():
     return bool(_cache["players"]) and (time.time() - _cache["players_ts"]) < PLAYERS_TTL
 
 def _get_games_cache():
-    """Retorna (games_list, estados_dict) desde cache o SQLite si expiro."""
+    """Retorna (games_list, estados_dict) desde caché o Sheet si expiró."""
     now = time.time()
     if _cache["games"] is None or now - _cache["games_ts"] > GAMES_TTL:
-        horarios = _db.db_get_horarios()
+        cfg   = state.get("cfg", {})
+        fila  = int(cfg.get("FILA_INICIO_DATOS", 3))
+        total = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+        with _sheets_lock:
+            ws    = state["sh"].worksheet("HORARIOS")
+            filas = ws.get(f"A{fila}:L{fila + total - 1}")
         games, estados = [], {}
-        for h in horarios:
-            dt_utc = (
-                f"{h['fecha']}T{h['hora']}:00Z"
-                if h.get("fecha") and h.get("hora") else ""
-            )
-            games.append({
-                "jgo":          str(h["jgo"]),
-                "ronda":        h.get("grupo", ""),   # db usa "grupo", F2 usa "ronda"
-                "fecha":        h.get("fecha", ""),
-                "hora":         h.get("hora", ""),
-                "datetime_utc": dt_utc,
-                "eq1":          h.get("eq1", ""),
-                "eq2":          h.get("eq2", ""),
-                "espn_id":      h.get("espn_id", ""),
-                "estado":       h.get("estado", "PROG"),
-                "gol1":         h.get("gol1", ""),
-                "gol2":         h.get("gol2", ""),
-                "ganador":      h.get("ganador", ""),
-            })
-            estados[str(h["jgo"])] = h.get("estado", "PROG")
+        for row in filas:
+            def c(i, r=row): return r[i].strip() if len(r) > i else ""
+            if not c(0): continue
+            # datetime_utc: ISO string para que el frontend convierta a hora local
+            dt_utc = f"{c(2)}T{c(3)}:00Z" if c(2) and c(3) else ""
+            games.append({"jgo": c(0), "ronda": c(1), "fecha": c(2), "hora": c(3),
+                          "datetime_utc": dt_utc,
+                          "eq1": c(4), "eq2": c(5), "espn_id": c(6), "estado": c(7),
+                          "gol1": c(8), "gol2": c(9), "ganador": c(10)})
+            estados[c(0)] = c(7)
         _cache["games"]    = games
         _cache["estados"]  = estados
         _cache["games_ts"] = now
     return _cache["games"], _cache["estados"]
-
 
 def _invalidate_games():
     _cache["games_ts"] = 0
@@ -520,38 +466,58 @@ def _parse_bracket_ref(name: str):
     return None
 
 
-def _propagate_bracket() -> list:
+def _propagate_bracket(sh=None, ws_h=None) -> list:
     """
-    Lee HORARIOS desde SQLite y actualiza EQ1/EQ2 de juegos futuros cuyo nombre
-    sea un placeholder de bracket resoluble con los GANADOR actuales.
+    Lee HORARIOS y actualiza EQ1/EQ2 de juegos futuros cuyo nombre sea un
+    placeholder de bracket que ya puede resolverse con los GANADOR actuales.
+    Retorna lista de strings describiendo los cambios hechos.
     """
-    cfg      = state.get("cfg", {})
-    horarios = _db.db_get_horarios()
+    cfg          = state.get("cfg", {})
+    fila_inicio  = int(cfg.get("FILA_INICIO_DATOS", 3))
+    total_juegos = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    fila_fin     = fila_inicio + total_juegos - 1
 
+    if sh is None:
+        sh = state["sh"]
+    if ws_h is None:
+        with _sheets_lock:
+            ws_h = sh.worksheet("HORARIOS")
+
+    with _sheets_lock:
+        filas = ws_h.get(f"A{fila_inicio}:K{fila_fin}")  # K=GANADOR idx10, I=GOL1 idx8, J=GOL2 idx9, H=ESTADO idx7
+
+    # Construir mapa de juegos por ronda (ordenados por JGO)
     all_games   = []
-    ronda_games = {}
+    ronda_games = {}   # ronda → [game, ...]
 
-    for h in horarios:
-        jgo = str(h["jgo"])
+    for i, fila in enumerate(filas):
+        def c(idx, f=fila): return f[idx].strip() if len(f) > idx else ""
+        jgo = c(0)
         if not jgo:
             continue
         game = {
-            "jgo":     jgo,
-            "ronda":   h.get("grupo", ""),
-            "eq1":     h.get("eq1", ""),
-            "eq2":     h.get("eq2", ""),
-            "estado":  h.get("estado", "PROG"),
-            "gol1":    h.get("gol1", ""),
-            "gol2":    h.get("gol2", ""),
-            "ganador": h.get("ganador", ""),
+            'jgo':     jgo,
+            'row':     fila_inicio + i,
+            'ronda':   c(1),
+            'eq1':     c(4),
+            'eq2':     c(5),
+            'estado':  c(7),
+            'gol1':    c(8),
+            'gol2':    c(9),
+            'ganador': c(10),
         }
         all_games.append(game)
-        ronda_games.setdefault(h.get("grupo", ""), []).append(game)
+        ronda_games.setdefault(c(1), []).append(game)
 
+    # Ordenar por JGO dentro de cada ronda
     for k in ronda_games:
-        ronda_games[k].sort(key=lambda g: int(g["jgo"]) if g["jgo"].isdigit() else 0)
+        ronda_games[k].sort(key=lambda g: int(g['jgo']) if g['jgo'].isdigit() else 0)
 
-    # DO NOT MODIFY -- mapa verificado por Gio
+    # ── WC2026: traducir ESPN bracket slot → posición cronológica en R32 ─────
+    # ESPN numera los R32 por posición de bracket (no por fecha de juego).
+    # Cuando HORARIOS tiene "Round of 32 X Winner", X es el slot ESPN, no el JGO.
+    # Esta tabla convierte: ESPN_slot → posición cronológica entre los R32 juegos.
+    # Derivada del bracket FIFA WC2026 publicado.
     _WC2026_R32 = {
         1:3, 2:6, 3:1, 4:4, 5:12, 6:11, 7:10, 8:9,
         9:2, 10:5, 11:7, 12:8, 13:15, 14:14, 15:13, 16:16
@@ -568,97 +534,177 @@ def _propagate_bracket() -> list:
         ref = _parse_bracket_ref(name)
         if not ref:
             return name
-        lst = ronda_games.get(ref["ronda"], [])
-        nth = ref["nth"]
-        if ref["ronda"] == "R32" and _use_wc2026 and len(lst) == 16:
+        lst = ronda_games.get(ref['ronda'], [])
+        nth = ref['nth']
+        # Para R32 en WC2026: ESPN slot ≠ nuestro orden cronológico → traducir
+        if ref['ronda'] == 'R32' and _use_wc2026 and len(lst) == 16:
             nth = _WC2026_R32.get(nth, nth)
         idx = nth - 1
         if idx < 0 or idx >= len(lst):
             return name
         g = lst[idx]
-        if not g["ganador"]:
-            return name
-        if ref["type"] == "loser":
-            eq1 = resolve(g["eq1"], depth + 1)
-            eq2 = resolve(g["eq2"], depth + 1)
-            if g["ganador"] == eq1:
+        if not g['ganador']:
+            return name   # sin resultado aún
+        if ref['type'] == 'loser':
+            eq1 = resolve(g['eq1'], depth + 1)
+            eq2 = resolve(g['eq2'], depth + 1)
+            if g['ganador'] == eq1:
                 return eq2 or name
-            if g["ganador"] == eq2:
+            if g['ganador'] == eq2:
                 return eq1 or name
             return name
-        return resolve(g["ganador"], depth + 1)
+        return resolve(g['ganador'], depth + 1)
 
-    db_updates      = []
+    batch           = []
     changes         = []
-    placeholder_map = {}
+    placeholder_map = {}  # {placeholder_str: real_team_name} para resolver picks de jugadores
 
-    # Paso 1: resolver placeholders en EQ1/EQ2 de juegos futuros
+    # ── Paso 0: corregir GANADOR cuando no coincide con EQ1/EQ2 ───────────────────
+    # Si un partido es FINAL y GANADOR no es EQ1 ni EQ2, recalcular desde GOL1/GOL2
     for game in all_games:
-        for slot in ("eq1", "eq2"):
-            val = game[slot]
-            if not val or not _parse_bracket_ref(val):
-                continue
-            resolved = resolve(val)
-            if resolved and resolved != val:
-                if game["estado"] in ("", "PROG"):
-                    db_updates.append((game["jgo"], slot, resolved))
-                    placeholder_map[val] = resolved
-                    changes.append(
-                        f"JGO {game['jgo']} {slot.upper()}: {val!r} -> {resolved!r}"
-                    )
-                    game[slot] = resolved
+        if game['estado'] != 'FINAL':
+            continue
+        eq1, eq2, gan = game['eq1'], game['eq2'], game['ganador']
+        if not eq1 or not eq2:
+            continue
+        if gan in (eq1, eq2):
+            continue   # ya está correcto
+        # GANADOR incorrecto (ej. nombre de club test) → recalcular desde goles
+        try:
+            g1 = int(game['gol1']) if game['gol1'].isdigit() else -1
+            g2 = int(game['gol2']) if game['gol2'].isdigit() else -1
+        except Exception:
+            continue
+        if g1 < 0 or g2 < 0:
+            continue
+        # En empate: avanza EQ1 (desempate automático para pruebas)
+        new_gan = eq1 if g1 >= g2 else eq2
+        if new_gan:
+            batch.append({"range": f"K{game['row']}", "values": [[new_gan]]})
+            changes.append(f"JGO {game['jgo']} GANADOR: {gan!r} → {new_gan!r}")
+            game['ganador'] = new_gan
 
-    # Paso 2: SF -> FINAL (ganadores) y SF -> 3ER (perdedores)
+    # ── Paso 1: resolver placeholders existentes (lógica original) ──────────────
+
+    for game in all_games:
+        for slot, col_letter in (('eq1', 'E'), ('eq2', 'F')):
+            raw      = game[slot]
+            resolved = resolve(raw)
+            # Solo actualizar si cambió y el resultado ya no es un placeholder
+            if resolved and resolved != raw and not _parse_bracket_ref(resolved):
+                batch.append({"range": f"{col_letter}{game['row']}", "values": [[resolved]]})
+                changes.append(f"JGO {game['jgo']} {slot.upper()}: {raw!r} → {resolved!r}")
+                game[slot] = resolved   # actualizar en memoria para el Paso 2
+                if raw and _parse_bracket_ref(raw):
+                    placeholder_map[raw] = resolved  # para actualizar picks de jugadores
+
+    # ── Paso 2: DESHABILITADO ─────────────────────────────────────────────────
+    # El emparejamiento secuencial R32[0]+R32[1]→R16[0] NO aplica para WC2026
+    # donde el orden cronológico de ESPN ≠ orden de bracket.
+    # Los EQ1/EQ2 de R16+ se gestionan de dos formas:
+    #   a) Fórmulas en HORARIOS (=K4, =K7, etc.) → las pestañas de jugadores
+    #      las leen automáticamente via VLOOKUP — no hace falta código aquí.
+    #   b) Placeholders "Round of 32 X Winner" con mapping WC2026 en Paso 1.
+    # Paso 2 se eliminó porque pisaba celdas vacías con equipos incorrectos.
+
     def sorted_by_jgo(lst):
-        return sorted(lst, key=lambda g: int(g["jgo"]) if str(g["jgo"]).isdigit() else 0)
+        return sorted(lst, key=lambda g: int(g['jgo']) if str(g['jgo']).isdigit() else 0)
 
-    sf_lst  = sorted_by_jgo(ronda_games.get("SF",    []))
-    fin_lst = sorted_by_jgo(ronda_games.get("FINAL", []))
-    ter_lst = sorted_by_jgo(ronda_games.get("3ER",   []))
+    # SF → FINAL (ganadores) y SF → 3ER (perdedores)
+    sf_lst  = sorted_by_jgo(ronda_games.get('SF',    []))
+    fin_lst = sorted_by_jgo(ronda_games.get('FINAL', []))
+    ter_lst = sorted_by_jgo(ronda_games.get('3ER',   []))
 
-    for si, slot in enumerate(("eq1", "eq2")):
+    for si, (slot, col) in enumerate([('eq1','E'), ('eq2','F')]):
         if si >= len(sf_lst):
             continue
         sf_g = sf_lst[si]
-        gan  = sf_g["ganador"]
+        gan  = sf_g['ganador']
         if not gan or _parse_bracket_ref(gan):
             continue
+        # FINAL ← ganadores SF
         if fin_lst and fin_lst[0][slot] != gan:
             if fin_lst[0][slot] and _parse_bracket_ref(fin_lst[0][slot]):
                 placeholder_map[fin_lst[0][slot]] = gan
-            db_updates.append((fin_lst[0]["jgo"], slot, gan))
-            changes.append(
-                f"JGO {fin_lst[0]['jgo']} {slot.upper()} (FINAL): "
-                f"{fin_lst[0][slot]!r} -> {gan!r}"
-            )
+            batch.append({"range": f"{col}{fin_lst[0]['row']}", "values": [[gan]]})
+            changes.append(f"JGO {fin_lst[0]['jgo']} {slot.upper()} (FINAL): {fin_lst[0][slot]!r} → {gan!r}")
             fin_lst[0][slot] = gan
+        # 3ER ← perdedores SF
         if ter_lst and not ter_lst[0][slot]:
-            eq1_sf = resolve(sf_g["eq1"])
-            eq2_sf = resolve(sf_g["eq2"])
+            eq1_sf = resolve(sf_g['eq1'])
+            eq2_sf = resolve(sf_g['eq2'])
             loser  = eq2_sf if gan == eq1_sf else (eq1_sf if gan == eq2_sf else None)
             if loser and not _parse_bracket_ref(loser) and ter_lst[0][slot] != loser:
                 if ter_lst[0][slot] and _parse_bracket_ref(ter_lst[0][slot]):
                     placeholder_map[ter_lst[0][slot]] = loser
-                db_updates.append((ter_lst[0]["jgo"], slot, loser))
-                changes.append(
-                    f"JGO {ter_lst[0]['jgo']} {slot.upper()} (3ER-loser): "
-                    f"{ter_lst[0][slot]!r} -> {loser!r}"
-                )
+                batch.append({"range": f"{col}{ter_lst[0]['row']}", "values": [[loser]]})
+                changes.append(f"JGO {ter_lst[0]['jgo']} {slot.upper()} (3ER-loser): {ter_lst[0][slot]!r} → {loser!r}")
                 ter_lst[0][slot] = loser
 
-    if db_updates:
-        conn = _db.get_conn()
-        with conn:
-            for jgo_u, col_u, val_u in db_updates:
-                if col_u == "eq1":
-                    conn.execute("UPDATE horarios SET eq1=? WHERE jgo=?", (val_u, str(jgo_u)))
-                else:
-                    conn.execute("UPDATE horarios SET eq2=? WHERE jgo=?", (val_u, str(jgo_u)))
-        conn.close()
+    if batch:
+        with _sheets_lock:
+            ws_h.batch_update(batch, value_input_option="RAW")
         _invalidate_games()
-        print(f"[propagate-bracket] {len(changes)} cambios SQLite: {changes}")
+        print(f"[propagate-bracket] {len(changes)} cambios: {changes}")
 
-    # Paso 3: PICK_COLS = [] -- picks del jugador intocables
+    # ── Paso 3: actualizar PICK_EQ1/PICK_EQ2/PICK_GANADOR en tabs de jugadores ──
+    # Reemplaza placeholder_map keys ("Round of 32 3 Winner", "Ganador Octavos de Final (1)", …)
+    # por el nombre real del equipo en las columnas de picks de cada jugador.
+    if placeholder_map:
+        try:
+            if not _players_cache_ok():
+                _load_players_cache()
+
+            seen_tabs: set = set()
+            tab_names: list = []
+            for k, v in _cache["players"].items():
+                if k.startswith("phone:") and v.get("TAB_NOMBRE"):
+                    tab = v["TAB_NOMBRE"]
+                    if tab not in seen_tabs:
+                        seen_tabs.add(tab)
+                        tab_names.append(tab)
+
+            fila_fin_p = fila_inicio + total_juegos - 1
+            # Solo actualizar nombres de equipos (PICK_EQ1/EQ2) para display.
+            # NUNCA tocar PICK_GANADOR (J) — es la prediccion del jugador.
+            # Tampoco tocar picks de partidos ya jugados.
+            PICK_COLS = []  # Paso 3 deshabilitado: los picks del jugador son intocables
+            ESTADOS_CERRADOS = ("FINAL", "PRORROGA", "PENALES")
+
+            for tab_name in tab_names:
+                try:
+                    with _sheets_lock:
+                        ws_p  = sh.worksheet(tab_name)
+                        rows  = ws_p.get(f"A{fila_inicio}:N{fila_fin_p}")
+                    pick_batch = []
+                    for i, row in enumerate(rows):
+                        def _c(idx, r=row): return r[idx].strip() if len(r) > idx else ""
+                        row_num = fila_inicio + i
+                        jgo_val = _c(0)
+                        estado_p = _c(13)  # col N — ESTADO del partido
+                        # No modificar picks de partidos ya jugados
+                        if estado_p in ESTADOS_CERRADOS:
+                            continue
+                        for col_letter, col_idx in PICK_COLS:
+                            val = _c(col_idx)
+                            if val in placeholder_map:
+                                new_val = placeholder_map[val]
+                                pick_batch.append({
+                                    "range":  f"{col_letter}{row_num}",
+                                    "values": [[new_val]],
+                                })
+                                changes.append(
+                                    f"[{tab_name}] JGO {jgo_val} {col_letter}: {val!r} → {new_val!r}"
+                                )
+                    if pick_batch:
+                        with _sheets_lock:
+                            ws_p.batch_update(pick_batch, value_input_option="RAW")
+                        print(f"[propagate-bracket] {tab_name}: {len(pick_batch)} picks actualizados")
+                except Exception as _e_tab:
+                    print(f"[propagate-bracket] error actualizando tab {tab_name}: {_e_tab}")
+        except Exception as _e_picks:
+            print(f"[propagate-bracket] error en Paso 3 (picks): {_e_picks}")
+
     return changes
 
 
@@ -775,21 +821,11 @@ def _ensure_base_sheets(sh):
                 pass
 
 
-def read_config(sh=None) -> dict:
-    """Lee config desde SQLite (primario). Si se pasa sh, sincroniza primero."""
-    if sh is not None:
-        try:
-            ws = sh.worksheet("CONFIG")
-            rows_cfg = {
-                r[0].strip(): r[1].strip()
-                for r in ws.get_all_values()
-                if len(r) >= 2 and r[0].strip()
-            }
-            if rows_cfg:
-                _db.db_save_config(rows_cfg)
-        except Exception as _e:
-            print(f"[config] Error sync desde Sheets: {_e}")
-    return _db.db_get_config()
+def read_config(sh) -> dict:
+    ws = sh.worksheet("CONFIG")
+    return {r[0].strip(): r[1].strip()
+            for r in ws.get_all_values()
+            if len(r) >= 2 and r[0].strip()}
 
 
 def _jugadores_headers(rows: list) -> tuple[int, list]:
@@ -819,22 +855,6 @@ def _normalize_player(d: dict) -> dict:
     if "WHATSAPP" in d and "TELEFONO" not in d:
         d["TELEFONO"] = d["WHATSAPP"]
     return d
-
-
-def _jugador_db_to_cache(p: dict) -> dict:
-    """Convierte fila SQLite (lowercase keys) al formato de cache (UPPERCASE keys)."""
-    return {
-        "NOMBRE":         p.get("nombre", ""),
-        "EMAIL":          p.get("email", ""),
-        "WHATSAPP":       p.get("whatsapp", ""),
-        "TELEFONO":       p.get("whatsapp", ""),
-        "TAB_NOMBRE":     p.get("tab_nombre", ""),
-        "PAGADO":         "1" if p.get("pagado") else "",
-        "FECHA REG.":     p.get("fecha_reg", ""),
-        "FECHA_REGISTRO": p.get("fecha_reg", ""),
-        "#":              str(p.get("num", "")),
-        "_id":            p.get("id"),
-    }
 
 
 def _normalize_phone(phone: str) -> str:
@@ -872,8 +892,8 @@ def find_player_any(phone: str = "", email: str = "") -> dict | None:
 
 def generate_tab_name(nombre: str) -> str:
     parts = nombre.strip().split()
-    base  = f"{parts[0]} {parts[1][0]}." if len(parts) >= 2 else parts[0]
-    existing = {p.get("tab_nombre", "") for p in _db.db_get_jugadores()}
+    base = f"{parts[0]} {parts[1][0]}." if len(parts) >= 2 else parts[0]
+    existing = {ws.title for ws in state["sh"].worksheets()}
     if base not in existing:
         return base
     i = 2
@@ -1147,19 +1167,26 @@ def _check_reminders(filas, fila_inicio, cfg):
             continue
 
         sin_pick = []        # nombres
-        sin_pick_phones = [] # telefonos para push personalizado
+        sin_pick_phones = [] # teléfonos para push personalizado
         sin_pick_emails = [] # emails para push personalizado
         try:
-            sin_pick_rows = _db.db_get_picks_without_pick(jgo)
-            for sp in sin_pick_rows:
-                sin_pick.append(sp.get("nombre", "?"))
-                wa = sp.get("whatsapp", "")
-                sin_pick_phones.append(wa)
-                p_cached = (
-                    _cache["players"].get("phone:" + _normalize_phone(wa), {})
-                    if wa else {}
-                )
-                sin_pick_emails.append(p_cached.get("EMAIL", ""))
+            ws_j = state["sh"].worksheet("JUGADORES")
+            j_rows = ws_j.get_all_values()
+            hi, headers = _jugadores_headers(j_rows)
+            for jrow in j_rows[hi+1:]:
+                d = _normalize_player({headers[k]: (jrow[k].strip() if k < len(jrow) else "")
+                                       for k in range(len(headers))})
+                if not d.get("TAB_NOMBRE"): continue
+                try:
+                    ws_p = state["sh"].worksheet(d["TAB_NOMBRE"])
+                    pick_row = ws_p.row_values(row_num)
+                    g1 = pick_row[5].strip() if len(pick_row) > 5 else ""
+                    if not g1:
+                        sin_pick.append(d.get("NOMBRE","?"))
+                        sin_pick_phones.append(d.get("WHATSAPP","") or d.get("TELEFONO",""))
+                        sin_pick_emails.append(d.get("EMAIL",""))
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -1246,84 +1273,174 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
 
 
 def _update_standings():
-    """Calcula posiciones desde SQLite y actualiza caches en memoria."""
-    cfg       = state.get("cfg", {})
-    standings = _db.db_compute_standings(cfg)
-
-    if not standings:
+    """Calcula la tabla de posiciones leyendo la pestaña de cada jugador
+    y escribe los resultados ordenados en la hoja POSICIONES."""
+    sh  = state.get("sh")
+    cfg = state.get("cfg", {})
+    if not sh:
         return
 
+    total_juegos = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    last_row     = 3 + total_juegos   # fila final de datos en la pestaña
+
+    # Leer lista de jugadores
+    with _sheets_lock:
+        ws_j = sh.worksheet("JUGADORES")
+        j_rows = ws_j.get_all_values()
+
+    hi, headers = _jugadores_headers(j_rows)
+    players = []
+    for row in j_rows[hi + 1:]:
+        if not any(c.strip() for c in row):
+            continue
+        d = _normalize_player({headers[k]: (row[k].strip() if k < len(row) else "")
+                                for k in range(len(headers))})
+        if d.get("NOMBRE") and d.get("TAB_NOMBRE"):
+            players.append(d)
+
+    if not players:
+        return
+
+    standings = []
+    # ── Leer TODOS los tabs en batch (1-2 requests en vez de N) ─────────────
+    t_read = time.time()
+    tab_data_map = _batch_read_player_tabs(sh, players, last_row)
+    print(f"[standings] {len(players)} tabs leídos en {time.time()-t_read:.1f}s (batch)")
+
+    for p in players:
+        try:
+            tab_data = tab_data_map.get(p["TAB_NOMBRE"], [])
+
+            pts_total   = 0
+            jugados     = 0
+            gan_acert   = 0
+            g1_acert    = 0
+            g2_acert    = 0
+
+            for fila in tab_data:
+                def c(i, f=fila): return f[i].strip() if len(f) > i else ""
+                estado = c(13)   # col N — ESTADO (F2: cols O-T = indices 14-19)
+                if not estado or estado == "PROG" or not c(0):
+                    continue
+                jugados += 1
+                # PTS por columna F2: O=PTS_LOGRO(14), P=PTS_GAN(15), Q=PTS_GOL1(16), R=PTS_GOL2(17), S=PTS_CAMPEON(18), T=PTS_TOTAL(19)
+                try: g1_acert  += int(float(c(14))) > 0   # logro acertado
+                except: pass
+                try: g2_acert  += int(float(c(15))) > 0   # ganador acertado
+                except: pass
+                try: gan_acert += int(float(c(16))) > 0   # gol1 acertado
+                except: pass
+                try: pts_total += int(float(c(19))) if c(19) else 0
+                except: pass
+
+            standings.append({
+                "nombre":   p.get("NOMBRE", ""),
+                "email":    p.get("EMAIL", ""),
+                "pts":      pts_total,
+                "jugados":  jugados,
+                "gan":      gan_acert,
+                "g1":       g1_acert,
+                "g2":       g2_acert,
+            })
+        except Exception as e:
+            print(f"[standings] Error procesando {p.get('TAB_NOMBRE','?')}: {e}")
+
+    # Ordenar: pts desc â ganador acertados desc â g1+g2 desc â nombre asc
+    standings.sort(key=lambda x: (-x["pts"], -x["gan"], -(x["g1"]+x["g2"]), x["nombre"]))
+
+    # Escribir headers en fila 2 y datos desde fila 3
+    headers_row = [["POS", "NOMBRE", "Ptos", "Diferencia"]]
     lider_pts = standings[0]["pts"] if standings else 0
-    rows_out  = []
+    rows_out = []
+    # Ranking de competencia (1224): empates comparten posición,
+    # la siguiente posición salta según cuántos empataron antes.
     pos = 1
     for i, s in enumerate(standings):
         if i > 0:
             prev = standings[i - 1]
-            same = (s["pts"] == prev["pts"] and
-                    s["gan"] == prev["gan"] and
-                    s["g1"] + s["g2"] == prev["g1"] + prev["g2"])
-            if not same:
-                pos = i + 1
-        diferencia = s["pts"] - lider_pts
+            same_rank = (
+                s["pts"]            == prev["pts"] and
+                s["gan"]            == prev["gan"] and
+                (s["g1"] + s["g2"]) == (prev["g1"] + prev["g2"])
+            )
+            if not same_rank:
+                pos = i + 1  # salta tantos lugares como jugadores hubo antes
+        diferencia = s["pts"] - lider_pts  # 0 para el líder, negativo para el resto
         rows_out.append([pos, s["nombre"], s["pts"], diferencia])
 
+    # ── Actualizar caché de top5/top3 en memoria (para notificaciones rápidas) ─
     _cache["top5_text"] = "\n".join(
         f"  {r[0]}. {r[1]}" for r in rows_out[:5]
     )
-    _cache["top3_text"] = " \u00b7 ".join(
+    _cache["top3_text"] = " · ".join(
         f"{r[0]}. {r[1]} ({r[2]}pts)" for r in rows_out[:3] if len(r) >= 3
     )
+    # Caché en memoria para /api/standings (evita leer Sheets en cada request)
     _cache["standings_rows"] = [["POS", "NOMBRE", "Ptos", "Diferencia"]] + rows_out
 
-    sh = state.get("sh")
-    if sh:
-        try:
-            ws_pos = sh.worksheet("POSICIONES")
-            fila_fin_clear = max(len(standings) + 10, 50)
-            with _sheets_lock:
-                ws_pos.batch_clear([f"A2:Z{fila_fin_clear}"])
-                ws_pos.update([["POS", "NOMBRE", "Ptos", "Diferencia"]], "A2:D2",
-                              value_input_option="RAW")
-                if rows_out:
-                    ws_pos.update(rows_out, f"A3:D{2 + len(rows_out)}",
-                                  value_input_option="RAW")
-        except Exception as _e:
-            print(f"[standings] Error escribiendo POSICIONES en Sheets: {_e}")
+    ws_pos = sh.worksheet("POSICIONES")
+    fila_fin_clear = max(len(standings) + 10, 50)
+    with _sheets_lock:
+        # 1. Limpiar TODO primero (incluyendo columnas viejas)
+        ws_pos.batch_clear([f"A2:Z{fila_fin_clear}"])
+        # 2. Escribir headers limpios
+        ws_pos.update(headers_row, "A2:D2", value_input_option="RAW")
+        # 3. Escribir datos
+        if rows_out:
+            ws_pos.update(rows_out, f"A3:D{2 + len(rows_out)}", value_input_option="RAW")
 
-    print(f"[standings] {len(standings)} jugador(es) desde SQLite")
+    print(f"[standings] {len(standings)} jugador(es) -> POSICIONES actualizada")
 
 
 def _updater_loop():
-    """Loop de actualizacion de scores desde ESPN. Lee/escribe en SQLite."""
+    """Corre el loop de actualización de scores en un hilo separado."""
+    cESPN    = col_idx("G")
+    cESTADO  = col_idx("H")
+    cGOL1    = col_idx("I")
+    cGOL2    = col_idx("J")
+    cGANADOR = col_idx("K")
+    cULT     = col_idx("L")
+
     print("[updater] Iniciando en segundo plano")
     while True:
         try:
-            t0          = time.time()
-            cfg         = state.get("cfg", {})
-            interval    = int(cfg.get("INTERVAL_SEGS", 60))
+            t0 = time.time()
+            cfg          = state.get("cfg", {})
+            interval     = int(cfg.get("INTERVAL_SEGS", 60))
+            fila_inicio  = int(cfg.get("FILA_INICIO_DATOS", 3))
+            total_juegos = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+            fila_fin     = fila_inicio + total_juegos - 1
+
             modo_prueba = cfg.get("MODO_PRUEBA", "0").strip() not in ("", "0", "false", "no")
+            ws_h  = state["sh"].worksheet("HORARIOS")
+            # Leer hasta col M para incluir ESPN_ID_TEST (col 13) en modo prueba
+            filas = ws_h.get(f"A{fila_inicio}:M{fila_fin}")
 
-            _invalidate_games()
-            games, _ = _get_games_cache()
-
+            # Verificar recordatorios 10 min antes
             try:
-                _check_reminders(games, cfg)
+                _check_reminders(filas, fila_inicio, cfg)
             except Exception as e:
                 print(f"[updater-reminder] {e}")
 
+            # ── En MODO_PRUEBA: no pollear ESPN — los resultados se controlan manualmente ──
+            # El updater podría sobrescribir simulaciones con datos ESPN (PROG) via race condition.
             if modo_prueba:
-                time.sleep(max(0, interval - (time.time() - t0)))
+                elapsed = time.time() - t0
+                sleep_t = max(0, interval - elapsed)
+                time.sleep(sleep_t)
                 continue
 
-            n = 0
-            for game in games:
-                jgo         = str(game.get("jgo", ""))
-                espn_id     = game.get("espn_id", "")
-                estado_prev = game.get("estado", "PROG")
+            batch, n = [], 0
 
+            for i, fila in enumerate(filas):
+                row = fila_inicio + i
+                def cel(c, f=fila): return f[c-1].strip() if len(f) > c-1 else ""
+                espn_id_real = cel(cESPN)
+                espn_id_test = cel(13) if modo_prueba else ""  # col M = ESPN_ID_TEST
+                espn_id      = (espn_id_test or espn_id_real)
+                estado_prev  = cel(cESTADO)
                 if not espn_id or estado_prev == "FINAL":
                     continue
-
                 data = espn_get(_espn_summary_url(), {"event": espn_id}) or \
                        espn_get(ESPN_FALLBACK,       {"event": espn_id})
                 if not data:
@@ -1332,107 +1449,126 @@ def _updater_loop():
                 if not sc:
                     continue
 
+                # En MODO_PRUEBA: el ganador debe ser EQUIPO 1/2 de HORARIOS, no el
+                # equipo del partido de prueba. Usamos los goles para determinarlo;
+                # en caso de empate (penales/prórroga) usamos qué equipo del test ganó
+                # y lo mapeamos a EQ1 o EQ2 real.
+                if modo_prueba and espn_id_test:
+                    eq1_real = cel(col_idx("E"))
+                    eq2_real = cel(col_idx("F"))
+                    if eq1_real or eq2_real:  # ya conocemos los equipos reales
+                        g1 = int(sc["gol1"]) if sc["gol1"].isdigit() else -1
+                        g2 = int(sc["gol2"]) if sc["gol2"].isdigit() else -1
+                        if g1 > g2:
+                            sc["ganador"] = eq1_real
+                        elif g2 > g1:
+                            sc["ganador"] = eq2_real
+                        elif sc["ganador"]:
+                            # Empate a 90' → ver qué posición (eq1/eq2) del test ganó
+                            sc["ganador"] = eq1_real if sc["ganador"] == sc.get("eq1","") else eq2_real
+                        # En MODO_PRUEBA no sobreescribir nombres de equipos desde ESPN test
+                        sc["eq1"] = eq1_real or sc["eq1"]
+                        sc["eq2"] = eq2_real or sc["eq2"]
+
+                # Actualizar minuto SIEMPRE (aunque el score no cambie)
                 nuevo_minuto = sc.get("minuto", "")
                 if nuevo_minuto:
                     if _live_clocks.get(espn_id) != nuevo_minuto:
                         _live_clocks[espn_id] = nuevo_minuto
-                        _invalidate_games()
+                        _invalidate_games()   # frontend ve el minuto actualizado
                 elif sc["estado"] == "FINAL":
                     _live_clocks.pop(espn_id, None)
 
-                eq1_sheet  = game.get("eq1", "")
-                eq2_sheet  = game.get("eq2", "")
-                eq1_espn   = sc.get("eq1", "")
-                eq2_espn   = sc.get("eq2", "")
-                freeze     = cfg.get("FREEZE_EQUIPOS", "0").strip() not in ("", "0", "false", "no")
-                _ronda_cur = game.get("ronda", "")
-                freeze = freeze or _ronda_cur in ("R16", "QF", "SF", "3ER", "FINAL")
-                teams_changed = not freeze and (
-                    (eq1_espn and eq1_espn != eq1_sheet) or
-                    (eq2_espn and eq2_espn != eq2_sheet)
-                )
+                # Si nada cambió en score/estado/equipos, no hace falta escribir al sheet
+                eq1_sheet = cel(col_idx("E"))
+                eq2_sheet = cel(col_idx("F"))
+                eq1_espn  = sc.get("eq1", "")
+                eq2_espn  = sc.get("eq2", "")
+                freeze = cfg.get("FREEZE_EQUIPOS", "0").strip() not in ("", "0", "false", "no")
+                # Congelar EQ1/EQ2 también para juegos R16+ (el usuario usa fórmulas en
+                # HORARIOS; el updater no debe pisarlas con datos ESPN de otro partido)
+                _ronda_cur = cel(col_idx("B"))
+                freeze = freeze or _ronda_cur in ('R16', 'QF', 'SF', '3ER', 'FINAL')
+                teams_changed = not freeze and ((eq1_espn and eq1_espn != eq1_sheet) or (eq2_espn and eq2_espn != eq2_sheet))
+                if (sc["estado"] == estado_prev and sc["gol1"] == cel(cGOL1) and
+                        sc["gol2"] == cel(cGOL2) and sc["ganador"] == cel(cGANADOR) and not teams_changed):
+                    time.sleep(0.3); continue
 
-                if (sc["estado"] == estado_prev and
-                        sc["gol1"] == game.get("gol1", "") and
-                        sc["gol2"] == game.get("gol2", "") and
-                        sc["ganador"] == game.get("ganador", "") and
-                        not teams_changed):
-                    time.sleep(0.3)
-                    continue
-
-                eq1  = eq1_sheet or eq1_espn
-                eq2  = eq2_sheet or eq2_espn
+                # Detectar cambios para notificaciones Telegram
+                jgo  = cel(col_idx("A"))
+                eq1  = cel(col_idx("E"))
+                eq2  = cel(col_idx("F"))
                 prev = _prev_states.get(espn_id, {})
 
                 if sc["estado"] != "PROG" and estado_prev == "PROG":
-                    _tg_send(f"\U0001f7e1 <b>INICIO:</b> {eq1} vs {eq2}\nJornada")
-                    _send_push_all("\u26bd Partido iniciado", f"{eq1} vs {eq2}",
-                                   {"tipo": "inicio", "eq1": eq1, "eq2": eq2})
+                    # Partido inicia
+                    #msg_inicio = f"INICIO: {eq1} vs {eq2} — ¡Que empiece el partido!"
+                    msg_inicio = f"INICIO: {eq1} vs {eq2}"
+                    _tg_send(f"🟡 <b>INICIO:</b> {eq1} vs {eq2}\nJornada")
+                    _send_push_all("⚽ Partido iniciado", f"{eq1} vs {eq2}", {"tipo":"inicio","eq1":eq1,"eq2":eq2})
                     try:
-                        _wa("POST", "/send", json={"message": f"\U0001f7e1 INICIO: {eq1} vs {eq2}\n"})
+                        _wa("POST", "/send", json={"message": f"🟡 INICIO: {eq1} vs {eq2}\n"})
                     except Exception as e:
                         print(f"[WA] Error inicio: {e}")
-                elif sc["estado"] in ("EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"):
-                    if prev and (sc["gol1"] != prev.get("gol1", "") or
-                                 sc["gol2"] != prev.get("gol2", "")):
+                elif sc["estado"] in ("EN VIVO","MEDIO TIEMPO","PRORROGA","PENALES"):
+                    # prev vacío = primer ciclo tras reinicio; no confundir "" → "0" con un gol real
+                    if prev and (sc["gol1"] != prev.get("gol1","") or sc["gol2"] != prev.get("gol2","")):
                         minuto  = _live_clocks.get(espn_id, "")
-                        min_txt = (f" ({minuto}')" if minuto and minuto != "MT"
-                                   else (" (MT)" if sc["estado"] == "MEDIO TIEMPO" else ""))
+                        min_txt = f" ({minuto}')" if minuto and minuto != "MT" else (" (MT)" if sc["estado"]=="MEDIO TIEMPO" else "")
+                        # Encolar — se enviará con standings frescos después de _update_standings()
                         _pending_notifs.append({
                             "tipo": "gol", "eq1": eq1, "eq2": eq2,
                             "gol1": sc["gol1"], "gol2": sc["gol2"],
                             "min_txt": min_txt, "minuto": minuto,
                         })
                 elif sc["estado"] == "FINAL" and estado_prev != "FINAL":
-                    if prev and (sc["gol1"] != prev.get("gol1", "") or
-                                 sc["gol2"] != prev.get("gol2", "")):
+                    # Si el score cambió justo al llegar al FINAL (gol en tiempo de descuento),
+                    # encolar también el gol para que no quede sin anunciar
+                    if prev and (sc["gol1"] != prev.get("gol1","") or sc["gol2"] != prev.get("gol2","")):
                         _pending_notifs.append({
                             "tipo": "gol", "eq1": eq1, "eq2": eq2,
                             "gol1": sc["gol1"], "gol2": sc["gol2"],
                             "min_txt": "", "minuto": "",
                         })
-                    gan_eq = sc["ganador"] if sc["ganador"] else "Sin definir"
+                    gan_eq  = sc["ganador"] if sc["ganador"] else "Sin definir"
                     _pending_notifs.append({
                         "tipo": "final", "eq1": eq1, "eq2": eq2,
                         "gol1": sc["gol1"], "gol2": sc["gol2"],
                         "ganador": sc["ganador"], "gan_eq": gan_eq,
                     })
 
-                _prev_states[espn_id] = {
-                    "estado": sc["estado"],
-                    "gol1":   sc["gol1"],
-                    "gol2":   sc["gol2"],
-                }
 
-                ult_act = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                _db.db_update_game_result(
-                    jgo, sc["estado"], sc["gol1"], sc["gol2"], sc["ganador"], ult_act
-                )
-
+                _prev_states[espn_id] = {"estado": sc["estado"],
+                                          "gol1": sc["gol1"], "gol2": sc["gol2"]}
                 if teams_changed:
-                    conn = _db.get_conn()
-                    with conn:
-                        if eq1_espn and eq1_espn != eq1_sheet:
-                            conn.execute("UPDATE horarios SET eq1=? WHERE jgo=?",
-                                         (eq1_espn, jgo))
-                            print(f"[updater] JGO {jgo} EQ1: {eq1_sheet!r} -> {eq1_espn!r}")
-                        if eq2_espn and eq2_espn != eq2_sheet:
-                            conn.execute("UPDATE horarios SET eq2=? WHERE jgo=?",
-                                         (eq2_espn, jgo))
-                            print(f"[updater] JGO {jgo} EQ2: {eq2_sheet!r} -> {eq2_espn!r}")
-                    conn.close()
-
-                _invalidate_games()
+                    if eq1_espn and eq1_espn != eq1_sheet:
+                        batch.append({"range": f"E{row}", "values": [[eq1_espn]]})
+                        print(f"[updater] JGO {cel(col_idx('A'))} EQ1: {eq1_sheet!r} → {eq1_espn!r}")
+                    if eq2_espn and eq2_espn != eq2_sheet:
+                        batch.append({"range": f"F{row}", "values": [[eq2_espn]]})
+                        print(f"[updater] JGO {cel(col_idx('A'))} EQ2: {eq2_sheet!r} → {eq2_espn!r}")
+                    _invalidate_games()
+                batch.append({
+                    "range":  f"{idx_col(cESTADO)}{row}:{idx_col(cULT)}{row}",
+                    "values": [[sc["estado"], sc["gol1"], sc["gol2"], sc["ganador"],
+                                datetime.now().strftime("%Y-%m-%d %H:%M:%S")]]
+                })
                 n += 1
                 time.sleep(0.3)
 
-            if n > 0:
-                print(f"[updater] {n} partido(s) actualizados en SQLite")
+            if batch:
+                with _sheets_lock:
+                    ws_h.batch_update(batch, value_input_option="RAW")
+                _invalidate_games()
+                print(f"[updater] {n} fila(s) actualizadas")
+                # Propagar ganadores al siguiente cruce del bracket
                 try:
-                    _propagate_bracket()
+                    _propagate_bracket(ws_h=ws_h)
                 except Exception as _pe:
                     print(f"[updater] propagate-bracket error: {_pe}")
 
+            # ── Flush de notificaciones INMEDIATO (no espera standings) ─────
+            # Usa top5/top3 cacheados del ciclo anterior — llegan en segundos
             if _pending_notifs:
                 top  = _top5_text()
                 top3 = _top3_push()
@@ -1444,17 +1580,17 @@ def _updater_loop():
                             mt         = notif["min_txt"]
                             minuto_n   = notif["minuto"]
                             _tg_send(
-                                f"\u26bd <b>MARCADOR:</b> {eq1n} {g1} \u2013 {g2} {eq2n}{mt}\n"
-                                + (f"\n\U0001f3c6 <b>Top 5:</b>\n{top}" if top else "")
+                                f"⚽ <b>MARCADOR:</b> {eq1n} {g1} – {g2} {eq2n}{mt}\n"
+                                + (f"\n🏆 <b>Top 5:</b>\n{top}" if top else "")
                             )
-                            push_body = f"{eq1n} {g1} \u2013 {g2} {eq2n}{mt}"
-                            if top3: push_body += f"\n\U0001f3c6 {top3}"
-                            _send_push_all("\u26bd Gol!", push_body,
-                                {"tipo": "gol", "eq1": eq1n, "eq2": eq2n,
-                                 "gol1": g1, "gol2": g2, "minuto": minuto_n})
+                            push_body = f"{eq1n} {g1} – {g2} {eq2n}{mt}"
+                            if top3: push_body += f"\n🏆 {top3}"
+                            _send_push_all("⚽ Gol!", push_body,
+                                {"tipo":"gol","eq1":eq1n,"eq2":eq2n,
+                                 "gol1":g1,"gol2":g2,"minuto":minuto_n})
                             try:
-                                wa_msg = f"\u26bd GOL: {eq1n} {g1} \u2013 {g2} {eq2n}{mt}"
-                                if top3: wa_msg += f"\n\U0001f3c6 {top3}"
+                                wa_msg = f"⚽ GOL: {eq1n} {g1} – {g2} {eq2n}{mt}"
+                                if top3: wa_msg += f"\n🏆 {top3}"
                                 _wa("POST", "/send", json={"message": wa_msg})
                             except Exception as e:
                                 print(f"[WA] Error gol: {e}")
@@ -1463,23 +1599,25 @@ def _updater_loop():
                             g1, g2     = notif["gol1"], notif["gol2"]
                             gan        = notif["ganador"]
                             gan_eq_n   = notif["gan_eq"]
-                            # F2: ganador es nombre real del equipo (no "1"/"2")
-                            gan_txt    = (f"\U0001f3c5 Gana <b>{gan_eq_n}</b>"
-                                          if gan else "\U0001f91d <b>Empate</b>")
+                            gan_txt    = (f"🏅 Gana <b>{eq1n}</b>" if gan=="1"
+                                          else f"🏅 Gana <b>{eq2n}</b>" if gan=="2"
+                                          else "🤝 <b>Empate</b>")
                             _tg_send(
-                                f"\U0001f3c1 <b>FINAL:</b> {eq1n} {g1} \u2013 {g2} {eq2n}\n"
+                                f"🏁 <b>FINAL:</b> {eq1n} {g1} – {g2} {eq2n}\n"
                                 f"{gan_txt}\n"
-                                + (f"\n\U0001f3c6 <b>Top 5:</b>\n{top}" if top else "")
+                                + (f"\n🏆 <b>Top 5:</b>\n{top}" if top else "")
                             )
-                            push_body = f"{eq1n} {g1} \u2013 {g2} {eq2n} \u00b7 {gan_eq_n}"
-                            if top3: push_body += f"\n\U0001f3c6 {top3}"
-                            _send_push_all("\U0001f3c1 Partido finalizado", push_body,
-                                {"tipo": "final", "eq1": eq1n, "eq2": eq2n,
-                                 "gol1": g1, "gol2": g2, "ganador": gan})
+                            push_body = f"{eq1n} {g1} – {g2} {eq2n} · {gan_eq_n}"
+                            if top3: push_body += f"\n🏆 {top3}"
+                            _send_push_all("🏁 Partido finalizado", push_body,
+                                {"tipo":"final","eq1":eq1n,"eq2":eq2n,
+                                 "gol1":g1,"gol2":g2,"ganador":gan})
                             try:
-                                gan_wa = f"\U0001f3c5 Gana {gan_eq_n}" if gan else "\U0001f91d Empate"
-                                wa_msg = f"\U0001f3c1 FINAL: {eq1n} {g1} \u2013 {g2} {eq2n}\n{gan_wa}"
-                                if top3: wa_msg += f"\n\n\U0001f3c6 Top 3:\n{top3}"
+                                gan_wa = ("🏅 Gana " + eq1n if gan=="1"
+                                          else "🏅 Gana " + eq2n if gan=="2"
+                                          else "🤝 Empate")
+                                wa_msg = f"🏁 FINAL: {eq1n} {g1} – {g2} {eq2n}\n{gan_wa}"
+                                if top3: wa_msg += f"\n\n🏆 Top 3:\n{top3}"
                                 _wa("POST", "/send", json={"message": wa_msg})
                             except Exception as e:
                                 print(f"[WA] Error final: {e}")
@@ -1487,17 +1625,21 @@ def _updater_loop():
                         print(f"[updater] notif-flush ERROR: {e}")
                 _pending_notifs.clear()
 
+            # ── Recalcular tabla de posiciones en hilo separado ───────────────
+            # No bloquea el loop — el próximo ciclo empieza sin esperar
             global _standings_last_update
+            scores_changed  = bool(batch)
             time_since_last = time.time() - _standings_last_update
-            should_update   = n > 0 or (time_since_last >= _STANDINGS_MIN_INTERVAL)
+            should_update   = scores_changed or (time_since_last >= _STANDINGS_MIN_INTERVAL)
             if should_update:
                 def _standings_async():
                     if not _standings_lock.acquire(blocking=False):
-                        return
+                        return  # Ya hay un standings corriendo, saltarlo
                     try:
                         _update_standings()
                         global _standings_last_update
                         _standings_last_update = time.time()
+                        # Pre-calentar cachés de probabilidades y comparar
                         try:
                             result = _compute_probabilities()
                             _cache["prob"]    = result
@@ -1514,15 +1656,16 @@ def _updater_loop():
                         _standings_lock.release()
                 threading.Thread(target=_standings_async, daemon=True, name="standings").start()
 
+            # ── Fin de día y fin de quiniela ─────────────────────────────────
             try:
-                games_now, _ = _get_games_cache()
-                _check_day_end_notif(games_now)
+                _check_day_end_notif(filas, fila_inicio)
             except Exception as e:
                 print(f"[updater] day-end ERROR: {e}")
 
         except Exception as e:
             print(f"[updater] ERROR: {e}")
 
+        # ── Notificación 2 min antes del sorteo (fuera del try principal) ─
         try:
             _check_sorteo_notif()
         except Exception as e:
@@ -1605,131 +1748,46 @@ async def lifespan(app: FastAPI):
     creds_path = os.environ.get("QL_CREDS", "credentials.json")
     sheet_id   = os.environ.get("QL_SHEET", "")
 
-    # 1. Inicializar SQLite
-    _db.init_db()
-    print("[webapp] SQLite inicializado")
+    # Si el archivo no existe, recrearlo desde GOOGLE_CREDENTIALS (Railway/Fly.io)
+    if not os.path.exists(creds_path):
+        gc_env = os.environ.get("GOOGLE_CREDENTIALS", "")
+        if gc_env:
+            with open(creds_path, "w", encoding="utf-8") as _f:
+                _f.write(gc_env)
+            print(f"[webapp] credentials.json recreado desde GOOGLE_CREDENTIALS")
+        else:
+            raise FileNotFoundError(f"No se encontró {creds_path} ni la variable GOOGLE_CREDENTIALS")
 
-    # 2. Verificar si la DB es nueva (sin jugadores)
-    db_is_new = False
-    try:
-        _tmp = _db.get_conn()
-        _cnt = _tmp.execute("SELECT COUNT(*) FROM jugadores").fetchone()[0]
-        _tmp.close()
-        db_is_new = (_cnt == 0)
-    except Exception:
-        db_is_new = True
-
-    # 3. Cargar config y estado desde SQLite (arranque inmediato)
-    state["cfg"] = _db.db_get_config()
-    print(f"[webapp] Config SQLite: {len(state['cfg'])} campos")
-
+    creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+    gc = gspread.authorize(creds)
+    state["sh"]  = gc.open_by_key(sheet_id)
+    _ensure_base_sheets(state["sh"])   # crea HORARIOS/JUGADORES/POSICIONES/CONFIG si no existen
+    state["cfg"] = read_config(state["sh"])
+    ensure_jugadores_headers()
     global _vapid_keys
     _vapid_keys = _load_vapid()
     _subs_load()
-
-    # 4. Restaurar logo desde Volume /data
-    _data_dir = Path("/data")
-    if _data_dir.exists():
-        import shutil as _shutil
-        _app_dir = Path(__file__).parent
-        for _fname in ["logo.png", "icon-192.png", "icon-512.png"]:
-            _src2 = _data_dir / _fname
-            if _src2.exists():
-                _shutil.copy2(_src2, _app_dir / _fname)
-                print(f"[webapp] Logo restaurado: {_fname}")
-
+    print(f"[webapp] Conectado a: {state['sh'].title}")
     print(f"[webapp] Corriendo en http://localhost:{os.environ.get('QL_PORT', 8000)}")
 
-    # 5. Hilo Sheets: conectar en background, migrar si es nueva, sync cada 60s
-    def _sheets_connect_and_sync():
-        import time as _time
-        _sh = None
-        if not sheet_id:
-            print("[sheets] Sin QL_SHEET -- app corre solo con SQLite")
-            return
-        if not os.path.exists(creds_path):
-            gc_env = os.environ.get("GOOGLE_CREDENTIALS", "")
-            if gc_env:
-                with open(creds_path, "w", encoding="utf-8") as _f:
-                    _f.write(gc_env)
-                print("[sheets] credentials.json recreado desde env")
-            else:
-                print("[sheets] Sin credenciales -- app corre solo con SQLite")
-                return
-        try:
-            creds = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-            gc    = gspread.authorize(creds)
-            for _att in range(4):
-                try:
-                    _sh = gc.open_by_key(sheet_id)
-                    break
-                except gspread.exceptions.APIError as _e:
-                    if "429" in str(_e) and _att < 3:
-                        _w = 30 * (_att + 1)
-                        print(f"[sheets] 429 -- reintentando en {_w}s...")
-                        _time.sleep(_w)
-                    else:
-                        print(f"[sheets] No accesible: {_e}")
-                        break
-                except Exception as _e2:
-                    print(f"[sheets] No accesible: {_e2}")
-                    break
-            if _sh:
-                state["sh"] = _sh
-                _ensure_base_sheets(_sh)
-                print(f"[sheets] Conectado: {_sh.title}")
-                if db_is_new:
-                    print("[sheets] SQLite vacio -- migrando datos desde Sheets...")
-                    try:
-                        cfg_sh = {r[0].strip(): r[1].strip()
-                                  for r in _sh.worksheet("CONFIG").get_all_values()
-                                  if len(r) >= 2 and r[0].strip()}
-                        _db.migrate_from_sheets(_sh, cfg_sh)
-                        state["cfg"] = _db.db_get_config()
-                        _cnt2 = _db.get_conn().execute(
-                            "SELECT COUNT(*) FROM jugadores").fetchone()[0]
-                        print(f"[sheets] Migracion completada -- {_cnt2} jugadores")
-                        _invalidate_players()
-                    except Exception as _em:
-                        print(f"[sheets] Error migracion: {_em}")
-                else:
-                    read_config(_sh)
-                    state["cfg"] = _db.db_get_config()
-            else:
-                print("[sheets] No disponible -- app corre solo con SQLite")
-        except Exception as _ec:
-            print(f"[sheets] Error de conexion (no fatal): {_ec}")
-
-        # Loop de sync cada 60s
-        while True:
-            _time.sleep(60)
-            try:
-                if state.get("sh"):
-                    _db.sync_to_sheets(state["sh"], state.get("cfg", {}))
-            except Exception as _se:
-                print(f"[sync] Error: {_se}")
-
-    threading.Thread(target=_sheets_connect_and_sync, daemon=True, name="sheets").start()
-
-    # 6. Arrancar updater
+    # Arrancar updater en hilo de fondo (daemon = se cierra solo al cerrar el webapp)
     t = threading.Thread(target=_updater_loop, daemon=True)
     t.start()
 
-    # 7. Pre-calentar caches
+    # Pre-calentar todas las cachés al arrancar (standings, prob, comparar)
     def _warmup_caches():
-        import time as _wtime
-        _wtime.sleep(3)
+        time.sleep(3)
         try:
             _update_standings()
             global _standings_last_update
-            _standings_last_update = _wtime.time()
+            _standings_last_update = time.time()
             print("[webapp] standings iniciales calculados")
         except Exception as e:
             print(f"[webapp] standings startup error: {e}")
         try:
             result = _compute_probabilities()
             _cache["prob"]    = result
-            _cache["prob_ts"] = _wtime.time()
+            _cache["prob_ts"] = time.time()
             print("[webapp] probabilidades iniciales calculadas")
         except Exception as e:
             print(f"[webapp] prob startup error: {e}")
@@ -1745,6 +1803,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Middleware: todos los endpoints /api/* llevan Cache-Control: no-store
+# Esto evita que iOS Safari cachee respuestas de datos en vivo
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as _Req
 
 class NoCacheAPIMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: _Req, call_next):
@@ -2455,18 +2517,56 @@ COMPARE_TTL_FINAL = 300  # segundos — cuando todos son FINAL
 
 
 def _compute_compare_picks() -> dict:
-    """Devuelve partidos INICIADOS con picks de cada jugador, desde SQLite."""
+    """
+    Devuelve todos los partidos INICIADOS (estado != '' y != 'PROG') con
+    los picks de cada jugador, usando _batch_read_player_tabs() para eficiencia.
+    """
+    sh = state.get("sh")
+    if not sh:
+        return {"games": [], "error": "sin conexión"}
+
     games, _ = _get_games_cache()
-    started  = [g for g in games if g.get("estado") and g["estado"] != "PROG"]
+    started   = [g for g in games if g.get("estado") and g["estado"] != "PROG"]
     if not started:
         return {"games": []}
 
-    cfg = state.get("cfg", {})
-    all_final    = True
+    cfg      = state.get("cfg", {})
+    total_j  = int(cfg.get("TOTAL_JUEGOS_F2", 32))
+    last_row = 3 + total_j
+
+    if not _players_cache_ok():
+        _load_players_cache()
+
+    seen_tabs: set = set()
+    players: list  = []
+    for k, v in _cache["players"].items():
+        if k.startswith("phone:") and v.get("TAB_NOMBRE") and v.get("NOMBRE"):
+            tab = v["TAB_NOMBRE"]
+            if tab not in seen_tabs:
+                seen_tabs.add(tab)
+                players.append(v)
+
+    if not players:
+        return {"games": []}
+
+    t0 = time.time()
+    tab_data_map = _batch_read_player_tabs(sh, players, last_row)
+    print(f"[compare] {len(players)} tabs leídos en {time.time()-t0:.1f}s")
+
+    # Indexar filas por jgo_str para cada jugador
+    player_rows: dict = {}  # TAB_NOMBRE -> {jgo_str: row}
+    for p in players:
+        rows_by_jgo: dict = {}
+        for row in tab_data_map.get(p["TAB_NOMBRE"], []):
+            if row and row[0].strip():
+                rows_by_jgo[row[0].strip()] = row
+        player_rows[p["TAB_NOMBRE"]] = rows_by_jgo
+
+    all_final = True
     result_games = []
 
     for game in started:
-        jgo_str  = str(game.get("jgo", ""))
+        jgo_str  = game.get("jgo", "")
         real_gan = game.get("ganador", "")
         real_g1  = game.get("gol1",    "")
         real_g2  = game.get("gol2",    "")
@@ -2479,71 +2579,77 @@ def _compute_compare_picks() -> dict:
         g2_known  = real_g2  != ""
         gan_known = real_gan != ""
 
-        all_picks  = _db.db_get_all_picks_for_game(jgo_str)
         game_picks = []
+        for p in players:
+            row = player_rows.get(p["TAB_NOMBRE"], {}).get(jgo_str)
+            def c(i, r=row): return r[i].strip() if r and len(r) > i else ""
+            # F2 player tab: A=JGO B=RONDA C=FECHA D=EQ1_REAL E=EQ2_REAL
+            #                F(5)=PICK_EQ1  G(6)=PICK_GOL1  H(7)=PICK_GOL2
+            #                I(8)=PICK_EQ2  J(9)=PICK_GANADOR
+            pick_eq1  = c(5)
+            pick_gol1 = c(6)
+            pick_gol2 = c(7)
+            pick_eq2  = c(8)
+            pick_gan  = c(9)
 
-        for pk in all_picks:
-            pick_gol1 = pk.get("g1_pick", "") or ""
-            pick_gol2 = pk.get("g2_pick", "") or ""
-            pick_gan  = pk.get("gan_pick", "") or ""
-
-            real_eq1   = game.get("eq1", "")
-            real_eq2   = game.get("eq2", "")
+            real_eq1 = game.get("eq1", "")
+            real_eq2 = game.get("eq2", "")
+            # Regla F2: al menos 1 equipo del pick debe estar jugando en el partido real
             team_alive = (
-                not real_eq1 or not real_eq2 or not pick_gan or
-                pick_gan == real_eq1 or pick_gan == real_eq2
+                not real_eq1 or not real_eq2 or
+                (pick_eq1 and (pick_eq1 == real_eq1 or pick_eq1 == real_eq2)) or
+                (pick_eq2 and (pick_eq2 == real_eq1 or pick_eq2 == real_eq2)) or
+                (pick_gan and (pick_gan == real_eq1 or pick_gan == real_eq2))
             )
-
+            # Pick incompleto o ningún equipo con vida: sin puntos
             if not pick_gol1 or not pick_gol2 or not pick_gan or not team_alive:
-                pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
+                pts = 0
+                pts_gol1 = pts_gol2 = pts_gan = pts_logro = 0
             else:
-                _v_logro   = int(cfg.get("PTS_LOGRO", 1) or 1)
-                _v_gan     = int(cfg.get("PTS_GAN",   2) or 2)
-                _v_gol1    = int(cfg.get("PTS_GOL1",  1) or 1)
-                _v_gol2    = int(cfg.get("PTS_GOL2",  1) or 1)
-
+                # Leer puntos configurados (con defaults F2)
+                _v_logro = int(cfg.get("PTS_LOGRO", 1) or 1)
+                _v_gan   = int(cfg.get("PTS_GAN",   2) or 2)
+                _v_gol1  = int(cfg.get("PTS_GOL1",  1) or 1)
+                _v_gol2  = int(cfg.get("PTS_GOL2",  1) or 1)
+                # PTS_LOGRO: resultado 90min (1/X/2) coincide
                 def _res(g1, g2):
                     try: return "1" if int(g1) > int(g2) else ("2" if int(g1) < int(g2) else "X")
                     except: return ""
-
                 pts_logro = _v_logro if (g1_known and g2_known and
-                                         _res(pick_gol1, pick_gol2) == _res(real_g1, real_g2)) else 0
-                pts_gan   = _v_gan  if (gan_known and pick_gan == real_gan) else 0
-                pts_gol1  = _v_gol1 if (g1_known and pick_gol1 == real_g1) else 0
-                pts_gol2  = _v_gol2 if (g2_known and pick_gol2 == real_g2) else 0
+                                   _res(pick_gol1, pick_gol2) == _res(real_g1, real_g2)) else 0
+                # PTS_GAN: ganador predicho coincide con ganador real
+                pts_gan = _v_gan if (gan_known and pick_gan == real_gan) else 0
+                # PTS_GOL1: gol EQ1 coincide
+                pts_gol1 = _v_gol1 if (g1_known and pick_gol1 == real_g1) else 0
+                # PTS_GOL2: gol EQ2 coincide
+                pts_gol2 = _v_gol2 if (g2_known and pick_gol2 == real_g2) else 0
+                # PTS_CAMPEON: bono si es la FINAL y acertó al ganador
                 _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
-                pts_campeon = _v_campeon if (
-                    _v_campeon and
-                    game.get("ronda", "").upper() == "FINAL" and
-                    gan_known and pick_gan == real_gan
-                ) else 0
+                pts_campeon = _v_campeon if (_v_campeon and game.get("ronda","").upper() == "FINAL"
+                                             and gan_known and pick_gan == real_gan) else 0
                 pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_campeon
 
             game_picks.append({
-                "nombre":    pk.get("nombre", ""),
-                "pick_eq1":  "",
-                "pick_gol1": pick_gol1,
-                "pick_gol2": pick_gol2,
-                "pick_eq2":  "",
-                "pick_gan":  pick_gan,
+                "nombre":    p.get("NOMBRE", "?"),
+                "g1":        pick_gol1,
+                "g2":        pick_gol2,
+                "gan":       pick_gan,
                 "pts":       pts,
-                "pts_logro": pts_logro,
-                "pts_gan":   pts_gan,
-                "pts_gol1":  pts_gol1,
-                "pts_gol2":  pts_gol2,
-                "ok_logro":  pts_logro > 0,
-                "ok_gan":    pts_gan   > 0,
-                "ok_gol1":   pts_gol1  > 0,
-                "ok_gol2":   pts_gol2  > 0,
+                "logro_ok":  bool(pts_logro > 0),
+                "g1_ok":     bool(pts_gol1 > 0),
+                "g2_ok":     bool(pts_gol2 > 0),
+                "gan_ok":    bool(pts_gan > 0),
+                "g1_set":    bool(pick_gol1),
+                "g2_set":    bool(pick_gol2),
+                "gan_set":   bool(pick_gan),
             })
 
-        game_picks.sort(key=lambda x: -x["pts"])
+        game_picks.sort(key=lambda x: x["pts"], reverse=True)
+
         result_games.append({
             "jgo":     jgo_str,
-            "ronda":   game.get("ronda", ""),
-            "fecha":   game.get("fecha", ""),
-            "eq1":     game.get("eq1", ""),
-            "eq2":     game.get("eq2", ""),
+            "eq1":     game.get("eq1",     ""),
+            "eq2":     game.get("eq2",     ""),
             "estado":  estado,
             "gol1":    real_g1,
             "gol2":    real_g2,
@@ -2551,10 +2657,14 @@ def _compute_compare_picks() -> dict:
             "picks":   game_picks,
         })
 
-    result = {"games": result_games, "all_final": all_final}
-    _cache["compare"]    = result
-    _cache["compare_ts"] = time.time()
-    return result
+    data = {
+        "games":       result_games,
+        "computed_at": datetime.now().isoformat(),
+    }
+    _compare_cache["data"]      = data
+    _compare_cache["ts"]        = time.time()
+    _compare_cache["all_final"] = all_final
+    return data
 
 
 @app.get("/api/compare-picks")
@@ -2738,7 +2848,11 @@ def _torneo_activo() -> dict:
             return {"activo": False, "razon": ""}
 
         # Condición 3: al menos 2 jugadores registrados
-        jugadores = _db.db_get_jugadores()
+        with _sheets_lock:
+            ws_j = state["sh"].worksheet("JUGADORES")
+            j_rows = ws_j.get_all_values()
+        hi, _ = _jugadores_headers(j_rows)
+        jugadores = [r for r in j_rows[hi + 1:] if any(c.strip() for c in r)]
         if len(jugadores) < 2:
             return {"activo": False, "razon": ""}
 
@@ -2890,12 +3004,12 @@ async def admin_get_players(ql_admin: str = Cookie(default="")):
 
 
 def _read_jugadores_cached() -> tuple:
-    """Lee jugadores desde SQLite. API compatible con codigo legacy."""
-    jugadores   = _db.db_get_jugadores()
-    headers     = ["EMAIL", "NOMBRE", "WHATSAPP", "TELEFONO", "TAB_NOMBRE",
-                   "PAGADO", "FECHA_REGISTRO", "#"]
-    rows_compat = [_jugador_db_to_cache(p) for p in jugadores]
-    return None, rows_compat, 0, headers
+    """Lee JUGADORES sheet con lock+retry. Retorna (rows, header_idx, headers)."""
+    with _sheets_lock:
+        ws   = _sheets_retry(lambda: state["sh"].worksheet("JUGADORES"))
+        rows = _sheets_retry(lambda: ws.get_all_values())
+    header_idx, headers = _jugadores_headers(rows)
+    return ws, rows, header_idx, headers
 
 
 @app.get("/api/admin/prize-and-players")
@@ -3806,552 +3920,4 @@ async def wa_pair(body: dict = None, ql_admin: str = Cookie(default="")):
 @app.post("/api/admin/wa-create-group")
 async def wa_create_group(ql_admin: str = Cookie(default="")):
     """Crea el grupo de WhatsApp y agrega a todos los jugadores registrados."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    cfg        = state.get("cfg", {})
-    group_name = cfg.get("WA_GROUP_NAME") or cfg.get("TORNEO", "Quiniela WFC 2026") + " 🏆"
-    phones     = _wa_get_phones()
-    if not phones:
-        return {"ok": False, "msg": "No hay jugadores con telefono registrado"}
-    n         = len(phones)
-    timeout_s = max(60, n * 1 + 30)
-    return await asyncio.get_event_loop().run_in_executor(
-        None, lambda: _wa("POST", "/create-group", timeout=timeout_s, json={"name": group_name, "phones": phones})
-    )
-
-
-@app.post("/api/admin/wa-add-member")
-async def wa_add_member(body: dict = None, ql_admin: str = Cookie(default="")):
-    """Agrega un jugador individual al grupo de WhatsApp."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    phone = (body or {}).get("phone", "")
-    if not phone:
-        raise HTTPException(400, "Falta el campo 'phone'")
-    return _wa("POST", "/add-member", json={"phone": phone})
-
-
-@app.post("/api/admin/wa-update-group")
-async def wa_update_group(ql_admin: str = Cookie(default="")):
-    """Actualiza nombre, icono y sincroniza miembros faltantes del grupo."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    cfg        = state.get("cfg", {})
-    group_name = cfg.get("WA_GROUP_NAME") or cfg.get("TORNEO", "Quiniela WFC 2026") + " 🏆"
-    phones     = _wa_get_phones()
-    n          = len(phones)
-    timeout_s  = max(60, n * 1 + 30)
-    return await asyncio.get_event_loop().run_in_executor(
-        None, lambda: _wa("POST", "/update-group", timeout=timeout_s, json={"name": group_name, "phones": phones})
-    )
-
-
-@app.post("/api/admin/wa-test")
-async def wa_test(ql_admin: str = Cookie(default="")):
-    """Envia un mensaje de prueba al grupo de WhatsApp."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    return _wa("POST", "/send", json={"message": "🔔 Prueba de notificacion WhatsApp ✅\nLas notificaciones del Mundial estan funcionando."})
-
-
-@app.post("/api/admin/wa-disconnect")
-async def wa_disconnect(body: dict = None, ql_admin: str = Cookie(default="")):
-    """Desconecta WhatsApp. Si deleteGroup=true, elimina el grupo primero."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    b = body or {}
-    delete_group = b.get("deleteGroup", b.get("delete_group", False))
-    return _wa("POST", "/disconnect", json={"deleteGroup": bool(delete_group)})
-
-
-
-# ─── Admin: setup ESPN / bracket / test-mode ──────────────────────────────────
-
-@app.get("/api/admin/setup-status")
-async def admin_setup_status(ql_admin: str = Cookie(default="")):
-    """Estado del proceso de carga de partidos desde ESPN."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    return {"status": state.get("_setup_status", "idle")}
-
-
-@app.post("/api/admin/setup")
-async def admin_setup(ql_admin: str = Cookie(default="")):
-    """Recarga los partidos de F2 desde ESPN y los escribe en SQLite."""
-    if not _admin_check(ql_admin):
-        raise HTTPException(403, "No autorizado")
-    t = _torneo_activo()
-    if t["activo"]:
-        raise HTTPException(423, f'Torneo en curso — panel bloqueado. {t["razon"]}')
-
-    def _run():
-        try:
-            from datetime import date as _date, timedelta as _td
-            cfg       = state["cfg"]
-            league    = cfg.get("ESPN_LEAGUE", "fifa.world")
-            fecha_ini = _date.fromisoformat(cfg.get("FECHA_INICIO_F2", "2026-07-01"))
-            fecha_fin = _date.fromisoformat(cfg.get("FECHA_FIN_F2",    "2026-07-19"))
-
-            conn_h = _db.get_conn()
-            with conn_h:
-                conn_h.execute("DELETE FROM horarios")
-            conn_h.close()
-            print("[admin-setup-f2] HORARIOS SQLite limpiado")
-
-            leagues   = [l.strip() for l in league.split(",") if l.strip()]
-            ligas_map = {}
-            try:
-                for liga in _db.db_get_ligas():
-                    if liga.get("codigo") and liga.get("espn_id"):
-                        ligas_map[liga["codigo"]] = liga["espn_id"]
-            except Exception:
-                pass
-
-            ligas_sin_id = []
-            for lg in leagues:
-                eid = ligas_map.get(lg, "")
-                if not eid:
-                    ligas_sin_id.append(lg)
-                print(f"[admin-setup-f2] Liga: {lg} | ESPN_ID: {eid or '(NO CONFIGURADO)'}")
-
-            if ligas_sin_id:
-                state["_setup_status"] = (
-                    f"ERROR: Faltan ESPN_ID en Ligas para: {', '.join(ligas_sin_id)}."
-                )
-                return
-
-            summary_url = (f"{ESPN_BASE}/{leagues[0]}/summary" if len(leagues) == 1
-                           else f"{ESPN_BASE}/all/summary")
-
-            state["_setup_status"] = f"running — buscando partidos {fecha_ini} -> {fecha_fin}..."
-            eventos   = []
-            _all_cache: dict = {}
-            dia = fecha_ini
-            while dia <= fecha_fin:
-                fecha_str = dia.strftime("%Y%m%d")
-                found     = 0
-                seen_ids: set = set()
-                for lg in leagues:
-                    eid_liga = ligas_map.get(lg, "")
-                    try:
-                        r = requests.get(f"{ESPN_BASE}/{lg}/scoreboard",
-                                         params={"dates": fecha_str, "limit": 500, "lang": "es"},
-                                         timeout=15)
-                        if r.status_code == 200:
-                            ev_list = r.json().get("events", [])
-                        else:
-                            if fecha_str not in _all_cache:
-                                r2 = requests.get(f"{ESPN_BASE}/all/scoreboard",
-                                                  params={"dates": fecha_str, "limit": 500, "lang": "es"},
-                                                  timeout=15)
-                                _all_cache[fecha_str] = (r2.json().get("events", [])
-                                                         if r2.status_code == 200 else [])
-                                time.sleep(0.2)
-                            uid_f   = f"l:{eid_liga}" if eid_liga else None
-                            ev_list = [e for e in _all_cache[fecha_str]
-                                       if not uid_f or uid_f in e.get("uid", "")]
-                        for ev in ev_list:
-                            eid = ev.get("id")
-                            if eid and eid not in seen_ids:
-                                seen_ids.add(eid)
-                                eventos.append({"id": eid,
-                                                "fecha_raw": ev.get("date", ""),
-                                                "ev_data":   ev})
-                                found += 1
-                    except Exception as ex:
-                        print(f"  [admin-setup-f2] {dia}/{lg}: {ex}")
-                    time.sleep(0.2)
-                if found:
-                    print(f"  [admin-setup-f2] {dia}: {found} partidos")
-                dia += _td(days=1)
-                time.sleep(0.3)
-
-            if not eventos:
-                state["_setup_status"] = "ERROR: ESPN no devolvio juegos. Verifica liga y fechas en CONFIG."
-                return
-
-            eventos.sort(key=lambda x: x["fecha_raw"])
-            state["_setup_status"] = f"running — obteniendo info de {len(eventos)} partidos..."
-
-            def _fetch_summary(event_id):
-                for url in [summary_url, f"{ESPN_BASE}/all/summary"]:
-                    try:
-                        r = requests.get(url, params={"event": event_id, "lang": "es"}, timeout=10)
-                        if r.status_code == 200:
-                            return r.json()
-                    except Exception:
-                        pass
-                return None
-
-            juegos = []
-            for ev in eventos:
-                data = _fetch_summary(ev["id"])
-                if not data:
-                    continue
-                try:
-                    comp = data["header"]["competitions"][0]
-                except (KeyError, IndexError):
-                    continue
-                competitors = comp.get("competitors", [])
-                eq1 = eq2 = ""
-                for c in competitors:
-                    n = c.get("team", {}).get("displayName", "")
-                    if c.get("homeAway") == "home": eq1 = n
-                    else:                           eq2 = n
-                if not eq1 and len(competitors) >= 1:
-                    eq1 = competitors[0].get("team", {}).get("displayName", "")
-                if not eq2 and len(competitors) >= 2:
-                    eq2 = competitors[1].get("team", {}).get("displayName", "")
-                fecha_str = hora_str = ""
-                raw = comp.get("date", "")
-                if raw:
-                    try:
-                        dt        = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                        fecha_str = dt.strftime("%Y-%m-%d")
-                        hora_str  = dt.strftime("%H:%M")
-                    except Exception:
-                        pass
-                grupo = parse_grupo(comp, ev.get("ev_data"))
-                juegos.append({"id": ev["id"], "eq1": eq1, "eq2": eq2,
-                               "fecha": fecha_str, "hora": hora_str,
-                               "grupo": grupo, "fecha_raw": ev.get("fecha_raw", "")})
-                time.sleep(0.3)
-
-            if juegos:
-                for i, j in enumerate(juegos, start=1):
-                    _db.db_upsert_horario({
-                        "jgo":     str(i),
-                        "grupo":   j.get("grupo", ""),
-                        "fecha":   j.get("fecha", ""),
-                        "hora":    j.get("hora", ""),
-                        "eq1":     j.get("eq1", ""),
-                        "eq2":     j.get("eq2", ""),
-                        "espn_id": j.get("id", ""),
-                        "estado":  "PROG",
-                        "gol1":    "",
-                        "gol2":    "",
-                        "ganador": "",
-                    })
-                _db.db_save_config({"TOTAL_JUEGOS_F2": str(len(juegos))})
-                state["cfg"] = _db.db_get_config()
-
-            _invalidate_games()
-            state["_setup_status"] = f"done — {len(juegos)} juegos cargados"
-
-        except Exception as e:
-            import traceback
-            print(f"[admin-setup-f2] ERROR: {traceback.format_exc()}")
-            state["_setup_status"] = f"ERROR: {e}"
-
-    state["_setup_status"] = "running"
-    threading.Thread(target=_run, daemon=True).start()
-    return {"ok": True, "msg": "Setup F2 iniciado"}
-
-
-@app.post("/api/admin/refresh-bracket-refs")
-async def admin_refresh_bracket_refs(ql_admin: str = Cookie(default="")):
-    """Re-carga partidos desde ESPN para refrescar los placeholders de bracket."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    return await admin_setup(ql_admin=ql_admin)
-
-
-@app.post("/api/admin/set-game-result")
-async def admin_set_game_result(body: dict, ql_admin: str = Cookie(default="")):
-    """
-    Escribe directamente en SQLite los campos de un partido.
-    Util en modo prueba: {jgo, eq1?, eq2?, estado?, gol1?, gol2?, ganador?}
-    """
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    jgo = str(body.get("jgo", "")).strip()
-    if not jgo:
-        raise HTTPException(400, "jgo requerido")
-
-    conn = _db.get_conn()
-    with conn:
-        if "eq1" in body:
-            conn.execute("UPDATE horarios SET eq1=? WHERE jgo=?", (str(body["eq1"]), jgo))
-        if "eq2" in body:
-            conn.execute("UPDATE horarios SET eq2=? WHERE jgo=?", (str(body["eq2"]), jgo))
-        if "grupo" in body:
-            conn.execute("UPDATE horarios SET grupo=? WHERE jgo=?", (str(body["grupo"]), jgo))
-    conn.close()
-
-    if any(k in body for k in ("estado", "gol1", "gol2", "ganador")):
-        _db.db_update_game_result(
-            jgo,
-            body.get("estado",  "PROG"),
-            body.get("gol1",    ""),
-            body.get("gol2",    ""),
-            body.get("ganador", ""),
-        )
-
-    _invalidate_games()
-    return {"ok": True, "jgo": jgo}
-
-
-@app.post("/api/admin/propagate-bracket")
-async def admin_propagate_bracket(ql_admin: str = Cookie(default="")):
-    """Propaga ganadores actuales a los cruces de la siguiente ronda."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    changes = _propagate_bracket()
-    return {"ok": True, "changes": changes}
-
-
-@app.post("/api/admin/fix-bracket-wc2026")
-async def admin_fix_bracket_wc2026(ql_admin: str = Cookie(default="")):
-    """
-    Restablece los placeholders de bracket WC2026 en R16, QF, SF, 3ER y FINAL.
-    Escribe 'Round of X N Winner' secuencialmente para que _propagate_bracket()
-    los resuelva con el mapa WC2026.
-    """
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-
-    horarios = _db.db_get_horarios()
-    ronda_games: dict = {}
-    for h in horarios:
-        ronda = h.get("grupo", "")
-        ronda_games.setdefault(ronda, []).append(h)
-    for k in ronda_games:
-        ronda_games[k].sort(
-            key=lambda h: int(str(h["jgo"])) if str(h["jgo"]).isdigit() else 0)
-
-    # rof_num must be 32/16/8/4 so _parse_bracket_ref can decode them
-    round_pairs = [
-        ("R16",   32),
-        ("QF",    16),
-        ("SF",     8),
-        ("3ER",    4),
-        ("FINAL",  4),
-    ]
-
-    changes = []
-    updates = []
-    for target_ronda, rof_num in round_pairs:
-        games = ronda_games.get(target_ronda, [])
-        for i, h in enumerate(games):
-            n1      = 2 * i + 1
-            n2      = 2 * i + 2
-            eq1_new = f"Round of {rof_num} {n1} Winner"
-            eq2_new = f"Round of {rof_num} {n2} Winner"
-            jgo     = str(h["jgo"])
-            if h.get("eq1") != eq1_new:
-                updates.append((jgo, "eq1", eq1_new))
-                changes.append(f"JGO {jgo} ({target_ronda}) EQ1: {h.get('eq1','')!r} -> {eq1_new!r}")
-            if h.get("eq2") != eq2_new:
-                updates.append((jgo, "eq2", eq2_new))
-                changes.append(f"JGO {jgo} ({target_ronda}) EQ2: {h.get('eq2','')!r} -> {eq2_new!r}")
-
-    if updates:
-        conn = _db.get_conn()
-        with conn:
-            for jgo_u, col_u, val_u in updates:
-                if col_u == "eq1":
-                    conn.execute("UPDATE horarios SET eq1=? WHERE jgo=?", (val_u, jgo_u))
-                else:
-                    conn.execute("UPDATE horarios SET eq2=? WHERE jgo=?", (val_u, jgo_u))
-        conn.close()
-        _invalidate_games()
-
-    return {"ok": True, "total": len(updates), "changes": changes}
-
-
-@app.post("/api/admin/setup-all")
-async def admin_setup_all(ql_admin: str = Cookie(default="")):
-    """
-    Repara todo: propaga el bracket y recalcula standings.
-    Devuelve {ok, log, errors} para el panel admin.
-    """
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    log    = []
-    errors = []
-
-    try:
-        changes = _propagate_bracket()
-        if changes:
-            log.append(f"Bracket propagado: {len(changes)} cambio(s)")
-            log.extend(changes[:20])
-        else:
-            log.append("Bracket: nada que propagar")
-    except Exception as e:
-        errors.append(f"Error propagando bracket: {e}")
-
-    try:
-        _update_standings()
-        log.append("Standings recalculados")
-    except Exception as e:
-        errors.append(f"Error recalculando standings: {e}")
-
-    return {"ok": not errors, "log": log, "errors": errors}
-
-
-
-@app.post("/api/admin/reset")
-async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")):
-    """Archiva el sheet actual en Drive y resetea jugadores/horarios/picks para nueva quiniela."""
-    if not _admin_check(ql_admin):
-        raise HTTPException(403, "No autorizado")
-
-    cfg = state.get("cfg", {})
-    reset_key = cfg.get("RESET_KEY", "RESET2026")
-    if body.keyword.strip() != reset_key:
-        raise HTTPException(403, "Clave incorrecta")
-
-    torneo    = cfg.get("TORNEO", "QuinielaF2")
-    fecha_ini = cfg.get("FECHA_INICIO_F2", "").replace("-", "")
-    fecha_fin = cfg.get("FECHA_FIN_F2",    "").replace("-", "")
-    copy_name = f"{torneo}.{fecha_ini}.{fecha_fin}"
-
-    # 1. Archivar copia en Drive (best effort)
-    archive_warn = ""
-    sh = state.get("sh")
-    if sh:
-        try:
-            from googleapiclient.discovery import build as _gapi_build
-            from google.oauth2.service_account import Credentials as _Creds
-            creds = _Creds.from_service_account_file(
-                os.environ.get("QL_CREDS", "credentials.json"), scopes=SCOPES)
-            drive = _gapi_build("drive", "v3", credentials=creds, cache_discovery=False)
-            file_info  = drive.files().get(fileId=sh.id, fields="owners,parents").execute()
-            owner_email = (file_info.get("owners") or [{}])[0].get("emailAddress", "")
-            parents    = file_info.get("parents", [])
-            copy_body  = {"name": copy_name}
-            if parents:
-                copy_body["parents"] = parents
-            copy_meta = drive.files().copy(
-                fileId=sh.id, body=copy_body, supportsAllDrives=True).execute()
-            copy_id = copy_meta.get("id")
-            print(f"[reset] Copia creada: {copy_name} (id={copy_id})")
-            if owner_email:
-                drive.permissions().create(
-                    fileId=copy_id,
-                    body={"type": "user", "role": "owner", "emailAddress": owner_email},
-                    transferOwnership=True, supportsAllDrives=True
-                ).execute()
-        except Exception as e:
-            archive_warn = f"Aviso: no se pudo archivar en Drive ({e}). "
-            print(f"[reset] WARN Drive: {e}")
-
-        # 2. Limpiar Sheets (best effort)
-        try:
-            reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
-            with _sheets_lock:
-                for ws in sh.worksheets():
-                    if ws.title not in reserved:
-                        sh.del_worksheet(ws)
-                    time.sleep(0.1)
-                ws_j = sh.worksheet("JUGADORES")
-                rows_j = ws_j.get_all_values()
-                hi, _ = _jugadores_headers(rows_j)
-                first_data = hi + 2
-                if len(rows_j) >= first_data:
-                    ws_j.batch_clear([f"A{first_data}:Z{len(rows_j) + 5}"])
-                sh.worksheet("POSICIONES").batch_clear(["A3:Z100"])
-                sh.worksheet("HORARIOS").batch_clear(["A3:L1000"])
-        except Exception as e:
-            print(f"[reset] WARN Sheets clear: {e}")
-
-    # 3. Limpiar SQLite
-    try:
-        conn_r = _db.get_conn()
-        with conn_r:
-            conn_r.execute("DELETE FROM picks")
-            conn_r.execute("DELETE FROM jugadores")
-            conn_r.execute("DELETE FROM horarios")
-            conn_r.execute("DELETE FROM chat")
-        conn_r.close()
-        print("[reset] SQLite limpiado")
-    except Exception as e_sql:
-        print(f"[reset] SQLite error: {e_sql}")
-
-    _cache["players"].clear()
-    _invalidate_games()
-    state["cfg"] = _db.db_get_config()
-
-    msg = (f"{archive_warn}SQLite reseteado."
-           if archive_warn else
-           f"Archivado como '{copy_name}' y todo reseteado.")
-    return {"ok": True, "msg": msg}
-
-
-@app.post("/api/admin/reset-test")
-async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
-    """
-    Modo prueba: borra resultados (ganador/goles/estado) desde una ronda en adelante
-    y resetea los eq1/eq2 de esas rondas a placeholders de bracket.
-    Body: { ronda_desde: "R32" | "R16" | "QF" | "SF" | "FINAL" }
-    """
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-
-    ronda_desde = str(body.get("ronda_desde", "R32")).strip().upper()
-    RONDAS_ORDER = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
-    ROF_MAP = {"R16": 32, "QF": 16, "SF": 8, "3ER": 4, "FINAL": 4}
-
-    if ronda_desde not in RONDAS_ORDER:
-        raise HTTPException(400, f"ronda_desde inválida. Usar: {RONDAS_ORDER}")
-
-    idx_desde = RONDAS_ORDER.index(ronda_desde)
-    rondas_a_limpiar = RONDAS_ORDER[idx_desde:]
-
-    horarios = _db.db_get_horarios()
-    ronda_games: dict = {}
-    for h in horarios:
-        ronda = h.get("grupo", "")
-        ronda_games.setdefault(ronda, []).append(h)
-    for k in ronda_games:
-        ronda_games[k].sort(key=lambda h: int(str(h["jgo"])) if str(h["jgo"]).isdigit() else 0)
-
-    conn = _db.get_conn()
-    cleared = 0
-    with conn:
-        for ronda in rondas_a_limpiar:
-            games = ronda_games.get(ronda, [])
-            for h in games:
-                jgo = str(h["jgo"])
-                # Resetear resultado
-                conn.execute(
-                    "UPDATE horarios SET ganador='', gol1='', gol2='', estado='PROG' WHERE jgo=?",
-                    (jgo,))
-                cleared += 1
-                # Para rondas de bracket (no R32): resetear eq1/eq2 a placeholders
-                if ronda in ROF_MAP:
-                    rof = ROF_MAP[ronda]
-                    games_sorted = ronda_games.get(ronda, [])
-                    i = games_sorted.index(h)
-                    eq1_new = f"Round of {rof} {2*i+1} Winner"
-                    eq2_new = f"Round of {rof} {2*i+2} Winner"
-                    conn.execute("UPDATE horarios SET eq1=?, eq2=? WHERE jgo=?",
-                                 (eq1_new, eq2_new, jgo))
-    conn.close()
-
-    # Borrar picks de esas rondas también
-    jgos_a_limpiar = []
-    for ronda in rondas_a_limpiar:
-        for h in ronda_games.get(ronda, []):
-            jgos_a_limpiar.append(str(h["jgo"]))
-
-    if jgos_a_limpiar:
-        conn2 = _db.get_conn()
-        with conn2:
-            placeholders = ",".join("?" * len(jgos_a_limpiar))
-            conn2.execute(f"DELETE FROM picks WHERE jgo IN ({placeholders})",
-                          jgos_a_limpiar)
-        conn2.close()
-
-    _invalidate_games()
-    return {
-        "ok":  True,
-        "msg": f"Reseteados {cleared} partido(s) desde {ronda_desde} "
-               f"({', '.join(rondas_a_limpiar)}) y picks eliminados."
-    }
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 — Backend")
-    parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
-                        help="Puerto HTTP (default: $PORT o 8080)")
-    parser.add_argument("--sheet", type=str, default="",
-                        help="ID del Google Sheet (opcional)")
-    parser.add_argument("--creds", type=str, default="credentials.json",
-                        help="Ruta al credentials.json")
-    args = parser.parse_args()
-
-    if args.sheet:
-        os.environ["QL_SHEET"] = args.sheet
-    if args.creds:
-        os.environ["QL_CREDS"] = args.creds
-
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+    if not
