@@ -5088,51 +5088,26 @@ async function loadGameEditor() {
       `<option value="${r}" ${!r?'disabled':''} ${r===''?'':''}>${r||'— Ronda —'}</option>`
     ).join('');
     list.innerHTML = filtered.map(g => {
-      const est      = g.estado || 'PROG';
-      const grp      = g.ronda  || g.grupo || '';
-      const estColor = est==='FINAL' ? '#dcfce7' : est==='LIVE' ? '#fef9c3' : '#f1f5f9';
-      const estTxt   = est==='FINAL' ? '#166534' : est==='LIVE' ? '#854d0e' : '#475569';
-      const gan1sel  = g.ganador && g.ganador===g.eq1 ? 'selected' : '';
-      const gan2sel  = g.ganador && g.ganador===g.eq2 ? 'selected' : '';
-      const grpOpts  = ['R32','R16','QF','SF','3ER','FINAL'].map(r =>
+      const grp     = g.ronda || g.grupo || '';
+      const grpOpts = ['R32','R16','QF','SF','3ER','FINAL'].map(r =>
         `<option value="${r}" ${r===grp?'selected':''}>${r}</option>`).join('');
       return `
       <div style="background:white;border:1.5px solid #e0f2fe;border-radius:10px;padding:9px 11px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
           <span style="font-size:11px;font-weight:800;color:#0369a1">JGO ${g.jgo} &nbsp;·&nbsp; ${g.fecha||''} ${g.hora||''}</span>
-          <div style="display:flex;gap:5px;align-items:center">
-            <select id="ge-grp-${g.jgo}"
-              style="border:1.5px solid #c4b5fd;border-radius:7px;padding:3px 5px;font-size:10px;font-weight:800;outline:none;background:#faf5ff;color:#6d28d9;cursor:pointer">
-              ${grpOpts}
-            </select>
-            <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;background:${estColor};color:${estTxt}">${est}</span>
-          </div>
+          <select id="ge-grp-${g.jgo}"
+            style="border:1.5px solid #c4b5fd;border-radius:7px;padding:3px 7px;font-size:10px;font-weight:800;outline:none;background:#faf5ff;color:#6d28d9;cursor:pointer">
+            ${grpOpts}
+          </select>
         </div>
-        <div style="display:flex;gap:5px;margin-bottom:5px;align-items:center">
+        <div style="display:flex;gap:5px;align-items:center">
           <input id="ge-eq1-${g.jgo}" value="${(g.eq1||'').replace(/"/g,'&quot;')}" placeholder="Equipo 1"
+            onclick="this.select()" onfocus="this.select()"
             style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 7px;font-size:12px;font-weight:600;outline:none;min-width:0">
           <span style="font-size:10px;color:#94a3b8;font-weight:700;flex-shrink:0">vs</span>
           <input id="ge-eq2-${g.jgo}" value="${(g.eq2||'').replace(/"/g,'&quot;')}" placeholder="Equipo 2"
+            onclick="this.select()" onfocus="this.select()"
             style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 7px;font-size:12px;font-weight:600;outline:none;min-width:0">
-        </div>
-        <div style="display:flex;gap:5px;align-items:center">
-          <input id="ge-gol1-${g.jgo}" value="${g.gol1||''}" placeholder="G1" type="number" min="0"
-            style="width:46px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 4px;font-size:12px;font-weight:700;outline:none;text-align:center;flex-shrink:0">
-          <span style="font-size:10px;color:#94a3b8;flex-shrink:0">-</span>
-          <input id="ge-gol2-${g.jgo}" value="${g.gol2||''}" placeholder="G2" type="number" min="0"
-            style="width:46px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 4px;font-size:12px;font-weight:700;outline:none;text-align:center;flex-shrink:0">
-          <select id="ge-gan-${g.jgo}"
-            style="flex:1;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 6px;font-size:11px;font-weight:700;outline:none;background:white;min-width:0">
-            <option value="">— Ganador —</option>
-            <option value="__eq1__" ${gan1sel}>Gana EQ1</option>
-            <option value="__eq2__" ${gan2sel}>Gana EQ2</option>
-          </select>
-          <select id="ge-est-${g.jgo}"
-            style="width:72px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 4px;font-size:11px;font-weight:700;outline:none;background:white;flex-shrink:0">
-            <option value="PROG" ${est==='PROG'?'selected':''}>PROG</option>
-            <option value="LIVE" ${est==='LIVE'?'selected':''}>LIVE</option>
-            <option value="FINAL" ${est==='FINAL'?'selected':''}>FINAL</option>
-          </select>
         </div>
       </div>`;
     }).join('');
@@ -5150,19 +5125,11 @@ async function saveAllGames() {
   if (msg)    msg.style.display = 'none';
   let ok=0, errors=[];
   for (const jgo of _gameEditorJgos) {
-    const eq1    = document.getElementById(`ge-eq1-${jgo}`)?.value.trim() ?? '';
-    const eq2    = document.getElementById(`ge-eq2-${jgo}`)?.value.trim() ?? '';
-    const gol1   = document.getElementById(`ge-gol1-${jgo}`)?.value.trim() ?? '';
-    const gol2   = document.getElementById(`ge-gol2-${jgo}`)?.value.trim() ?? '';
-    const ganSel = document.getElementById(`ge-gan-${jgo}`)?.value ?? '';
-    const estado = document.getElementById(`ge-est-${jgo}`)?.value ?? 'PROG';
-    const grupo  = document.getElementById(`ge-grp-${jgo}`)?.value ?? '';
-    let ganador  = ganSel==='__eq1__' ? eq1 : ganSel==='__eq2__' ? eq2 : '';
-    const body   = { jgo, eq1, eq2, estado };
-    if (gol1 !== '') body.gol1 = gol1;
-    if (gol2 !== '') body.gol2 = gol2;
-    if (ganador)     body.ganador = ganador;
-    if (grupo)       body.grupo = grupo;
+    const eq1   = document.getElementById(`ge-eq1-${jgo}`)?.value.trim() ?? '';
+    const eq2   = document.getElementById(`ge-eq2-${jgo}`)?.value.trim() ?? '';
+    const grupo = document.getElementById(`ge-grp-${jgo}`)?.value ?? '';
+    const body  = { jgo, eq1, eq2 };
+    if (grupo) body.grupo = grupo;
     try {
       await api('POST', '/api/admin/set-game-result', body);
       ok++;
