@@ -3868,9 +3868,7 @@ async def admin_db_dump(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
 
-    import sqlite3 as _sqlite3
     conn = _db.get_conn()
-    conn.row_factory = _sqlite3.Row
 
     # Horarios
     horarios = [dict(r) for r in conn.execute(
@@ -3879,13 +3877,17 @@ async def admin_db_dump(ql_admin: str = Cookie(default="")):
 
     # Jugadores
     jugadores = [dict(r) for r in conn.execute(
-        "SELECT nombre, celular, email, created_at FROM jugadores ORDER BY created_at"
+        "SELECT id, nombre, whatsapp, email, fecha_reg FROM jugadores ORDER BY id"
     ).fetchall()]
 
-    # Picks por jugador
-    picks_raw = conn.execute(
-        "SELECT celular, COUNT(*) as total, SUM(CASE WHEN ganador IS NOT NULL AND ganador != '' THEN 1 ELSE 0 END) as con_ganador FROM picks GROUP BY celular"
-    ).fetchall()
+    # Picks por jugador (join con jugadores para nombre)
+    picks_raw = conn.execute("""
+        SELECT j.nombre, j.whatsapp, COUNT(*) as total,
+               SUM(CASE WHEN p.ganador IS NOT NULL AND p.ganador != '' THEN 1 ELSE 0 END) as con_ganador
+        FROM picks p
+        JOIN jugadores j ON j.id = p.jugador_id
+        GROUP BY p.jugador_id
+    """).fetchall()
     picks_summary = [dict(r) for r in picks_raw]
 
     # Config
