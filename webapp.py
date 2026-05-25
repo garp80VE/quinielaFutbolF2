@@ -2016,39 +2016,52 @@ async def auth_register(body: RegisterBody, response: Response):
         raise HTTPException(409, "Este número ya está registrado")
     if body.email and find_player(body.email.strip().lower()):
         raise HTTPException(409, "Este correo ya está registrado")
-    tab = generate_tab_name(body.nombre)
-    create_player_tab(tab)
+    tab      = generate_tab_name(body.nombre)
+    fecha_reg = datetime.now().strftime("%Y-%m-%d %H:%M")
+    email_clean = body.email.strip().lower() if body.email else ""
 
-    ws   = state["sh"].worksheet("JUGADORES")
-    rows = ws.get_all_values()
-    header_idx, headers = _jugadores_headers(rows)
-    next_row = len(rows) + 1
-
-    # Construir fila respetando el orden de columnas del sheet existente
-    def col(name, *aliases):
-        for n in (name, *aliases):
-            if n in headers:
-                return headers.index(n)
-        return -1
-
-    num_cols = len(headers) if headers else 6
-    nueva_fila = [""] * num_cols
-
-    def set_col(val, *names):
-        idx = col(*names)
-        if 0 <= idx < num_cols:
-            nueva_fila[idx] = val
-
-    set_col(str(len(rows) - header_idx), "#")
-    set_col(body.email.strip().lower() if body.email else "", "EMAIL")
-    set_col(body.nombre.strip(),        "NOMBRE")
-    set_col(phone_norm,                 "WHATSAPP", "TELEFONO")
-    set_col(datetime.now().strftime("%Y-%m-%d %H:%M"), "FECHA REG.", "FECHA_REGISTRO")
-    set_col(tab,                        "TAB SHEET", "TAB_NOMBRE", "TAB_SHEET")
-
-    last_col_letter = chr(ord("A") + num_cols - 1)
-    ws.update([nueva_fila], f"A{next_row}:{last_col_letter}{next_row}")
+    # ── 1. SQLite (primario — siempre) ───────────────────────────────────────
+    _db.db_register_player(email_clean, body.nombre.strip(), phone_norm, fecha_reg, tab)
+    _db.db_init_picks_for_player(
+        _db.db_find_player(email=email_clean, phone=phone_norm)["id"]
+    )
+    _invalidate_players()
     _cache["players"].clear()
+
+    # ── 2. Sheets (async best-effort) ────────────────────────────────────────
+    def _sheets_register():
+        try:
+            sh = state.get("sh")
+            if not sh:
+                return
+            create_player_tab(tab)
+            ws   = sh.worksheet("JUGADORES")
+            rows = ws.get_all_values()
+            header_idx, headers = _jugadores_headers(rows)
+            next_row = len(rows) + 1
+            def col(*names):
+                for n in names:
+                    if n in headers:
+                        return headers.index(n)
+                return -1
+            num_cols  = len(headers) if headers else 6
+            nueva_fila = [""] * num_cols
+            def set_col(val, *names):
+                idx = col(*names)
+                if 0 <= idx < num_cols:
+                    nueva_fila[idx] = val
+            set_col(str(len(rows) - header_idx), "#")
+            set_col(email_clean,       "EMAIL")
+            set_col(body.nombre.strip(), "NOMBRE")
+            set_col(phone_norm,        "WHATSAPP", "TELEFONO")
+            set_col(fecha_reg,         "FECHA REG.", "FECHA_REGISTRO")
+            set_col(tab,               "TAB SHEET", "TAB_NOMBRE", "TAB_SHEET")
+            last_col = chr(ord("A") + num_cols - 1)
+            with _sheets_lock:
+                ws.update([nueva_fila], f"A{next_row}:{last_col}{next_row}")
+        except Exception as _e:
+            print(f"[register-sheets] Error (no bloqueante): {_e}")
+    threading.Thread(target=_sheets_register, daemon=True).start()
 
     # ── Auto-agregar al grupo de WhatsApp si ya existe ────────────────────────
     def _wa_add_new():
