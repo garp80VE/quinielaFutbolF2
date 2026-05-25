@@ -706,7 +706,10 @@
                 🔄 Cargar
               </button>
             </div>
-            <div id="game-editor-list" style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto"></div>
+            <div id="game-editor-list" style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto"></div>
+            <button id="btn-save-all-games" onclick="saveAllGames()" style="display:none;width:100%;margin-top:10px;background:linear-gradient(135deg,#0284c7,#0ea5e9);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+              💾 Guardar todo
+            </button>
             <div id="game-editor-msg" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
           </div>
 
@@ -5059,100 +5062,110 @@ async function adminSyncRealResults() {
 }
 
 // ── Editor de equipos / resultados (set-game-result) ─────────────────────────
+let _gameEditorJgos = [];   // jgos cargados actualmente
+
 async function loadGameEditor() {
-  const ronda   = document.getElementById('game-edit-ronda').value;
-  const list    = document.getElementById('game-editor-list');
-  const msg     = document.getElementById('game-editor-msg');
+  const ronda  = document.getElementById('game-edit-ronda').value;
+  const list   = document.getElementById('game-editor-list');
+  const msg    = document.getElementById('game-editor-msg');
+  const btnAll = document.getElementById('btn-save-all-games');
   list.innerHTML = '<p style="font-size:12px;color:#64748b;text-align:center;padding:8px">Cargando…</p>';
-  if (msg) msg.style.display = 'none';
+  if (msg)    msg.style.display = 'none';
+  if (btnAll) btnAll.style.display = 'none';
+  _gameEditorJgos = [];
   try {
     const { games } = await api('GET', '/api/games');
-    const filtered  = (games || []).filter(g => (g.ronda || g.grupo) === ronda);
+    const filtered  = (games || []).filter(g => (g.ronda || g.grupo) === ronda)
+                                   .sort((a,b) => Number(a.jgo)-Number(b.jgo));
     if (!filtered.length) {
       list.innerHTML = '<p style="font-size:12px;color:#64748b;text-align:center;padding:8px">Sin partidos en esta ronda.</p>';
       return;
     }
-    list.innerHTML = filtered.map(g => `
-      <div style="background:white;border:1.5px solid #e0f2fe;border-radius:10px;padding:10px 12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="font-size:11px;font-weight:800;color:#0369a1">JGO ${g.jgo} · ${g.fecha||''} ${g.hora||''}</span>
-          <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${g.estado==='FINAL'?'#dcfce7':'#f1f5f9'};color:${g.estado==='FINAL'?'#166534':'#475569'}">${g.estado||'PROG'}</span>
+    _gameEditorJgos = filtered.map(g => String(g.jgo));
+    list.innerHTML = filtered.map(g => {
+      const est = g.estado || 'PROG';
+      const estColor = est==='FINAL' ? '#dcfce7' : est==='LIVE' ? '#fef9c3' : '#f1f5f9';
+      const estTxt   = est==='FINAL' ? '#166534' : est==='LIVE' ? '#854d0e' : '#475569';
+      const gan1sel  = g.ganador && g.ganador===g.eq1 ? 'selected' : '';
+      const gan2sel  = g.ganador && g.ganador===g.eq2 ? 'selected' : '';
+      return `
+      <div style="background:white;border:1.5px solid #e0f2fe;border-radius:10px;padding:9px 11px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
+          <span style="font-size:11px;font-weight:800;color:#0369a1">JGO ${g.jgo} &nbsp;·&nbsp; ${g.fecha||''} ${g.hora||''}</span>
+          <span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;background:${estColor};color:${estTxt}">${est}</span>
         </div>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
-          <input id="ge-eq1-${g.jgo}" value="${g.eq1||''}" placeholder="Equipo 1"
-            style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 8px;font-size:12px;font-weight:600;outline:none">
-          <span style="align-self:center;font-size:11px;color:#94a3b8;font-weight:700">vs</span>
-          <input id="ge-eq2-${g.jgo}" value="${g.eq2||''}" placeholder="Equipo 2"
-            style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 8px;font-size:12px;font-weight:600;outline:none">
+        <div style="display:flex;gap:5px;margin-bottom:5px;align-items:center">
+          <input id="ge-eq1-${g.jgo}" value="${(g.eq1||'').replace(/"/g,'&quot;')}" placeholder="Equipo 1"
+            style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 7px;font-size:12px;font-weight:600;outline:none;min-width:0">
+          <span style="font-size:10px;color:#94a3b8;font-weight:700;flex-shrink:0">vs</span>
+          <input id="ge-eq2-${g.jgo}" value="${(g.eq2||'').replace(/"/g,'&quot;')}" placeholder="Equipo 2"
+            style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 7px;font-size:12px;font-weight:600;outline:none;min-width:0">
         </div>
-        <div style="display:flex;gap:6px;margin-bottom:6px">
+        <div style="display:flex;gap:5px;align-items:center">
           <input id="ge-gol1-${g.jgo}" value="${g.gol1||''}" placeholder="G1" type="number" min="0"
-            style="width:52px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 7px;font-size:12px;font-weight:700;outline:none;text-align:center">
-          <span style="align-self:center;font-size:11px;color:#94a3b8">-</span>
+            style="width:46px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 4px;font-size:12px;font-weight:700;outline:none;text-align:center;flex-shrink:0">
+          <span style="font-size:10px;color:#94a3b8;flex-shrink:0">-</span>
           <input id="ge-gol2-${g.jgo}" value="${g.gol2||''}" placeholder="G2" type="number" min="0"
-            style="width:52px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 7px;font-size:12px;font-weight:700;outline:none;text-align:center">
+            style="width:46px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 4px;font-size:12px;font-weight:700;outline:none;text-align:center;flex-shrink:0">
           <select id="ge-gan-${g.jgo}"
-            style="flex:1;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 8px;font-size:11px;font-weight:700;outline:none;background:white">
+            style="flex:1;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 6px;font-size:11px;font-weight:700;outline:none;background:white;min-width:0">
             <option value="">— Ganador —</option>
-            <option value="__eq1__" ${g.ganador && g.ganador===g.eq1?'selected':''}>Gana EQ1</option>
-            <option value="__eq2__" ${g.ganador && g.ganador===g.eq2?'selected':''}>Gana EQ2</option>
+            <option value="__eq1__" ${gan1sel}>Gana EQ1</option>
+            <option value="__eq2__" ${gan2sel}>Gana EQ2</option>
           </select>
           <select id="ge-est-${g.jgo}"
-            style="width:80px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 8px;font-size:11px;font-weight:700;outline:none;background:white">
-            <option value="PROG" ${(g.estado||'PROG')==='PROG'?'selected':''}>PROG</option>
-            <option value="LIVE" ${g.estado==='LIVE'?'selected':''}>LIVE</option>
-            <option value="FINAL" ${g.estado==='FINAL'?'selected':''}>FINAL</option>
+            style="width:72px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 4px;font-size:11px;font-weight:700;outline:none;background:white;flex-shrink:0">
+            <option value="PROG" ${est==='PROG'?'selected':''}>PROG</option>
+            <option value="LIVE" ${est==='LIVE'?'selected':''}>LIVE</option>
+            <option value="FINAL" ${est==='FINAL'?'selected':''}>FINAL</option>
           </select>
         </div>
-        <button onclick="saveGameEdit('${g.jgo}')"
-          style="width:100%;background:linear-gradient(135deg,#0284c7,#0ea5e9);color:white;border:none;border-radius:8px;padding:7px;font-size:12px;font-weight:800;cursor:pointer">
-          💾 Guardar JGO ${g.jgo}
-        </button>
-      </div>`).join('');
+      </div>`;
+    }).join('');
+    if (btnAll) btnAll.style.display = 'block';
   } catch(e) {
     list.innerHTML = `<p style="font-size:12px;color:#dc2626;text-align:center;padding:8px">❌ ${e.message}</p>`;
   }
 }
 
-async function saveGameEdit(jgo) {
-  const msg  = document.getElementById('game-editor-msg');
-  const eq1  = document.getElementById(`ge-eq1-${jgo}`)?.value.trim();
-  const eq2  = document.getElementById(`ge-eq2-${jgo}`)?.value.trim();
-  const gol1 = document.getElementById(`ge-gol1-${jgo}`)?.value.trim();
-  const gol2 = document.getElementById(`ge-gol2-${jgo}`)?.value.trim();
-  const ganSel = document.getElementById(`ge-gan-${jgo}`)?.value;
-  const estado = document.getElementById(`ge-est-${jgo}`)?.value || 'PROG';
-
-  // Resolver ganador: "__eq1__" → nombre real del eq1
-  let ganador = '';
-  if (ganSel === '__eq1__') ganador = eq1;
-  else if (ganSel === '__eq2__') ganador = eq2;
-
-  const body = { jgo };
-  if (eq1  !== undefined) body.eq1  = eq1;
-  if (eq2  !== undefined) body.eq2  = eq2;
-  if (gol1 !== '')        body.gol1 = gol1;
-  if (gol2 !== '')        body.gol2 = gol2;
-  if (ganador)            body.ganador = ganador;
-  body.estado = estado;
-
-  try {
-    await api('POST', '/api/admin/set-game-result', body);
-    if (msg) {
-      msg.style.display  = 'block';
-      msg.style.background = '#f0fdf4';
-      msg.style.color    = '#166534';
-      msg.textContent    = `✅ JGO ${jgo} guardado`;
-    }
-    showToast(`✅ JGO ${jgo} actualizado`);
-  } catch(e) {
-    if (msg) {
-      msg.style.display  = 'block';
-      msg.style.background = '#fef2f2';
-      msg.style.color    = '#991b1b';
-      msg.textContent    = `❌ ${e.message}`;
+async function saveAllGames() {
+  const msg    = document.getElementById('game-editor-msg');
+  const btnAll = document.getElementById('btn-save-all-games');
+  if (!_gameEditorJgos.length) return;
+  if (btnAll) { btnAll.disabled=true; btnAll.textContent='⏳ Guardando…'; }
+  if (msg)    msg.style.display = 'none';
+  let ok=0, errors=[];
+  for (const jgo of _gameEditorJgos) {
+    const eq1    = document.getElementById(`ge-eq1-${jgo}`)?.value.trim() ?? '';
+    const eq2    = document.getElementById(`ge-eq2-${jgo}`)?.value.trim() ?? '';
+    const gol1   = document.getElementById(`ge-gol1-${jgo}`)?.value.trim() ?? '';
+    const gol2   = document.getElementById(`ge-gol2-${jgo}`)?.value.trim() ?? '';
+    const ganSel = document.getElementById(`ge-gan-${jgo}`)?.value ?? '';
+    const estado = document.getElementById(`ge-est-${jgo}`)?.value ?? 'PROG';
+    let ganador  = ganSel==='__eq1__' ? eq1 : ganSel==='__eq2__' ? eq2 : '';
+    const body   = { jgo, eq1, eq2, estado };
+    if (gol1 !== '') body.gol1 = gol1;
+    if (gol2 !== '') body.gol2 = gol2;
+    if (ganador)     body.ganador = ganador;
+    try {
+      await api('POST', '/api/admin/set-game-result', body);
+      ok++;
+    } catch(e) {
+      errors.push(`JGO ${jgo}: ${e.message}`);
     }
   }
+  if (btnAll) { btnAll.disabled=false; btnAll.textContent='💾 Guardar todo'; }
+  if (msg) {
+    msg.style.display = 'block';
+    if (errors.length) {
+      msg.style.background='#fef2f2'; msg.style.color='#991b1b';
+      msg.textContent = `⚠️ ${ok} guardados, ${errors.length} error(es): ${errors.join(' | ')}`;
+    } else {
+      msg.style.background='#f0fdf4'; msg.style.color='#166534';
+      msg.textContent = `✅ ${ok} partido(s) guardados correctamente`;
+    }
+  }
+  showToast(errors.length ? `⚠️ ${ok} ok, ${errors.length} errores` : `✅ ${ok} partidos guardados`);
 }
 
 async function adminResetTest() {
