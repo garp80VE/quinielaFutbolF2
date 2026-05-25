@@ -581,6 +581,17 @@
           </button>
           <div id="setup-all-result" style="display:none;margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;font-size:12px;color:#065f46;max-height:140px;overflow-y:auto"></div>
         </div>
+
+        <!-- Fix grupos WC2026 -->
+        <div style="background:#faf5ff;border:1px solid #d8b4fe;border-radius:12px;padding:12px">
+          <p style="font-size:11px;font-weight:700;color:#5b21b6;margin:0 0 4px">🗂️ Corregir rondas por número de JGO</p>
+          <p style="font-size:10px;color:#7c3aed;margin:0 0 8px">JGO 1-16→R32 · 17-24→R16 · 25-28→QF · 29-30→SF · 31→3ER · 32→FINAL</p>
+          <button onclick="adminFixGrupos()" id="btn-fix-grupos"
+            style="width:100%;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+            🔀 Aplicar rondas WC2026
+          </button>
+          <div id="fix-grupos-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
+        </div>
       </div><!-- /adm-body-horarios -->
     </div>
 
@@ -4941,6 +4952,32 @@ async function adminSimRange() {
     showToast('❌ '+e.message);
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🎲 Simular rango'; }
+  }
+}
+
+async function adminFixGrupos() {
+  const btn = document.getElementById('btn-fix-grupos');
+  const res = document.getElementById('fix-grupos-result');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Aplicando…'; }
+  if (res) res.style.display='none';
+  try {
+    const r = await api('POST', '/api/admin/fix-grupos-wc2026');
+    if (res) {
+      res.style.display='block';
+      res.style.background='#f0fdf4'; res.style.color='#065f46';
+      res.textContent = `✅ ${r.msg}`;
+    }
+    showToast(`✅ ${r.updated} partidos corregidos`);
+    // Refrescar vista DB si está abierta
+    if (_dbDump) loadDbView();
+  } catch(e) {
+    if (res) {
+      res.style.display='block';
+      res.style.background='#fef2f2'; res.style.color='#991b1b';
+      res.textContent = `❌ ${e.message}`;
+    }
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='🔀 Aplicar rondas WC2026'; }
   }
 }
 

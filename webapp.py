@@ -4140,6 +4140,39 @@ async def admin_propagate_bracket(ql_admin: str = Cookie(default="")):
     return {"ok": True, "changes": changes}
 
 
+@app.post("/api/admin/fix-grupos-wc2026")
+async def admin_fix_grupos_wc2026(ql_admin: str = Cookie(default="")):
+    """
+    Corrige el campo 'grupo' (ronda) de los 32 partidos WC2026
+    según el número de JGO, ignorando lo que ESPN haya devuelto:
+      JGO 1-16  → R32
+      JGO 17-24 → R16
+      JGO 25-28 → QF
+      JGO 29-30 → SF
+      JGO 31    → 3ER
+      JGO 32    → FINAL
+    """
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+
+    mapping = []
+    for jgo in range(1, 17):   mapping.append((str(jgo), "R32"))
+    for jgo in range(17, 25):  mapping.append((str(jgo), "R16"))
+    for jgo in range(25, 29):  mapping.append((str(jgo), "QF"))
+    for jgo in range(29, 31):  mapping.append((str(jgo), "SF"))
+    mapping.append(("31", "3ER"))
+    mapping.append(("32", "FINAL"))
+
+    conn = _db.get_conn()
+    updated = 0
+    with conn:
+        for jgo, grupo in mapping:
+            cur = conn.execute("UPDATE horarios SET grupo=? WHERE jgo=?", (grupo, jgo))
+            updated += cur.rowcount
+    conn.close()
+    _invalidate_games()
+    return {"ok": True, "updated": updated, "msg": f"{updated} partidos actualizados con ronda correcta"}
+
+
 @app.post("/api/admin/fix-bracket-wc2026")
 async def admin_fix_bracket_wc2026(ql_admin: str = Cookie(default="")):
     """
