@@ -3868,8 +3868,9 @@ async def admin_db_dump(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
 
+    import sqlite3 as _sqlite3
     conn = _db.get_conn()
-    conn.row_factory = _db.sqlite3.Row
+    conn.row_factory = _sqlite3.Row
 
     # Horarios
     horarios = [dict(r) for r in conn.execute(
