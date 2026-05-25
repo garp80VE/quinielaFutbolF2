@@ -4125,23 +4125,6 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
     return {"ok": not errors, "log": log, "errors": errors}
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 — Backend")
-    parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
-                        help="Puerto HTTP (default: $PORT o 8080)")
-    parser.add_argument("--sheet", type=str, default="",
-                        help="ID del Google Sheet (opcional)")
-    parser.add_argument("--creds", type=str, default="credentials.json",
-                        help="Ruta al credentials.json")
-    args = parser.parse_args()
-
-    if args.sheet:
-        os.environ["QL_SHEET"] = args.sheet
-    if args.creds:
-        os.environ["QL_CREDS"] = args.creds
-
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
-
 
 @app.post("/api/admin/reset")
 async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")):
@@ -4301,3 +4284,21 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
         "msg": f"Reseteados {cleared} partido(s) desde {ronda_desde} "
                f"({', '.join(rondas_a_limpiar)}) y picks eliminados."
     }
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 — Backend")
+    parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
+                        help="Puerto HTTP (default: $PORT o 8080)")
+    parser.add_argument("--sheet", type=str, default="",
+                        help="ID del Google Sheet (opcional)")
+    parser.add_argument("--creds", type=str, default="credentials.json",
+                        help="Ruta al credentials.json")
+    args = parser.parse_args()
+
+    if args.sheet:
+        os.environ["QL_SHEET"] = args.sheet
+    if args.creds:
+        os.environ["QL_CREDS"] = args.creds
+
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
+
