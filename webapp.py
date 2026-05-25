@@ -3883,7 +3883,7 @@ async def admin_db_dump(ql_admin: str = Cookie(default="")):
     # Picks por jugador (join con jugadores para nombre)
     picks_raw = conn.execute("""
         SELECT j.nombre, j.whatsapp, COUNT(*) as total,
-               SUM(CASE WHEN p.ganador IS NOT NULL AND p.ganador != '' THEN 1 ELSE 0 END) as con_ganador
+               SUM(CASE WHEN p.gan_pick IS NOT NULL AND p.gan_pick != '' THEN 1 ELSE 0 END) as con_ganador
         FROM picks p
         JOIN jugadores j ON j.id = p.jugador_id
         GROUP BY p.jugador_id
