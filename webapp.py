@@ -1692,6 +1692,9 @@ async def lifespan(app: FastAPI):
     yield
 
 
+app = FastAPI(lifespan=lifespan)
+
+
 class NoCacheAPIMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: _Req, call_next):
         response = await call_next(request)
