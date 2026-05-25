@@ -4078,8 +4078,23 @@ async def admin_setup(ql_admin: str = Cookie(default="")):
                 _db.db_save_config({"TOTAL_JUEGOS_F2": str(len(juegos))})
                 state["cfg"] = _db.db_get_config()
 
+            # Aplicar mapeo de rondas por JGO (WC2026: JGO 1-16=R32, 17-24=R16, etc.)
+            _grupo_map = (
+                [(str(j), "R32")   for j in range(1,  17)] +
+                [(str(j), "R16")   for j in range(17, 25)] +
+                [(str(j), "QF")    for j in range(25, 29)] +
+                [(str(j), "SF")    for j in range(29, 31)] +
+                [("31",   "3ER"), ("32", "FINAL")]
+            )
+            conn_fix = _db.get_conn()
+            with conn_fix:
+                for jgo_f, grp_f in _grupo_map:
+                    conn_fix.execute("UPDATE horarios SET grupo=? WHERE jgo=?", (grp_f, jgo_f))
+            conn_fix.close()
+            print("[admin-setup-f2] Rondas WC2026 aplicadas automáticamente")
+
             _invalidate_games()
-            state["_setup_status"] = f"done — {len(juegos)} juegos cargados"
+            state["_setup_status"] = f"done — {len(juegos)} juegos cargados con rondas asignadas"
 
         except Exception as e:
             import traceback
