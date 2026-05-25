@@ -551,11 +551,16 @@ def _propagate_bracket() -> list:
     for k in ronda_games:
         ronda_games[k].sort(key=lambda g: int(g["jgo"]) if g["jgo"].isdigit() else 0)
 
-    # DO NOT MODIFY -- mapa verificado por Gio
+    # Mapas verificados por Gio contra excel template WC2026
+    # R32: slot secuencial N → slot real del juego R32 (1-16)
     _WC2026_R32 = {
-        1:3, 2:6, 3:1, 4:4, 5:12, 6:11, 7:10, 8:9,
-        9:2, 10:5, 11:7, 12:8, 13:15, 14:14, 15:13, 16:16
+        1:1,  2:4,  3:3,  4:6,
+        5:2,  6:5,  7:7,  8:8,
+        9:12, 10:11, 11:10, 12:9,
+        13:15, 14:14, 15:13, 16:16
     }
+    # R16: slot secuencial N → slot real del juego R16 (1-8)
+    _WC2026_R16 = {1:1, 2:2, 3:5, 4:6, 5:3, 6:4, 7:7, 8:8}
     _use_wc2026 = (
         "fifa"  in cfg.get("ESPN_LEAGUE", "").lower() or
         "world" in cfg.get("ESPN_LEAGUE", "").lower() or
@@ -572,6 +577,8 @@ def _propagate_bracket() -> list:
         nth = ref["nth"]
         if ref["ronda"] == "R32" and _use_wc2026 and len(lst) == 16:
             nth = _WC2026_R32.get(nth, nth)
+        elif ref["ronda"] == "R16" and _use_wc2026 and len(lst) == 8:
+            nth = _WC2026_R16.get(nth, nth)
         idx = nth - 1
         if idx < 0 or idx >= len(lst):
             return name
