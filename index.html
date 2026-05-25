@@ -10,7 +10,7 @@
   <meta name="theme-color" content="#002868">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-192.png">
-  <title>Quiniela {{TORNEO}} · F2</title>
+  <title>Quiniela {{TORNEO}}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     /* ── WFC 2026 Colors: Azul(USA) · Rojo(CAN) · Verde(MEX) · Dorado(Trofeo) ── */
@@ -591,6 +591,28 @@
             🔀 Aplicar rondas WC2026
           </button>
           <div id="fix-grupos-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
+        </div>
+
+        <!-- Fix bracket WC2026 (placeholders) -->
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px">
+          <p style="font-size:11px;font-weight:700;color:#9a3412;margin:0 0 4px">🔀 Resetear cruces de bracket a placeholders</p>
+          <p style="font-size:10px;color:#c2410c;margin:0 0 8px">Necesario antes de propagar. Pone "Round of X N Winner" en R16→FINAL.</p>
+          <button onclick="adminFixBracketWC2026()" id="btn-fix-bracket-wc2026"
+            style="width:100%;background:linear-gradient(135deg,#ea580c,#c2410c);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+            🗂️ Resetear placeholders bracket
+          </button>
+          <div id="fix-bracket-wc2026-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
+        </div>
+
+        <!-- Propagar bracket -->
+        <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:12px">
+          <p style="font-size:11px;font-weight:700;color:#0369a1;margin:0 0 4px">🔗 Propagar resultados al bracket</p>
+          <p style="font-size:10px;color:#0284c7;margin:0 0 8px">Resuelve los placeholders con los ganadores actuales (usa mapas WC2026 corregidos).</p>
+          <button onclick="adminPropagateBracket()" id="btn-propagate"
+            style="width:100%;background:linear-gradient(135deg,#0284c7,#0369a1);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+            🔗 Propagar bracket al sheet
+          </button>
+          <div id="propagate-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
         </div>
       </div><!-- /adm-body-horarios -->
     </div>
