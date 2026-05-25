@@ -687,6 +687,29 @@
           </button>
           <div id="sync-real-result" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 12px;font-size:12px;color:#166534;max-height:160px;overflow-y:auto"></div>
 
+          <!-- ── Editor de equipos (set-game-result) ── -->
+          <div style="background:#f0f9ff;border:1.5px solid #7dd3fc;border-radius:12px;padding:14px;margin-bottom:12px">
+            <p style="font-size:13px;font-weight:800;color:#0369a1;margin:0 0 4px">✏️ Editar equipos / resultados</p>
+            <p style="font-size:11px;color:#0284c7;margin:0 0 10px">Modifica directamente en SQLite. Usa para pruebas sin tocar Sheets.</p>
+            <div style="display:flex;gap:8px;margin-bottom:10px">
+              <select id="game-edit-ronda" onchange="loadGameEditor()"
+                style="flex:1;border:1.5px solid #bae6fd;border-radius:8px;padding:7px 10px;font-size:13px;font-weight:700;outline:none;background:white">
+                <option value="R32">R32</option>
+                <option value="R16">R16</option>
+                <option value="QF">QF</option>
+                <option value="SF">SF</option>
+                <option value="3ER">3er Lugar</option>
+                <option value="FINAL">Final</option>
+              </select>
+              <button onclick="loadGameEditor()"
+                style="background:#0ea5e9;color:white;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">
+                🔄 Cargar
+              </button>
+            </div>
+            <div id="game-editor-list" style="display:flex;flex-direction:column;gap:8px;max-height:340px;overflow-y:auto"></div>
+            <div id="game-editor-msg" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
+          </div>
+
           <!-- ── Reset de prueba ── -->
           <div style="background:#fff1f2;border:1.5px solid #fda4af;border-radius:12px;padding:14px">
             <p style="font-size:13px;font-weight:800;color:#be123c;margin:0 0 6px">🔄 Reiniciar prueba desde cero</p>
@@ -5032,6 +5055,103 @@ async function adminSyncRealResults() {
     if (res) { res.style.display='block'; res.innerHTML='❌ ' + e.message; }
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🌐 Sincronizar resultados reales del Mundial'; }
+  }
+}
+
+// ── Editor de equipos / resultados (set-game-result) ─────────────────────────
+async function loadGameEditor() {
+  const ronda   = document.getElementById('game-edit-ronda').value;
+  const list    = document.getElementById('game-editor-list');
+  const msg     = document.getElementById('game-editor-msg');
+  list.innerHTML = '<p style="font-size:12px;color:#64748b;text-align:center;padding:8px">Cargando…</p>';
+  if (msg) msg.style.display = 'none';
+  try {
+    const { games } = await api('GET', '/api/games');
+    const filtered  = (games || []).filter(g => (g.ronda || g.grupo) === ronda);
+    if (!filtered.length) {
+      list.innerHTML = '<p style="font-size:12px;color:#64748b;text-align:center;padding:8px">Sin partidos en esta ronda.</p>';
+      return;
+    }
+    list.innerHTML = filtered.map(g => `
+      <div style="background:white;border:1.5px solid #e0f2fe;border-radius:10px;padding:10px 12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:11px;font-weight:800;color:#0369a1">JGO ${g.jgo} · ${g.fecha||''} ${g.hora||''}</span>
+          <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;background:${g.estado==='FINAL'?'#dcfce7':'#f1f5f9'};color:${g.estado==='FINAL'?'#166534':'#475569'}">${g.estado||'PROG'}</span>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input id="ge-eq1-${g.jgo}" value="${g.eq1||''}" placeholder="Equipo 1"
+            style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 8px;font-size:12px;font-weight:600;outline:none">
+          <span style="align-self:center;font-size:11px;color:#94a3b8;font-weight:700">vs</span>
+          <input id="ge-eq2-${g.jgo}" value="${g.eq2||''}" placeholder="Equipo 2"
+            style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 8px;font-size:12px;font-weight:600;outline:none">
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input id="ge-gol1-${g.jgo}" value="${g.gol1||''}" placeholder="G1" type="number" min="0"
+            style="width:52px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 7px;font-size:12px;font-weight:700;outline:none;text-align:center">
+          <span style="align-self:center;font-size:11px;color:#94a3b8">-</span>
+          <input id="ge-gol2-${g.jgo}" value="${g.gol2||''}" placeholder="G2" type="number" min="0"
+            style="width:52px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 7px;font-size:12px;font-weight:700;outline:none;text-align:center">
+          <select id="ge-gan-${g.jgo}"
+            style="flex:1;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 8px;font-size:11px;font-weight:700;outline:none;background:white">
+            <option value="">— Ganador —</option>
+            <option value="__eq1__" ${g.ganador && g.ganador===g.eq1?'selected':''}>Gana EQ1</option>
+            <option value="__eq2__" ${g.ganador && g.ganador===g.eq2?'selected':''}>Gana EQ2</option>
+          </select>
+          <select id="ge-est-${g.jgo}"
+            style="width:80px;border:1.5px solid #e2e8f0;border-radius:7px;padding:5px 8px;font-size:11px;font-weight:700;outline:none;background:white">
+            <option value="PROG" ${(g.estado||'PROG')==='PROG'?'selected':''}>PROG</option>
+            <option value="LIVE" ${g.estado==='LIVE'?'selected':''}>LIVE</option>
+            <option value="FINAL" ${g.estado==='FINAL'?'selected':''}>FINAL</option>
+          </select>
+        </div>
+        <button onclick="saveGameEdit('${g.jgo}')"
+          style="width:100%;background:linear-gradient(135deg,#0284c7,#0ea5e9);color:white;border:none;border-radius:8px;padding:7px;font-size:12px;font-weight:800;cursor:pointer">
+          💾 Guardar JGO ${g.jgo}
+        </button>
+      </div>`).join('');
+  } catch(e) {
+    list.innerHTML = `<p style="font-size:12px;color:#dc2626;text-align:center;padding:8px">❌ ${e.message}</p>`;
+  }
+}
+
+async function saveGameEdit(jgo) {
+  const msg  = document.getElementById('game-editor-msg');
+  const eq1  = document.getElementById(`ge-eq1-${jgo}`)?.value.trim();
+  const eq2  = document.getElementById(`ge-eq2-${jgo}`)?.value.trim();
+  const gol1 = document.getElementById(`ge-gol1-${jgo}`)?.value.trim();
+  const gol2 = document.getElementById(`ge-gol2-${jgo}`)?.value.trim();
+  const ganSel = document.getElementById(`ge-gan-${jgo}`)?.value;
+  const estado = document.getElementById(`ge-est-${jgo}`)?.value || 'PROG';
+
+  // Resolver ganador: "__eq1__" → nombre real del eq1
+  let ganador = '';
+  if (ganSel === '__eq1__') ganador = eq1;
+  else if (ganSel === '__eq2__') ganador = eq2;
+
+  const body = { jgo };
+  if (eq1  !== undefined) body.eq1  = eq1;
+  if (eq2  !== undefined) body.eq2  = eq2;
+  if (gol1 !== '')        body.gol1 = gol1;
+  if (gol2 !== '')        body.gol2 = gol2;
+  if (ganador)            body.ganador = ganador;
+  body.estado = estado;
+
+  try {
+    await api('POST', '/api/admin/set-game-result', body);
+    if (msg) {
+      msg.style.display  = 'block';
+      msg.style.background = '#f0fdf4';
+      msg.style.color    = '#166534';
+      msg.textContent    = `✅ JGO ${jgo} guardado`;
+    }
+    showToast(`✅ JGO ${jgo} actualizado`);
+  } catch(e) {
+    if (msg) {
+      msg.style.display  = 'block';
+      msg.style.background = '#fef2f2';
+      msg.style.color    = '#991b1b';
+      msg.textContent    = `❌ ${e.message}`;
+    }
   }
 }
 
