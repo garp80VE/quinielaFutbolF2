@@ -4123,3 +4123,21 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
         errors.append(f"Error recalculando standings: {e}")
 
     return {"ok": not errors, "log": log, "errors": errors}
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 — Backend")
+    parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
+                        help="Puerto HTTP (default: $PORT o 8080)")
+    parser.add_argument("--sheet", type=str, default="",
+                        help="ID del Google Sheet (opcional)")
+    parser.add_argument("--creds", type=str, default="credentials.json",
+                        help="Ruta al credentials.json")
+    args = parser.parse_args()
+
+    if args.sheet:
+        os.environ["QL_SHEET"] = args.sheet
+    if args.creds:
+        os.environ["QL_CREDS"] = args.creds
+
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
