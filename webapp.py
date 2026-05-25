@@ -33,6 +33,8 @@ import requests
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+_Req = Request
 from google.oauth2.service_account import Credentials
 from pydantic import BaseModel
 import db as _db
