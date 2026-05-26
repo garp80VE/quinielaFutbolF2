@@ -1109,22 +1109,19 @@ def _top3_push() -> str:
     except Exception:
         return ""
 
-def _check_reminders(filas, fila_inicio, cfg):
-    """Envía recordatorio 15 min y 10 min antes a jugadores que no apostaron."""
+def _check_reminders(games, cfg):
+    """Envía recordatorio 15/10/5/3/1 min antes a jugadores que no apostaron."""
     from datetime import datetime as _dt, timezone as _tz, timedelta as _tdt
     now_utc = _dt.now(_tz.utc)
-    games, _ = _get_games_cache()
 
-    for i, fila in enumerate(filas):
-        def cel(c, f=fila): return f[c-1].strip() if len(f) > c-1 else ""
-        espn_id = cel(col_idx("G"))
-        estado  = cel(col_idx("H"))
+    for game in games:
+        espn_id = str(game.get("espn_id", "") or "")
+        estado  = str(game.get("estado", "") or "")
         if not espn_id or (estado != "PROG" and estado != ""):
             continue
 
         # Buscar la fecha/hora del partido
-        game = next((g for g in games if g.get("espn_id","") == espn_id or
-                     g.get("jgo","") == cel(col_idx("A"))), None)
+        game = game
         if not game or not game.get("fecha") or not game.get("hora"):
             continue
         try:
@@ -1148,9 +1145,8 @@ def _check_reminders(filas, fila_inicio, cfg):
             continue
 
         # Detectar jugadores sin pick para este juego
-        jgo = cel(col_idx("A"))
-        row_num = int(jgo) + 3 if jgo.isdigit() else None
-        if not row_num:
+        jgo = str(game.get("jgo", ""))
+        if not jgo:
             continue
 
         sin_pick = []        # nombres
@@ -1250,6 +1246,11 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
                     result_map[p["TAB_NOMBRE"]] = []
 
     return result_map
+
+
+def _compute_probabilities():
+    """Placeholder — probabilidades no implementadas aún."""
+    return {}
 
 
 def _update_standings():
@@ -2110,26 +2111,19 @@ async def get_picks(email: str = Query(""), phone: str = Query("")):
     p = find_player_any(phone=phone, email=email)
     if not p:
         raise HTTPException(404, "Jugador no encontrado")
-    cfg     = state.get("cfg", {})
-    total_j = int(cfg.get("TOTAL_JUEGOS_F2", 32))
-    try:
-        with _sheets_lock:
-            ws    = _sheets_retry(lambda: state["sh"].worksheet(p["TAB_NOMBRE"]), base_delay=5)
-            filas = ws.get(f"A4:J{3 + total_j}")
-    except Exception as e:
-        if "429" in str(e):
-            raise HTTPException(503, "Servidor ocupado, intenta en unos segundos")
-        if "WorksheetNotFound" in type(e).__name__ or "WorksheetNotFound" in str(e):
-            return {"picks": {}}   # jugador sin tab todavía → picks vacíos
-        raise
+    raw = _db.db_get_picks(p["id"])
+    # Formato esperado por el frontend: {jgo: {eq1,gol1,gol2,eq2,ganador}}
+    games_map = {str(g["jgo"]): g for g in _db.db_get_horarios()}
     picks = {}
-    for row in filas:
-        def c(i): return row[i].strip() if len(row) > i else ""
-        if c(0):
-            picks[c(0)] = {
-                "eq1": c(5), "gol1": c(6), "gol2": c(7),
-                "eq2": c(8), "ganador": c(9)
-            }
+    for jgo, pk in raw.items():
+        gm = games_map.get(str(jgo), {})
+        picks[str(jgo)] = {
+            "eq1":     pk.get("gan") or gm.get("eq1", ""),  # eq1 pick = ganador elegido
+            "gol1":    pk.get("g1", ""),
+            "gol2":    pk.get("g2", ""),
+            "eq2":     gm.get("eq2", ""),
+            "ganador": pk.get("gan", ""),
+        }
     return {"picks": picks}
 
 
