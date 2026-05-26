@@ -2111,14 +2111,17 @@ async def get_picks(email: str = Query(""), phone: str = Query("")):
     p = find_player_any(phone=phone, email=email)
     if not p:
         raise HTTPException(404, "Jugador no encontrado")
-    raw = _db.db_get_picks(p["id"])
+    player_id = p.get("_id") or p.get("id")
+    if not player_id:
+        return {"picks": {}}
+    raw = _db.db_get_picks(int(player_id))
     # Formato esperado por el frontend: {jgo: {eq1,gol1,gol2,eq2,ganador}}
     games_map = {str(g["jgo"]): g for g in _db.db_get_horarios()}
     picks = {}
     for jgo, pk in raw.items():
         gm = games_map.get(str(jgo), {})
         picks[str(jgo)] = {
-            "eq1":     pk.get("gan") or gm.get("eq1", ""),  # eq1 pick = ganador elegido
+            "eq1":     gm.get("eq1", ""),
             "gol1":    pk.get("g1", ""),
             "gol2":    pk.get("g2", ""),
             "eq2":     gm.get("eq2", ""),
@@ -4536,5 +4539,4 @@ if __name__ == "__main__":
         os.environ["QL_SHEET"] = args.sheet
     if args.creds:
         os.environ["QL_CREDS"] = args.creds
-
     uvicorn.run(app, host="0.0.0.0", port=args.port)
