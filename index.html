@@ -2301,16 +2301,17 @@ function renderGames(games) {
     const p = S.picks[String(jgo)] || {eq1:'',gol1:'',gol2:'',eq2:'',ganador:''};
     const teamsForSlot = S.teams && S.teams.length > 0 ? S.teams : (g.eq1&&g.eq2 ? [g.eq1,g.eq2] : []);
     // Resolver nombres de equipos propagados desde picks anteriores
-    let rEq1 = resolveTeamName(g.eq1);
-    let rEq2 = resolveTeamName(g.eq2);
-    // Si HORARIOS tiene slots vacíos en rondas superiores, inferir del bracket
-    if ((!rEq1 || rEq1 === 'TBD') && g.ronda && g.ronda !== 'R32') {
-      const inf = _inferBracketSlot(g, 'eq1');
-      if (inf) rEq1 = inf;
-    }
-    if ((!rEq2 || rEq2 === 'TBD') && g.ronda && g.ronda !== 'R32') {
-      const inf = _inferBracketSlot(g, 'eq2');
-      if (inf) rEq2 = inf;
+    let rEq1, rEq2;
+    if (g.ronda && g.ronda !== 'R32') {
+      // Para R16+: _inferBracketSlot aplica el mapa WC2026 correctamente.
+      // resolveTeamName usa nth secuencial y da el equipo INCORRECTO para WC2026.
+      const inf1 = _inferBracketSlot(g, 'eq1');
+      const inf2 = _inferBracketSlot(g, 'eq2');
+      rEq1 = (inf1 && !inf1.startsWith('Gan. ') && !inf1.startsWith('Perdedor ')) ? inf1 : (inf1 || resolveTeamName(g.eq1) || '');
+      rEq2 = (inf2 && !inf2.startsWith('Gan. ') && !inf2.startsWith('Perdedor ')) ? inf2 : (inf2 || resolveTeamName(g.eq2) || '');
+    } else {
+      rEq1 = resolveTeamName(g.eq1);
+      rEq2 = resolveTeamName(g.eq2);
     }
     // Para partidos FINALIZADOS en R16+: mostrar los equipos que el jugador PREDIJO
     // (p.eq1/p.eq2) en lugar de los equipos reales de HORARIOS. Así el jugador ve
@@ -2499,14 +2500,15 @@ function autoW(jgo) {
   // Si es empate, limpiar auto-selección (usuario debe elegir manualmente)
   const g1 = parseInt(gol1), g2 = parseInt(gol2);
   const game = S.games.find(g => String(g.jgo) === String(jgo));
-  // Resolver nombre real del equipo (igual que renderGames: incluyendo bracket inference)
-  let _rEq1 = resolveTeamName(game?.eq1 || '');
-  let _rEq2 = resolveTeamName(game?.eq2 || '');
-  if ((!_rEq1 || _rEq1 === 'TBD') && game?.ronda && game.ronda !== 'R32') {
-    const inf = _inferBracketSlot(game, 'eq1'); if (inf) _rEq1 = inf;
-  }
-  if ((!_rEq2 || _rEq2 === 'TBD') && game?.ronda && game.ronda !== 'R32') {
-    const inf = _inferBracketSlot(game, 'eq2'); if (inf) _rEq2 = inf;
+  let _rEq1, _rEq2;
+  if (game?.ronda && game.ronda !== 'R32') {
+    const inf1 = _inferBracketSlot(game, 'eq1');
+    const inf2 = _inferBracketSlot(game, 'eq2');
+    _rEq1 = (inf1 && !inf1.startsWith('Gan. ')) ? inf1 : (inf1 || resolveTeamName(game?.eq1||'') || '');
+    _rEq2 = (inf2 && !inf2.startsWith('Gan. ')) ? inf2 : (inf2 || resolveTeamName(game?.eq2||'') || '');
+  } else {
+    _rEq1 = resolveTeamName(game?.eq1 || '');
+    _rEq2 = resolveTeamName(game?.eq2 || '');
   }
   const _eq1Known = !!(_rEq1 && _rEq1 !== 'TBD' && !_rEq1.startsWith('Gan. '));
   const _eq2Known = !!(_rEq2 && _rEq2 !== 'TBD' && !_rEq2.startsWith('Gan. '));
