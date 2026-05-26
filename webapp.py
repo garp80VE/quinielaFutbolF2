@@ -4208,6 +4208,41 @@ async def admin_fix_grupos_wc2026(ql_admin: str = Cookie(default="")):
     return {"ok": True, "updated": updated, "msg": f"{updated} partidos actualizados con ronda correcta"}
 
 
+@app.post("/api/admin/load-test-teams")
+async def admin_load_test_teams(ql_admin: str = Cookie(default="")):
+    """Carga los equipos reales WC2026 en JGO 1-16 (R32) para modo prueba."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    teams = [
+        (1,  "Checa",          "Suiza"),
+        (2,  "Brasil",         "Japon"),
+        (3,  "Alemania",       "Turquia"),
+        (4,  "Paises Bajos",   "Marruecos"),
+        (5,  "Costa de Marfil","Noruega"),
+        (6,  "Francia",        "Suecia"),
+        (7,  "Mexico",         "Arabia"),
+        (8,  "Inglaterra",     "Ecuador"),
+        (9,  "Belgica",        "Corea"),
+        (10, "USA",            "Bosnia"),
+        (11, "España",         "Austria"),
+        (12, "COlombia",       "Croacia"),
+        (13, "Canada",         "Nueva Zelanda"),
+        (14, "Paraguay",       "Egipto"),
+        (15, "Argentina",      "Uruguay"),
+        (16, "Portugal",       "Ghana"),
+    ]
+    conn = _db.get_conn()
+    updated = 0
+    with conn:
+        for jgo, eq1, eq2 in teams:
+            cur = conn.execute(
+                "UPDATE horarios SET eq1=?, eq2=? WHERE jgo=? AND grupo='R32'",
+                (eq1, eq2, str(jgo)))
+            updated += cur.rowcount
+    conn.close()
+    _invalidate_games()
+    return {"ok": True, "updated": updated, "msg": f"{updated} equipos R32 cargados (WC2026)"}
+
+
 @app.post("/api/admin/fix-bracket-wc2026")
 async def admin_fix_bracket_wc2026(ql_admin: str = Cookie(default="")):
     """
@@ -4482,20 +4517,8 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
                     eq2_new = f"Round of {rof} {2*i+2} Winner"
                     conn.execute("UPDATE horarios SET eq1=?, eq2=? WHERE jgo=?",
                                  (eq1_new, eq2_new, jgo))
+ 
     conn.close()
-
-    jgos_a_limpiar = []
-    for ronda in rondas_a_limpiar:
-        for h in ronda_games.get(ronda, []):
-            jgos_a_limpiar.append(str(h["jgo"]))
-
-    if jgos_a_limpiar:
-        conn2 = _db.get_conn()
-        with conn2:
-            placeholders = ",".join("?" * len(jgos_a_limpiar))
-            conn2.execute(f"DELETE FROM picks WHERE jgo IN ({placeholders})",
-                          jgos_a_limpiar)
-        conn2.close()
 
     _invalidate_games()
     return {

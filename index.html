@@ -582,38 +582,6 @@
           <div id="setup-all-result" style="display:none;margin-top:8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 10px;font-size:12px;color:#065f46;max-height:140px;overflow-y:auto"></div>
         </div>
 
-        <!-- Fix grupos WC2026 -->
-        <div style="background:#faf5ff;border:1px solid #d8b4fe;border-radius:12px;padding:12px">
-          <p style="font-size:11px;font-weight:700;color:#5b21b6;margin:0 0 4px">🗂️ Corregir rondas por número de JGO</p>
-          <p style="font-size:10px;color:#7c3aed;margin:0 0 8px">JGO 1-16→R32 · 17-24→R16 · 25-28→QF · 29-30→SF · 31→3ER · 32→FINAL</p>
-          <button onclick="adminFixGrupos()" id="btn-fix-grupos"
-            style="width:100%;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
-            🔀 Aplicar rondas WC2026
-          </button>
-          <div id="fix-grupos-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
-        </div>
-
-        <!-- Fix bracket WC2026 (placeholders) -->
-        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:12px;padding:12px">
-          <p style="font-size:11px;font-weight:700;color:#9a3412;margin:0 0 4px">🔀 Resetear cruces de bracket a placeholders</p>
-          <p style="font-size:10px;color:#c2410c;margin:0 0 8px">Necesario antes de propagar. Pone "Round of X N Winner" en R16→FINAL.</p>
-          <button onclick="adminFixBracketWC2026()" id="btn-fix-bracket-wc2026"
-            style="width:100%;background:linear-gradient(135deg,#ea580c,#c2410c);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
-            🗂️ Resetear placeholders bracket
-          </button>
-          <div id="fix-bracket-wc2026-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
-        </div>
-
-        <!-- Propagar bracket -->
-        <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:12px">
-          <p style="font-size:11px;font-weight:700;color:#0369a1;margin:0 0 4px">🔗 Propagar resultados al bracket</p>
-          <p style="font-size:10px;color:#0284c7;margin:0 0 8px">Resuelve los placeholders con los ganadores actuales (usa mapas WC2026 corregidos).</p>
-          <button onclick="adminPropagateBracket()" id="btn-propagate"
-            style="width:100%;background:linear-gradient(135deg,#0284c7,#0369a1);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
-            🔗 Propagar bracket al sheet
-          </button>
-          <div id="propagate-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
-        </div>
       </div><!-- /adm-body-horarios -->
     </div>
 
@@ -642,6 +610,17 @@
                 ⬜ Desactivado
               </button>
             </div>
+          </div>
+
+          <!-- Cargar equipos WC2026 -->
+          <div style="background:#faf5ff;border:1px solid #d8b4fe;border-radius:12px;padding:12px 14px">
+            <p style="font-size:12px;font-weight:700;color:#5b21b6;margin:0 0 4px">🌍 Equipos reales WC2026</p>
+            <p style="font-size:10px;color:#7c3aed;margin:0 0 8px">Carga los 16 equipos del R32 desde el template oficial (Checa/Suiza, Brasil/Japón…)</p>
+            <button onclick="adminLoadTestTeams()" id="btn-load-test-teams"
+              style="width:100%;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+              🌍 Cargar equipos WC2026
+            </button>
+            <div id="load-test-teams-result" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px;background:#f5f3ff;color:#5b21b6"></div>
           </div>
 
           <!-- Simular resultado -->
@@ -4974,6 +4953,24 @@ async function adminSimRange() {
     showToast('❌ '+e.message);
   } finally {
     if (btn) { btn.disabled=false; btn.textContent='🎲 Simular rango'; }
+  }
+}
+
+async function adminLoadTestTeams() {
+  const btn = document.getElementById('btn-load-test-teams');
+  const res = document.getElementById('load-test-teams-result');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Cargando…'; }
+  if (res) res.style.display='none';
+  try {
+    const r = await api('POST', '/api/admin/load-test-teams');
+    if (res) { res.style.display='block'; res.textContent = r.msg || '✅ Listo'; }
+    showToast(r.msg || '✅ Equipos cargados');
+    try { const g = await api('GET','/api/games'); if(g.games){S.games=g.games;buildGroupsGrid();} } catch(_){}
+  } catch(e) {
+    if (res) { res.style.display='block'; res.textContent='❌ '+e.message; }
+    showToast('❌ '+e.message);
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='🌍 Cargar equipos WC2026'; }
   }
 }
 
