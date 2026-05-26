@@ -2519,22 +2519,26 @@ function autoW(jgo) {
   if (gol1 !== '' && gol2 !== '' && !isNaN(g1) && !isNaN(g2)) {
     if (g1 > g2 && pe1) {
       S.picks[String(jgo)].ganador = pe1;
+      S.picks[String(jgo)]._ganAutoSet = true;
       document.getElementById(`bgan1-${jgo}`)?.classList.add('sel');
       document.getElementById(`bgan2-${jgo}`)?.classList.remove('sel');
       _hideGanWarn(jgo);
     } else if (g2 > g1 && pe2) {
       S.picks[String(jgo)].ganador = pe2;
+      S.picks[String(jgo)]._ganAutoSet = true;
       document.getElementById(`bgan1-${jgo}`)?.classList.remove('sel');
       document.getElementById(`bgan2-${jgo}`)?.classList.add('sel');
       _hideGanWarn(jgo);
     } else if (g1 === g2) {
-      // Empate: limpiar auto-selección previa (si no fue elegida manualmente después)
-      // Solo limpiar si el ganador actual coincide con uno de los equipos (fue auto-set)
+      // Empate: solo limpiar si fue auto-establecido por onScoreChange (no elegido manualmente)
       const curGan = S.picks[String(jgo)].ganador;
-      if (curGan === pe1 || curGan === pe2) {
+      if ((curGan === pe1 || curGan === pe2) && S.picks[String(jgo)]._ganAutoSet) {
         S.picks[String(jgo)].ganador = '';
+        S.picks[String(jgo)]._ganAutoSet = false;
         document.getElementById(`bgan1-${jgo}`)?.classList.remove('sel');
         document.getElementById(`bgan2-${jgo}`)?.classList.remove('sel');
+        _showGanWarn(jgo);
+      } else if (!curGan) {
         _showGanWarn(jgo);
       }
     }
@@ -2610,6 +2614,7 @@ function setGanF2(jgo, which) {
   }
   if (!S.picks[String(jgo)]) S.picks[String(jgo)] = {eq1:'',gol1:'',gol2:'',eq2:'',ganador:''};
   S.picks[String(jgo)].ganador = ganTeam;
+  S.picks[String(jgo)]._ganAutoSet = false; // elección manual
   // Sync eq con nombre resuelto del bracket
   if (eq1Known) S.picks[String(jgo)].eq1 = rEq1;
   if (eq2Known) S.picks[String(jgo)].eq2 = rEq2;
