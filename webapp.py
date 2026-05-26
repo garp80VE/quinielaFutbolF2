@@ -4269,23 +4269,75 @@ async def admin_fix_bracket_wc2026(ql_admin: str = Cookie(default="")):
 @app.post("/api/admin/setup-all")
 async def admin_setup_all(ql_admin: str = Cookie(default="")):
     """
-    Repara todo: propaga el bracket y recalcula standings.
-    Devuelve {ok, log, errors} para el panel admin.
+    Repara todo en orden:
+    1. Fix rondas (grupo) por JGO
+    2. Reset placeholders bracket (Round of X N Winner)
+    3. Propagar bracket con mapas WC2026
+    4. Recalcular standings
     """
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
     log    = []
     errors = []
 
+    # 1. Fix rondas por JGO
+    try:
+        _grupo_map = (
+            [(str(j), "R32") for j in range(1, 17)] +
+            [(str(j), "R16") for j in range(17, 25)] +
+            [(str(j), "QF")  for j in range(25, 29)] +
+            [(str(j), "SF")  for j in range(29, 31)] +
+            [("31", "3ER"), ("32", "FINAL")]
+        )
+        conn_g = _db.get_conn()
+        updated_g = 0
+        with conn_g:
+            for jgo_f, grp_f in _grupo_map:
+                cur = conn_g.execute("UPDATE horarios SET grupo=? WHERE jgo=?", (grp_f, jgo_f))
+                updated_g += cur.rowcount
+        conn_g.close()
+        _invalidate_games()
+        log.append(f"Rondas asignadas: {updated_g} partido(s)")
+    except Exception as e:
+        errors.append(f"Error asignando rondas: {e}")
+
+    # 2. Reset placeholders bracket
+    try:
+        horarios_pb = _db.db_get_horarios()
+        ronda_games_pb: dict = {}
+        for h in horarios_pb:
+            ronda_games_pb.setdefault(h.get("grupo", ""), []).append(h)
+        for k in ronda_games_pb:
+            ronda_games_pb[k].sort(key=lambda h: int(str(h["jgo"])) if str(h["jgo"]).isdigit() else 0)
+        round_pairs = [("R16", 32), ("QF", 16), ("SF", 8), ("3ER", 4), ("FINAL", 4)]
+        updates_pb = []
+        for target_ronda, rof_num in round_pairs:
+            for i, h in enumerate(ronda_games_pb.get(target_ronda, [])):
+                eq1_new = f"Round of {rof_num} {2*i+1} Winner"
+                eq2_new = f"Round of {rof_num} {2*i+2} Winner"
+                updates_pb.append((str(h["jgo"]), eq1_new, eq2_new))
+        if updates_pb:
+            conn_pb = _db.get_conn()
+            with conn_pb:
+                for jgo_u, e1, e2 in updates_pb:
+                    conn_pb.execute("UPDATE horarios SET eq1=?, eq2=? WHERE jgo=?", (e1, e2, jgo_u))
+            conn_pb.close()
+            _invalidate_games()
+        log.append(f"Placeholders bracket: {len(updates_pb)} juego(s) reseteados")
+    except Exception as e:
+        errors.append(f"Error reseteando placeholders: {e}")
+
+    # 3. Propagar bracket
     try:
         changes = _propagate_bracket()
         if changes:
             log.append(f"Bracket propagado: {len(changes)} cambio(s)")
             log.extend(changes[:20])
         else:
-            log.append("Bracket: nada que propagar")
+            log.append("Bracket: nada que propagar (sin ganadores aún)")
     except Exception as e:
         errors.append(f"Error propagando bracket: {e}")
 
+    # 4. Recalcular standings
     try:
         _update_standings()
         log.append("Standings recalculados")
@@ -4335,29 +4387,29 @@ async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")
             if owner_email:
                 drive.permissions().create(
                     fileId=copy_id,
-                    body={"type": "user", "role": "owner", "emailAddress": owner_email},
-                    transferOwnership=True, supportsAllDrives=True
+                    body={"role": "writer", "type": "user", "emailAddress": owner_email},
+                    sendNotificationEmail=False
                 ).execute()
-        except Exception as e:
-            archive_warn = f"Aviso: no se pudo archivar en Drive ({e}). "
-            print(f"[reset] WARN Drive: {e}")
+        except Exception as e_drive:
+            archive_warn = f"[WARN] No se pudo archivar en Drive: {e_drive}. "
+            print(f"[reset] Drive error: {e_drive}")
 
-        # 2. Limpiar Sheets (best effort)
+    # 2. Limpiar Sheets (best effort)
+    if sh:
         try:
-            reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "Ligas", "CHAT"}
-            with _sheets_lock:
-                for ws in sh.worksheets():
-                    if ws.title not in reserved:
-                        sh.del_worksheet(ws)
-                    time.sleep(0.1)
-                ws_j = sh.worksheet("JUGADORES")
-                rows_j = ws_j.get_all_values()
-                hi, _ = _jugadores_headers(rows_j)
-                first_data = hi + 2
-                if len(rows_j) >= first_data:
-                    ws_j.batch_clear([f"A{first_data}:Z{len(rows_j) + 5}"])
-                sh.worksheet("POSICIONES").batch_clear(["A3:Z100"])
-                sh.worksheet("HORARIOS").batch_clear(["A3:L1000"])
+            reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "INSTRUCCIONES"}
+            for ws in sh.worksheets():
+                if ws.title not in reserved:
+                    sh.del_worksheet(ws)
+                time.sleep(0.1)
+            ws_j = sh.worksheet("JUGADORES")
+            rows_j = ws_j.get_all_values()
+            hi, _ = _jugadores_headers(rows_j)
+            first_data = hi + 2
+            if len(rows_j) >= first_data:
+                ws_j.batch_clear([f"A{first_data}:Z{len(rows_j) + 5}"])
+            sh.worksheet("POSICIONES").batch_clear(["A3:Z100"])
+            sh.worksheet("HORARIOS").batch_clear(["A3:L1000"])
         except Exception as e:
             print(f"[reset] WARN Sheets clear: {e}")
 
@@ -4398,7 +4450,7 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
     ROF_MAP = {"R16": 32, "QF": 16, "SF": 8, "3ER": 4, "FINAL": 4}
 
     if ronda_desde not in RONDAS_ORDER:
-        raise HTTPException(400, f"ronda_desde inválida. Usar: {RONDAS_ORDER}")
+        raise HTTPException(400, f"ronda_desde invalida. Usar: {RONDAS_ORDER}")
 
     idx_desde = RONDAS_ORDER.index(ronda_desde)
     rondas_a_limpiar = RONDAS_ORDER[idx_desde:]
@@ -4418,12 +4470,10 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
             games = ronda_games.get(ronda, [])
             for h in games:
                 jgo = str(h["jgo"])
-                # Resetear resultado
                 conn.execute(
                     "UPDATE horarios SET ganador='', gol1='', gol2='', estado='PROG' WHERE jgo=?",
                     (jgo,))
                 cleared += 1
-                # Para rondas de bracket (no R32): resetear eq1/eq2 a placeholders
                 if ronda in ROF_MAP:
                     rof = ROF_MAP[ronda]
                     games_sorted = ronda_games.get(ronda, [])
@@ -4434,7 +4484,6 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
                                  (eq1_new, eq2_new, jgo))
     conn.close()
 
-    # Borrar picks de esas rondas también
     jgos_a_limpiar = []
     for ronda in rondas_a_limpiar:
         for h in ronda_games.get(ronda, []):
