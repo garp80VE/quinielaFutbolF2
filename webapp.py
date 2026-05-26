@@ -2136,23 +2136,19 @@ async def save_picks(body: SavePicksBody):
     if not p:
         raise HTTPException(404, "Jugador no encontrado")
 
-    games, estado_jgo = _get_games_cache()
+    player_id = p.get("_id") or p.get("id")
+    if not player_id:
+        raise HTTPException(404, "Jugador sin ID")
 
-    # Logica de bloqueo F2:
-    # En MODO_PRUEBA: nunca bloquear (permite probar scoring con cualquier estado)
+    games, _ = _get_games_cache()
     modo_prueba = state.get("cfg", {}).get("MODO_PRUEBA", "") in ("1", "true", "True")
 
-    # R32: se bloquea partido a partido (igual que F1)
-    # Rondas superiores (R16/QF/SF/3ER/FINAL): se bloquean todas juntas
-    # cuando el ULTIMO partido de R32 arranca (ya no esta en PROG)
     r32_games = [g for g in games if g.get("ronda") == RONDA_BASE]
     upper_locked = False
     if r32_games and not modo_prueba:
         last_r32 = max(r32_games, key=lambda g: int(g.get("jgo", 0) or 0))
-        last_r32_estado = last_r32.get("estado", "")
-        upper_locked = bool(last_r32_estado and last_r32_estado != "PROG")
+        upper_locked = bool(last_r32.get("estado", "") not in ("", "PROG"))
 
-    batch = []
     guardados = bloqueados = 0
 
     for pick in body.picks:
@@ -2167,30 +2163,17 @@ async def save_picks(body: SavePicksBody):
         if not modo_prueba:
             if ronda in RONDAS_SUPERIORES:
                 bloq = upper_locked
-            else:  # R32 o sin ronda
+            else:
                 bloq = bool(estado and estado != "PROG")
             if bloq:
                 bloqueados += 1
                 continue
 
-        row = pick.jgo + 3  # JGO 1 -> fila 4
-        # F2: 5 campos en cols F-J (pick_eq1, pick_gol1, pick_gol2, pick_eq2, pick_ganador)
-        batch.append({
-            "range":  f"F{row}:J{row}",
-            "values": [[pick.eq1, pick.gol1, pick.gol2, pick.eq2, pick.ganador]]
-        })
+        _db.db_save_pick(
+            int(player_id), str(pick.jgo),
+            str(pick.gol1), str(pick.gol2), str(pick.ganador)
+        )
         guardados += 1
-
-    if batch:
-        # Lock para evitar conflicto con el hilo del updater
-        acquired = _sheets_lock.acquire(timeout=10)
-        if not acquired:
-            raise HTTPException(503, "Servidor ocupado, intenta de nuevo")
-        try:
-            ws_p = state["sh"].worksheet(p["TAB_NOMBRE"])
-            ws_p.batch_update(batch, value_input_option="RAW")
-        finally:
-            _sheets_lock.release()
 
     return {"guardados": guardados, "bloqueados": bloqueados}
 
