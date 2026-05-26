@@ -2317,7 +2317,8 @@ function renderGames(games) {
     // (p.eq1/p.eq2) en lugar de los equipos reales de HORARIOS. Así el jugador ve
     // su predicción original ("México 0–1 Portugal, Portugal gana → 0 pts") en vez
     // de los equipos reales ("Corea del Sur vs Argentina") que confunden la lectura.
-    const _pickIsRealName = s => !!(s && s !== 'TBD' && !s.startsWith('Ganador') && !s.startsWith('Perdedor') && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
+    // isPlaceholder filtra 'Round of 32 N Winner', 'Ganador Dieciseisavos N', etc.
+    const _pickIsRealName = s => !!(s && s !== 'TBD' && !isPlaceholder(s) && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
     if (g.ronda && g.ronda !== 'R32') {
       if (_pickIsRealName(p.eq1)) rEq1 = p.eq1;
       if (_pickIsRealName(p.eq2)) rEq2 = p.eq2;
