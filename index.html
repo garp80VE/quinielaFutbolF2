@@ -2313,15 +2313,15 @@ function renderGames(games) {
       rEq1 = resolveTeamName(g.eq1);
       rEq2 = resolveTeamName(g.eq2);
     }
-    // Para partidos FINALIZADOS en R16+: mostrar los equipos que el jugador PREDIJO
-    // (p.eq1/p.eq2) en lugar de los equipos reales de HORARIOS. Así el jugador ve
-    // su predicción original ("México 0–1 Portugal, Portugal gana → 0 pts") en vez
-    // de los equipos reales ("Corea del Sur vs Argentina") que confunden la lectura.
-    // isPlaceholder filtra 'Round of 32 N Winner', 'Ganador Dieciseisavos N', etc.
+    // Para R16+: p.eq1/p.eq2 solo como FALLBACK si _inferBracketSlot no pudo resolver.
+    // NO sobreescribir cuando la inferencia ya devolvió un equipo real — esto evita
+    // que picks viejos/incorrectos corrompan los cruces del bracket.
     const _pickIsRealName = s => !!(s && s !== 'TBD' && !isPlaceholder(s) && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
     if (g.ronda && g.ronda !== 'R32') {
-      if (_pickIsRealName(p.eq1)) rEq1 = p.eq1;
-      if (_pickIsRealName(p.eq2)) rEq2 = p.eq2;
+      const _inf1Ok = !!(rEq1 && rEq1 !== 'TBD' && !rEq1.startsWith('Gan. ') && !rEq1.startsWith('Perdedor ') && !isPlaceholder(rEq1));
+      const _inf2Ok = !!(rEq2 && rEq2 !== 'TBD' && !rEq2.startsWith('Gan. ') && !rEq2.startsWith('Perdedor ') && !isPlaceholder(rEq2));
+      if (!_inf1Ok && _pickIsRealName(p.eq1)) rEq1 = p.eq1;
+      if (!_inf2Ok && _pickIsRealName(p.eq2)) rEq2 = p.eq2;
     }
     // Para R32 los equipos están fijos; para rondas superiores son TBD → dropdown
     // Los inferred "Gan. " y "Perdedor " son semi-conocidos: se muestran como <p> pero no como equipo confirmado
