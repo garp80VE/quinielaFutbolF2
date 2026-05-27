@@ -2923,11 +2923,11 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
         ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
         paid    = 0
         players = []
-        for row in rows[header_idx + 1:]:
-            if not any(c.strip() for c in row):
+        for row in rows:
+            # rows son dicts (formato SQLite via _jugador_db_to_cache)
+            if not row:
                 continue
-            d = {headers[i]: (row[i].strip() if i < len(row) else "") for i in range(len(headers))}
-            d = _normalize_player(d)
+            d = _normalize_player(row)
             pagado_raw = d.get("PAGADO", "").upper()
             is_paid    = pagado_raw in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X")
             if is_paid:
