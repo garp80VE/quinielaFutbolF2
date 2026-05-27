@@ -2283,8 +2283,8 @@ function renderGames(games) {
     } else {
       locked = isLockedEstado(estado);
     }
-    const isFinal = estado === 'FINAL';
-    const isLive  = ['EN VIVO','MEDIO TIEMPO','PRORROGA','PENALES'].includes(estado);
+    const isFinal = estado === 'FINAL' || estado === 'FT';
+    const isLive  = ['EN VIVO','MEDIO TIEMPO','PRORROGA','PENALES','1H','2H','HT','ET','PT'].includes(estado);
     const {fecha: fechaLocal, hora: horaLocal} = formatLocalDT(g);
 
     const inputCls = locked
@@ -2429,8 +2429,8 @@ function renderGames(games) {
       <div class="flex justify-between items-center px-4 pt-3 pb-2 border-b border-gray-50">
         <div class="flex items-center gap-2">
           <span class="text-xs font-semibold text-gray-400">${g.ronda||'F2'} · JGO ${jgo}</span>
-          ${isFinal ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">Resultado: ${g.gol1}–${g.gol2}${g.ganador ? ' · 🏆 '+g.ganador : ''}</span>` : ''}
-          ${isLive  ? `<span class="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold animate-pulse">🔴 ${estado}${g.minuto?' · '+g.minuto+"'":''}${g.gol1!==''?' · '+g.gol1+'–'+g.gol2:''}</span>` : ''}
+          ${isFinal ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">FT: ${pe1||g.eq1} ${g.gol1}–${g.gol2} ${pe2||g.eq2}${g.ganador?' · 🏆 '+g.ganador:''}</span>` : ''}
+          ${isLive  ? `<span class="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold animate-pulse">🔴 ${g.minuto?g.minuto+"' ":''} ${pe1||g.eq1} ${g.gol1!==''?g.gol1:'–'}–${g.gol2!==''?g.gol2:'–'} ${pe2||g.eq2}</span>` : ''}
         </div>
         <span class="text-xs text-gray-400">${fechaLocal} ${horaLocal}</span>
       </div>
@@ -3389,7 +3389,7 @@ const INTERVAL_LIVE = 10_000;   // 10s cuando hay partidos en vivo
 const INTERVAL_IDLE = 90_000;   // 90s cuando no hay nada activo
 
 function _hasLiveGames() {
-  return S.games.some(g => ['EN VIVO','MEDIO TIEMPO','PRORROGA','PENALES'].includes(g.estado));
+  return S.games.some(g => ['EN VIVO','MEDIO TIEMPO','PRORROGA','PENALES','1H','2H','HT','ET','PT'].includes(g.estado));
 }
 
 function _updateLiveIndicator() {
@@ -3763,7 +3763,7 @@ function buildApuestasGameList() {
     const sortedGames = [...games].sort((a,b) => (b.datetime_utc||'').localeCompare(a.datetime_utc||''));
     for (const game of sortedGames) {
       const btn = document.createElement('button');
-      const badgeCls = game.estado === 'FINAL' ? 'badge-final' : 'badge-live';
+      const badgeCls = (game.estado === 'FINAL' || game.estado === 'FT') ? 'badge-final' : 'badge-live';
       btn.style.cssText = 'width:100%;background:white;border:1.5px solid #e8eaf0;border-radius:14px;padding:12px 14px;cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px';
       const apEq1 = resolveTeamName(game.eq1) || game.eq1 || '?';
       const apEq2 = resolveTeamName(game.eq2) || game.eq2 || '?';

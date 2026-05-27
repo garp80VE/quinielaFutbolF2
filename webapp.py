@@ -4269,7 +4269,7 @@ async def admin_sim_range(body: dict, ql_admin: str = Cookie(default="")):
         ganador = eq1 if g1 > g2 else (eq2 if g2 > g1 else "")
 
         ult_act = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        _db.db_update_game_result(jgo, "FT", str(g1), str(g2), ganador, ult_act)
+        _db.db_update_game_result(jgo, "FINAL", str(g1), str(g2), ganador, ult_act)
 
         results.append({"jgo": jgo_n, "eq1": eq1, "eq2": eq2, "g1": g1, "g2": g2, "ganador": ganador or "Empate", "skip": False})
         applied += 1
