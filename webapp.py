@@ -2898,6 +2898,15 @@ def _read_jugadores_cached() -> tuple:
     return None, rows_compat, 0, headers
 
 
+@app.delete("/api/admin/players/{jugador_id}")
+async def admin_delete_player(jugador_id: int, ql_admin: str = Cookie(default="")):
+    """Elimina un jugador y todos sus picks (útil para pruebas)."""
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+    _db.db_delete_player(jugador_id)
+    return {"ok": True, "deleted": jugador_id}
+
+
 @app.get("/api/admin/prize-and-players")
 async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
     """Endpoint combinado: devuelve info de premios + lista de jugadores en una sola lectura."""
