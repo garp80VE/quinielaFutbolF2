@@ -5264,6 +5264,21 @@ const _EST_COLORS = {
   PROG: {bg:'#f1f5f9',txt:'#64748b'},
 };
 
+async function adminDeletePlayer(id, nombre, btn) {
+  if (!confirm(`¿Borrar jugador "${nombre}" y todos sus picks?`)) return;
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  try {
+    await api('DELETE', `/api/admin/players/${id}`);
+    showToast(`✅ ${nombre} eliminado`);
+    await loadDbView();
+  } catch(e) {
+    showToast('❌ Error: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = '🗑️';
+  }
+}
+
 async function loadDbView() {
   const cont = document.getElementById('db-tab-content');
   const tot  = document.getElementById('db-totals');
@@ -5354,6 +5369,7 @@ function showDbTab(tab) {
         <th style="padding:6px 8px;text-align:left">Jugador</th>
         <th style="padding:6px 4px;text-align:center">Picks</th>
         <th style="padding:6px 4px;text-align:left;font-size:9px">Registrado</th>
+        <th style="padding:6px 4px;text-align:center">Borrar</th>
       </tr></thead>
       <tbody>${_dbDump.jugadores.map((j,i) => {
         const pk = picksMap[j.whatsapp];
@@ -5368,6 +5384,10 @@ function showDbTab(tab) {
             <span style="font-weight:800;font-size:12px;color:${pickCount>0?'#15803d':'#94a3b8'}">${pickCount}/${pickTotal}</span>
           </td>
           <td style="padding:6px 4px;font-size:9px;color:#94a3b8">${(j.fecha_reg||'').substring(0,16)}</td>
+          <td style="padding:6px 4px;text-align:center">
+            <button onclick="adminDeletePlayer(${j.id},'${j.nombre.replace(/'/g,"\\'")}',this)"
+              style="background:#fee2e2;color:#dc2626;border:none;border-radius:6px;padding:3px 8px;font-size:10px;font-weight:800;cursor:pointer">🗑️</button>
+          </td>
         </tr>`;
       }).join('')}</tbody>
     </table>`;
