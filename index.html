@@ -2396,10 +2396,8 @@ function renderGames(games) {
     //    Si algún equipo es placeholder ('Gan. JGO X', 'Round of 32 N Winner'),
     //    no tocar el ganador — no podemos validarlo contra un placeholder.
     const _peIsReal = s => !!(s && s !== 'TBD' && !s.startsWith('Gan. ') && !s.startsWith('Perdedor ') && !isPlaceholder(s));
-    if (p.ganador) console.log('[NORM]', jgo, 'gan=',p.ganador, 'rPGanBtn=',rPGanBtn, 'pe1=',pe1, 'pe2=',pe2, 'pe1real=',_peIsReal(pe1), 'pe2real=',_peIsReal(pe2));
     if (p.ganador && _peIsReal(pe1) && _peIsReal(pe2) && rPGanBtn !== pe1 && rPGanBtn !== pe2) {
       // Valor realmente obsoleto (no resuelve a ninguno de los equipos confirmados)
-      console.log('[NORM-CLEAR]', jgo, 'BORRANDO ganador=',p.ganador);
       p.ganador = '';
       S.picks[String(jgo)].ganador = '';
     }
@@ -2595,18 +2593,18 @@ function onTeamChange(jgo) {
 // Seleccionar ganador obligatorio (F2)
 function setGanF2(jgo, which) {
   const game = S.games.find(g => String(g.jgo) === String(jgo));
-  // Usar nombre resuelto del bracket (propaga picks de rondas anteriores + inferencia de bracket)
-  let rEq1 = resolveTeamName(game?.eq1);
-  let rEq2 = resolveTeamName(game?.eq2);
-  // Usar _isRealTeamSG: detecta placeholders no resueltos (no solo empty/'TBD')
+  // Para R16+: usar _inferBracketSlot como PRIMARIO (igual que renderGames).
+  // resolveTeamName usa nth secuencial → da equipo INCORRECTO para WC2026.
   const _isRealTeamSG = s => !!(s && s !== 'TBD' && !isPlaceholder(s) && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
-  if (!_isRealTeamSG(rEq1) && game?.ronda && game.ronda !== 'R32') {
-    const inf = _inferBracketSlot(game, 'eq1');
-    if (inf && _isRealTeamSG(inf)) rEq1 = inf;
-  }
-  if (!_isRealTeamSG(rEq2) && game?.ronda && game.ronda !== 'R32') {
-    const inf = _inferBracketSlot(game, 'eq2');
-    if (inf && _isRealTeamSG(inf)) rEq2 = inf;
+  let rEq1, rEq2;
+  if (game?.ronda && game.ronda !== 'R32') {
+    const inf1 = _inferBracketSlot(game, 'eq1');
+    const inf2 = _inferBracketSlot(game, 'eq2');
+    rEq1 = (inf1 && !inf1.startsWith('Gan. ') && !inf1.startsWith('Perdedor ')) ? inf1 : (inf1 || resolveTeamName(game?.eq1) || '');
+    rEq2 = (inf2 && !inf2.startsWith('Gan. ') && !inf2.startsWith('Perdedor ')) ? inf2 : (inf2 || resolveTeamName(game?.eq2) || '');
+  } else {
+    rEq1 = resolveTeamName(game?.eq1);
+    rEq2 = resolveTeamName(game?.eq2);
   }
   const eq1Known = !!(rEq1 && rEq1 !== 'TBD' && rEq1 !== '');
   const eq2Known = !!(rEq2 && rEq2 !== 'TBD' && rEq2 !== '');
