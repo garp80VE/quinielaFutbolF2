@@ -2387,10 +2387,15 @@ function renderGames(games) {
     const pe1 = (eq1Known || ph1) ? rEq1 : (resolveTeamName(p.eq1||'') || p.eq1 || '');
     const pe2 = (eq2Known || ph2) ? rEq2 : (resolveTeamName(p.eq2||'') || p.eq2 || '');
 
-    // ── Normalizar ganador: si el valor guardado ya no coincide con ningún equipo real,
-    //    intentar recuperarlo de los goles (sin persistir — solo en memoria hasta el próximo save)
-    if (p.ganador && pe1 && pe2 && p.ganador !== pe1 && p.ganador !== pe2) {
-      // Valor obsoleto (e.g. 'Place', 'Winner', 'A/B/C/D/F') — limpiar
+    // Resolver ganador almacenado para highlight (antes de normalizar)
+    // rPGanBtn resuelve placeholders: 'Round of 32 4 Winner' -> 'Paises Bajos'
+    const rPGanBtn = resolveTeamName(p.ganador||'') || p.ganador || '';
+
+    // ── Normalizar ganador: usar rPGanBtn (valor resuelto) en la comparación
+    //    para que un ganador guardado como placeholder (ej: 'Round of 32 4 Winner')
+    //    que resuelve al equipo correcto NO sea borrado innecesariamente.
+    if (p.ganador && pe1 && pe2 && rPGanBtn !== pe1 && rPGanBtn !== pe2) {
+      // Valor realmente obsoleto (no resuelve a ninguno de los equipos del partido)
       p.ganador = '';
       S.picks[String(jgo)].ganador = '';
     }
@@ -2403,8 +2408,6 @@ function renderGames(games) {
       }
     }
 
-    // Resolver ganador almacenado para el highlight del botón
-    const rPGanBtn = resolveTeamName(p.ganador||'') || p.ganador || '';
     const ganSel1 = !!(pe1 && (rPGanBtn === pe1 || p.ganador === pe1));
     const ganSel2 = !!(pe2 && (rPGanBtn === pe2 || p.ganador === pe2));
     const ganCls1 = `btn-w flex-1 py-2.5 rounded-2xl text-xs font-bold ${ganSel1?'sel':''}`;
@@ -2588,11 +2591,15 @@ function setGanF2(jgo, which) {
   // Usar nombre resuelto del bracket (propaga picks de rondas anteriores + inferencia de bracket)
   let rEq1 = resolveTeamName(game?.eq1);
   let rEq2 = resolveTeamName(game?.eq2);
-  if ((!rEq1 || rEq1 === 'TBD') && game?.ronda && game.ronda !== 'R32') {
-    const inf = _inferBracketSlot(game, 'eq1'); if (inf) rEq1 = inf;
+  // Usar _isRealTeamSG: detecta placeholders no resueltos (no solo empty/'TBD')
+  const _isRealTeamSG = s => !!(s && s !== 'TBD' && !isPlaceholder(s) && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
+  if (!_isRealTeamSG(rEq1) && game?.ronda && game.ronda !== 'R32') {
+    const inf = _inferBracketSlot(game, 'eq1');
+    if (inf && _isRealTeamSG(inf)) rEq1 = inf;
   }
-  if ((!rEq2 || rEq2 === 'TBD') && game?.ronda && game.ronda !== 'R32') {
-    const inf = _inferBracketSlot(game, 'eq2'); if (inf) rEq2 = inf;
+  if (!_isRealTeamSG(rEq2) && game?.ronda && game.ronda !== 'R32') {
+    const inf = _inferBracketSlot(game, 'eq2');
+    if (inf && _isRealTeamSG(inf)) rEq2 = inf;
   }
   const eq1Known = !!(rEq1 && rEq1 !== 'TBD' && rEq1 !== '');
   const eq2Known = !!(rEq2 && rEq2 !== 'TBD' && rEq2 !== '');
