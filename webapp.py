@@ -4164,6 +4164,75 @@ async def admin_propagate_bracket(ql_admin: str = Cookie(default="")):
     return {"ok": True, "changes": changes}
 
 
+@app.post("/api/admin/sim-range")
+async def admin_sim_range(body: dict, ql_admin: str = Cookie(default="")):
+    """
+    Simula resultados aleatorios para JGO desde..hasta.
+    Genera marcadores realistas, determina ganador (si empate → aleatorio en eliminatorias)
+    y propaga el bracket automáticamente.
+    """
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+
+    import random, datetime as _dt
+    jgo_desde = int(body.get("jgo_desde", 1))
+    jgo_hasta  = int(body.get("jgo_hasta", 16))
+
+    horarios = _db.db_get_horarios()
+    games_map = {str(h["jgo"]): h for h in horarios}
+
+    # Distribución de goles realista (0-3 por equipo, sesgada hacia lo bajo)
+    _GOALS = [0,0,0,1,1,1,1,2,2,3]
+
+    results  = []
+    applied  = 0
+    skipped  = 0
+
+    for jgo_n in range(jgo_desde, jgo_hasta + 1):
+        jgo = str(jgo_n)
+        h   = games_map.get(jgo)
+        if not h:
+            results.append({"jgo": jgo_n, "skip": True, "reason": "no encontrado"})
+            skipped += 1
+            continue
+
+        eq1 = (h.get("eq1") or "").strip()
+        eq2 = (h.get("eq2") or "").strip()
+
+        # Saltar si algún equipo no está definido o es placeholder
+        def _is_ph(s): return not s or s.startswith("Round of") or s.startswith("Gan. ") or s.startswith("Perdedor ")
+        if _is_ph(eq1) or _is_ph(eq2):
+            results.append({"jgo": jgo_n, "eq1": eq1, "eq2": eq2, "skip": True, "reason": "equipos sin definir"})
+            skipped += 1
+            continue
+
+        g1 = random.choice(_GOALS)
+        g2 = random.choice(_GOALS)
+
+        # En eliminatorias (R16, QF, SF, 3ER, FINAL) no puede haber empate → elegir ganador al azar
+        ronda = h.get("grupo", "")
+        knockout = ronda in ("R16", "QF", "SF", "3ER", "FINAL")
+        if g1 == g2 and knockout:
+            if random.random() < 0.5:
+                g1 = g2 + 1
+            else:
+                g2 = g1 + 1
+
+        ganador = eq1 if g1 > g2 else (eq2 if g2 > g1 else "")
+
+        ult_act = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        _db.db_update_game_result(jgo, "FT", str(g1), str(g2), ganador, ult_act)
+
+        results.append({"jgo": jgo_n, "eq1": eq1, "eq2": eq2, "g1": g1, "g2": g2, "ganador": ganador or "Empate", "skip": False})
+        applied += 1
+
+    # Propagar bracket (actualiza EQ1/EQ2 de rondas siguientes)
+    _invalidate_games()
+    bracket_changes = _propagate_bracket()
+    _invalidate_games()
+
+    return {"applied": applied, "skipped": skipped, "results": results, "bracket_changes": bracket_changes}
+
+
 @app.post("/api/admin/fix-grupos-wc2026")
 async def admin_fix_grupos_wc2026(ql_admin: str = Cookie(default="")):
     """
