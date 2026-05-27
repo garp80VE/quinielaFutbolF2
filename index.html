@@ -2396,8 +2396,10 @@ function renderGames(games) {
     //    Si algún equipo es placeholder ('Gan. JGO X', 'Round of 32 N Winner'),
     //    no tocar el ganador — no podemos validarlo contra un placeholder.
     const _peIsReal = s => !!(s && s !== 'TBD' && !s.startsWith('Gan. ') && !s.startsWith('Perdedor ') && !isPlaceholder(s));
+    if (p.ganador) console.log('[NORM]', jgo, 'gan=',p.ganador, 'rPGanBtn=',rPGanBtn, 'pe1=',pe1, 'pe2=',pe2, 'pe1real=',_peIsReal(pe1), 'pe2real=',_peIsReal(pe2));
     if (p.ganador && _peIsReal(pe1) && _peIsReal(pe2) && rPGanBtn !== pe1 && rPGanBtn !== pe2) {
       // Valor realmente obsoleto (no resuelve a ninguno de los equipos confirmados)
+      console.log('[NORM-CLEAR]', jgo, 'BORRANDO ganador=',p.ganador);
       p.ganador = '';
       S.picks[String(jgo)].ganador = '';
     }
