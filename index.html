@@ -2391,11 +2391,13 @@ function renderGames(games) {
     // rPGanBtn resuelve placeholders: 'Round of 32 4 Winner' -> 'Paises Bajos'
     const rPGanBtn = resolveTeamName(p.ganador||'') || p.ganador || '';
 
-    // ── Normalizar ganador: usar rPGanBtn (valor resuelto) en la comparación
-    //    para que un ganador guardado como placeholder (ej: 'Round of 32 4 Winner')
-    //    que resuelve al equipo correcto NO sea borrado innecesariamente.
-    if (p.ganador && pe1 && pe2 && rPGanBtn !== pe1 && rPGanBtn !== pe2) {
-      // Valor realmente obsoleto (no resuelve a ninguno de los equipos del partido)
+    // ── Normalizar ganador: solo limpiar si AMBOS equipos son nombres reales
+    //    y el ganador resuelto no coincide con ninguno.
+    //    Si algún equipo es placeholder ('Gan. JGO X', 'Round of 32 N Winner'),
+    //    no tocar el ganador — no podemos validarlo contra un placeholder.
+    const _peIsReal = s => !!(s && s !== 'TBD' && !s.startsWith('Gan. ') && !s.startsWith('Perdedor ') && !isPlaceholder(s));
+    if (p.ganador && _peIsReal(pe1) && _peIsReal(pe2) && rPGanBtn !== pe1 && rPGanBtn !== pe2) {
+      // Valor realmente obsoleto (no resuelve a ninguno de los equipos confirmados)
       p.ganador = '';
       S.picks[String(jgo)].ganador = '';
     }
@@ -2408,8 +2410,11 @@ function renderGames(games) {
       }
     }
 
-    const ganSel1 = !!(pe1 && (rPGanBtn === pe1 || p.ganador === pe1));
-    const ganSel2 = !!(pe2 && (rPGanBtn === pe2 || p.ganador === pe2));
+    // ganSel: también verificar p.eq1/p.eq2 almacenados cuando pe1/pe2 son placeholders
+    const ganSel1 = !!(pe1 && (rPGanBtn === pe1 || p.ganador === pe1))
+      || (!_peIsReal(pe1) && !!p.eq1 && (rPGanBtn === p.eq1 || p.ganador === p.eq1));
+    const ganSel2 = !!(pe2 && (rPGanBtn === pe2 || p.ganador === pe2))
+      || (!_peIsReal(pe2) && !!p.eq2 && (rPGanBtn === p.eq2 || p.ganador === p.eq2));
     const ganCls1 = `btn-w flex-1 py-2.5 rounded-2xl text-xs font-bold ${ganSel1?'sel':''}`;
     const ganCls2 = `btn-w flex-1 py-2.5 rounded-2xl text-xs font-bold ${ganSel2?'sel':''}`;
     // Botón deshabilitado si equipo aún no confirmado (inferred "Gan. JGO X") o bloqueado
