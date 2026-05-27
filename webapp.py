@@ -2219,47 +2219,70 @@ async def get_standings():
 @app.get("/api/my-points")
 async def get_my_points(email: str = Query(""), phone: str = Query("")):
     try:
-        p = find_player_any(phone=phone, email=email)
-        if not p:
+        player = find_player_any(phone=phone, email=email)
+        if not player:
             raise HTTPException(404, "Jugador no encontrado")
+
+        cfg    = state.get("cfg", {})
         games, _ = _get_games_cache()
-        cfg      = state.get("cfg", {})
-        total_j  = int(cfg.get("TOTAL_JUEGOS_F2", 32))
 
-        acquired = _sheets_lock.acquire(timeout=15)
-        if not acquired:
-            raise HTTPException(503, "Servidor ocupado, intenta de nuevo en unos segundos")
-        try:
-            ws       = state["sh"].worksheet(p["TAB_NOMBRE"])
-            tab_data = ws.get(f"A4:R{3+total_j}")
-        finally:
-            _sheets_lock.release()
+        _v_logro   = int(cfg.get("PTS_LOGRO", 1) or 1)
+        _v_gan     = int(cfg.get("PTS_GAN",   2) or 2)
+        _v_gol1    = int(cfg.get("PTS_GOL1",  1) or 1)
+        _v_gol2    = int(cfg.get("PTS_GOL2",  1) or 1)
+        _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
 
-        by_day = {}
+        def _res(g1, g2):
+            try: return "1" if int(g1) > int(g2) else ("2" if int(g1) < int(g2) else "X")
+            except: return ""
+
+        picks_raw = _db.db_get_picks(player["_id"])  # {jgo_str: {g1,g2,gan}}
+
+        by_day    = {}
         total_pts = 0
 
-        for row in tab_data:
-            def c(i, r=row): return r[i].strip() if len(r) > i else ""
-            jgo    = c(0)
-            estado = c(13)   # col N — ESTADO (F2)
-            if not jgo or not estado or estado == "PROG":
+        for jgo_str, pk in picks_raw.items():
+            game = next((g for g in games if g["jgo"] == jgo_str), None)
+            if not game:
                 continue
-            try: pts = int(float(c(19))) if c(19) else 0  # col T = PTS_TOTAL F2
-            except: pts = 0
+            estado = game.get("estado", "")
+            if not estado or estado == "PROG":
+                continue
 
-            game  = next((g for g in games if g["jgo"] == jgo), None)
-            fecha = game["fecha"] if game else c(2)
+            real_g1  = game.get("gol1",    "")
+            real_g2  = game.get("gol2",    "")
+            real_gan = game.get("ganador", "")
+            pick_g1  = pk.get("g1", "") or ""
+            pick_g2  = pk.get("g2", "") or ""
+            pick_gan = pk.get("gan", "") or ""
 
+            if not pick_g1 or not pick_g2 or not pick_gan:
+                pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
+            else:
+                pts_logro = _v_logro if (real_g1 != "" and real_g2 != "" and
+                                          _res(pick_g1, pick_g2) == _res(real_g1, real_g2)) else 0
+                pts_gan   = _v_gan  if (real_gan and pick_gan == real_gan) else 0
+                pts_gol1  = _v_gol1 if (real_g1 != "" and pick_g1 == real_g1) else 0
+                pts_gol2  = _v_gol2 if (real_g2 != "" and pick_g2 == real_g2) else 0
+                pts_campeon = _v_campeon if (
+                    _v_campeon and game.get("ronda","").upper() == "FINAL" and
+                    real_gan and pick_gan == real_gan
+                ) else 0
+                pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_campeon
+
+            fecha = game.get("fecha", "")
             if fecha not in by_day:
                 by_day[fecha] = {"fecha": fecha, "pts": 0, "games": []}
             by_day[fecha]["pts"] += pts
             by_day[fecha]["games"].append({
-                "jgo": jgo, "ronda": c(1), "eq1_real": c(3), "eq2_real": c(4),
-                "pick_eq1": c(5), "pick_gol1": c(6), "pick_gol2": c(7),
-                "pick_eq2": c(8), "pick_ganador": c(9),
-                "gol1_real": c(10), "gol2_real": c(11), "gan_real": c(12),
-                "pts_eq1": c(14), "pts_eq2": c(15), "pts_gan": c(16),
+                "jgo": jgo_str, "ronda": game.get("ronda",""),
+                "eq1_real": game.get("eq1",""), "eq2_real": game.get("eq2",""),
+                "pick_gol1": pick_g1, "pick_gol2": pick_g2,
+                "pick_ganador": pick_gan,
+                "gol1_real": real_g1, "gol2_real": real_g2, "gan_real": real_gan,
                 "pts": pts, "estado": estado,
+                "ok_logro": pts_logro > 0, "ok_gan": pts_gan > 0,
+                "ok_gol1": pts_gol1 > 0,   "ok_gol2": pts_gol2 > 0,
             })
             total_pts += pts
 
@@ -2268,6 +2291,7 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
     except HTTPException:
         raise
     except Exception as e:
+        import traceback; traceback.print_exc()
         print(f"[my-points] ERROR: {e}")
         raise HTTPException(500, "Error leyendo puntos, intenta de nuevo")
 
@@ -2389,60 +2413,54 @@ async def get_game_picks(jgo: int = Query(...)):
     if not game["estado"] or game["estado"] == "PROG":
         raise HTTPException(403, "El juego aún no ha iniciado")
 
-    # Leer lista de jugadores con su propia adquisición del lock
-    with _sheets_lock:
-        ws_j = state["sh"].worksheet("JUGADORES")
-        rows = ws_j.get_all_values()
-    hi, headers = _jugadores_headers(rows)
-    players = []
-    for row in rows[hi + 1:]:
-        if not any(c.strip() for c in row):
-            continue
-        d = _normalize_player({headers[i]: (row[i].strip() if i < len(row) else "")
-                                for i in range(len(headers))})
-        if d.get("NOMBRE") and d.get("TAB_NOMBRE"):
-            players.append(d)
+    cfg      = state.get("cfg", {})
+    real_g1  = game.get("gol1",    "")
+    real_g2  = game.get("gol2",    "")
+    real_gan = game.get("ganador", "")
+    estado   = game.get("estado",  "")
 
-    row_num = jgo + 3   # JGO 1 → fila 4
+    _v_logro   = int(cfg.get("PTS_LOGRO", 1) or 1)
+    _v_gan     = int(cfg.get("PTS_GAN",   2) or 2)
+    _v_gol1    = int(cfg.get("PTS_GOL1",  1) or 1)
+    _v_gol2    = int(cfg.get("PTS_GOL2",  1) or 1)
+    _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
 
-    # Leer tabs de todos los jugadores en paralelo
-    import concurrent.futures
+    def _res(g1, g2):
+        try: return "1" if int(g1) > int(g2) else ("2" if int(g1) < int(g2) else "X")
+        except: return ""
 
-    def _read_player_pick(player):
-        try:
-            with _sheets_lock:
-                ws_p     = state["sh"].worksheet(player["TAB_NOMBRE"])
-                row_data = ws_p.row_values(row_num)
+    all_picks = _db.db_get_all_picks_for_game(str(jgo))
+    game_picks = []
+    for pk in all_picks:
+        pick_gol1 = pk.get("g1_pick", "") or ""
+        pick_gol2 = pk.get("g2_pick", "") or ""
+        pick_gan  = pk.get("gan_pick", "") or ""
 
-            pick_eq1  = row_data[5].strip() if len(row_data) > 5 else ""   # F
-            pick_gol1 = row_data[6].strip() if len(row_data) > 6 else ""   # G
-            pick_gol2 = row_data[7].strip() if len(row_data) > 7 else ""   # H
-            pick_eq2  = row_data[8].strip() if len(row_data) > 8 else ""   # I
-            pick_gan  = row_data[9].strip() if len(row_data) > 9 else ""   # J
+        if not pick_gol1 or not pick_gol2 or not pick_gan:
+            pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
+        else:
+            pts_logro = _v_logro if (real_g1 != "" and real_g2 != "" and
+                                      _res(pick_gol1, pick_gol2) == _res(real_g1, real_g2)) else 0
+            pts_gan   = _v_gan  if (real_gan and pick_gan == real_gan) else 0
+            pts_gol1  = _v_gol1 if (real_g1 != "" and pick_gol1 == real_g1) else 0
+            pts_gol2  = _v_gol2 if (real_g2 != "" and pick_gol2 == real_g2) else 0
+            pts_campeon = _v_campeon if (
+                _v_campeon and game.get("ronda","").upper() == "FINAL" and
+                real_gan and pick_gan == real_gan
+            ) else 0
+            pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_campeon
 
-            # Leer pts directamente de col S (PTS_TOTAL) de la pestaña del jugador
-            # — la fórmula en la hoja ya hace el cálculo correcto con valores de CONFIG
-            pts_raw = row_data[19].strip() if len(row_data) > 19 else ""
-            try:
-                pts = int(float(pts_raw)) if pts_raw != "" else (0 if game["estado"] not in ("", "PROG") else None)
-            except (ValueError, TypeError):
-                pts = None
+        game_picks.append({
+            "nombre":    pk.get("nombre", ""),
+            "pick_gol1": pick_gol1, "pick_gol2": pick_gol2,
+            "pick_gan":  pick_gan,  "pts": pts,
+            "ok_logro":  pts_logro > 0, "ok_gan": pts_gan > 0,
+            "ok_gol1":   pts_gol1  > 0, "ok_gol2": pts_gol2 > 0,
+        })
 
-            return {"nombre": player.get("NOMBRE","?"),
-                    "pick_eq1": pick_eq1, "pick_gol1": pick_gol1,
-                    "pick_gol2": pick_gol2, "pick_eq2": pick_eq2,
-                    "pick_gan": pick_gan, "pts": pts}
-        except Exception:
-            return None
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(_read_player_pick, p) for p in players]
-        result  = [fut.result() for fut in concurrent.futures.as_completed(futures)
-                   if fut.result() is not None]
-
-    result.sort(key=lambda x: (x["pts"] if x["pts"] is not None else -1), reverse=True)
-    is_final = game.get("estado") == "FINAL"
-    data = {"game": game, "picks": result}
+    game_picks.sort(key=lambda x: -x["pts"])
+    is_final = estado == "FINAL"
+    data = {"game": game, "picks": game_picks}
     _game_picks_cache[key] = {"data": data, "ts": now, "final": is_final}
     return data
 
@@ -2555,6 +2573,37 @@ def _compute_compare_picks() -> dict:
     _cache["compare"]    = result
     _cache["compare_ts"] = time.time()
     return result
+
+
+@app.get("/api/probabilities")
+async def get_probabilities():
+    """Retorna distribución de picks por partido (para pantalla Probabilidades)."""
+    games, _ = _get_games_cache()
+    prog = [g for g in games if not g.get("estado") or g["estado"] == "PROG"]
+    if not prog:
+        prog = games  # si todos están terminados, mostrar todos igualmente
+
+    result = []
+    for game in prog:
+        jgo_str   = str(game.get("jgo", ""))
+        all_picks = _db.db_get_all_picks_for_game(jgo_str)
+        total     = len(all_picks)
+        eq1       = game.get("eq1", "")
+        eq2       = game.get("eq2", "")
+        c1 = sum(1 for p in all_picks if (p.get("gan_pick") or "") == eq1)
+        c2 = sum(1 for p in all_picks if (p.get("gan_pick") or "") == eq2)
+        co = total - c1 - c2
+        result.append({
+            "jgo":   jgo_str,
+            "ronda": game.get("ronda",""),
+            "eq1":   eq1, "eq2": eq2,
+            "total": total,
+            "picks_eq1": c1, "picks_eq2": c2, "picks_other": co,
+            "pct_eq1": round(c1/total*100) if total else 0,
+            "pct_eq2": round(c2/total*100) if total else 0,
+        })
+
+    return {"players": [], "fixed_games": 0, "games": result}
 
 
 @app.get("/api/compare-picks")
@@ -4208,9 +4257,9 @@ async def admin_sim_range(body: dict, ql_admin: str = Cookie(default="")):
         g1 = random.choice(_GOALS)
         g2 = random.choice(_GOALS)
 
-        # En eliminatorias (R16, QF, SF, 3ER, FINAL) no puede haber empate → elegir ganador al azar
+        # En eliminatorias (R32, R16, QF, SF, 3ER, FINAL) no puede haber empate → elegir ganador al azar
         ronda = h.get("grupo", "")
-        knockout = ronda in ("R16", "QF", "SF", "3ER", "FINAL")
+        knockout = ronda in ("R32", "R16", "QF", "SF", "3ER", "FINAL")
         if g1 == g2 and knockout:
             if random.random() < 0.5:
                 g1 = g2 + 1
@@ -4575,7 +4624,7 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
                     eq2_new = f"Round of {rof} {2*i+2} Winner"
                     conn.execute("UPDATE horarios SET eq1=?, eq2=? WHERE jgo=?",
                                  (eq1_new, eq2_new, jgo))
- 
+
     conn.close()
 
     _invalidate_games()
@@ -4587,7 +4636,7 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 — Backend")
+    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 - Backend")
     parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
                         help="Puerto HTTP (default: $PORT o 8080)")
     parser.add_argument("--sheet", type=str, default="",
