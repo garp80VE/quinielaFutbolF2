@@ -4788,6 +4788,19 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
 
     conn.close()
 
+    # Borrar picks correspondientes a las rondas limpiadas
+    jgos_limpiados = []
+    for ronda in rondas_a_limpiar:
+        for h in ronda_games.get(ronda, []):
+            jgos_limpiados.append(str(h["jgo"]))
+
+    if jgos_limpiados:
+        conn2 = _db.get_conn()
+        with conn2:
+            placeholders = ",".join("?" * len(jgos_limpiados))
+            conn2.execute(f"DELETE FROM picks WHERE jgo IN ({placeholders})", jgos_limpiados)
+        conn2.close()
+
     _invalidate_games()
     return {
         "ok":  True,

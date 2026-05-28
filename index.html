@@ -729,6 +729,13 @@
             <div id="game-editor-msg" style="display:none;margin-top:8px;font-size:12px;padding:8px 10px;border-radius:8px"></div>
           </div>
 
+          <!-- ── Fix Bracket ── -->
+          <button onclick="adminFixBracket()" id="btn-fix-bracket"
+            style="width:100%;background:linear-gradient(135deg,#0f766e,#0d9488);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">
+            🔗 Fix Bracket — Propagar cruces
+          </button>
+          <div id="fix-bracket-msg" style="display:none;background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:10px 12px;font-size:12px;color:#166534"></div>
+
           <!-- ── Reset de prueba ── -->
           <div style="background:#fff1f2;border:1.5px solid #fda4af;border-radius:12px;padding:14px">
             <p style="font-size:13px;font-weight:800;color:#be123c;margin:0 0 6px">🔄 Reiniciar prueba desde cero</p>
@@ -892,38 +899,7 @@
       </div><!-- /adm-body-pozo -->
     </div>
 
-    <!-- Sección: Logo -->
-    <div class="card-open rounded-3xl overflow-hidden">
-      <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-logo','chev-logo')">
-        <div style="flex:1">
-          <p style="font-weight:800;font-size:14px;color:#1e293b;margin:0">🖼 Logo / Ícono</p>
-          <p style="font-size:12px;color:#64748b;margin:2px 0 0">Ícono de la app y pantalla de inicio</p>
-        </div>
-        <svg id="chev-logo" class="adm-sec-chev" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
-      </div>
-      <div id="adm-body-logo" class="adm-section-body">
-      <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
-        <div style="display:flex;align-items:center;gap:14px">
-          <img id="logo-preview" src="/logo.png" onerror="this.src='/icon-192.png'"
-            style="width:72px;height:72px;border-radius:14px;object-fit:cover;border:2px solid #e2e8f0;flex-shrink:0">
-          <div style="flex:1">
-            <label style="display:block;font-size:12px;font-weight:600;color:#64748b;margin-bottom:6px">Subir nueva imagen</label>
-            <input type="file" id="logo-file" accept="image/*"
-              style="display:none" onchange="previewLogo(this)">
-            <button onclick="document.getElementById('logo-file').click()"
-              style="background:#f1f5f9;border:1.5px solid #e2e8f0;border-radius:10px;padding:8px 14px;font-size:13px;font-weight:600;color:#475569;cursor:pointer;width:100%">
-              📁 Seleccionar imagen
-            </button>
-          </div>
-        </div>
-        <button onclick="adminUploadLogo()" id="logo-upload-btn"
-          style="width:100%;background:linear-gradient(135deg,#002868,#1a3a8a);color:white;border:none;border-radius:12px;padding:13px;font-weight:800;font-size:14px;cursor:pointer;display:none">
-          ✅ Guardar como logo
-        </button>
-        <p id="logo-msg" style="display:none;font-size:13px;text-align:center"></p>
-      </div>
-      </div><!-- /adm-body-logo -->
-    </div>
+
 
     <!-- Sección: Caché -->
     <div class="card-open rounded-3xl overflow-hidden">
@@ -948,15 +924,8 @@
       </div><!-- /adm-body-sistema -->
     </div>
 
-    <!-- Sección: Mensajes de prueba -->
-    <div class="card-open rounded-3xl overflow-hidden">
-      <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-msgs','chev-msgs')">
-        <div style="flex:1">
-          <p style="font-weight:800;font-size:14px;color:#1e293b;margin:0">💬 Mensajes de prueba</p>
-          <p style="font-size:12px;color:#64748b;margin:2px 0 0">Push y Telegram</p>
-        </div>
-        <svg id="chev-msgs" class="adm-sec-chev" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
-      </div>
+    <!-- Sección: Mensajes (oculto durante pruebas) -->
+    <div class="card-open rounded-3xl overflow-hidden" style="display:none">
       <div id="adm-body-msgs" class="adm-section-body">
       <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
         <button onclick="adminPushSetup()" id="btn-push-setup"
@@ -1033,43 +1002,11 @@
       </div><!-- /adm-body-msgs -->
     </div>
 
-    <!-- Sección: Sorteo en Vivo -->
-    <div class="card-open rounded-3xl overflow-hidden" id="adm-sorteo-section" style="border-color:#ddd6fe;border-left-color:#7c3aed">
-      <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-sorteo-live','chev-sorteo-live')" style="background:#faf5ff">
-        <div style="flex:1">
-          <p style="font-weight:800;font-size:14px;color:#6d28d9;margin:0">🎲 Sorteo en Vivo</p>
-          <p id="adm-sorteo-estado-txt" style="font-size:12px;color:#94a3b8;margin:2px 0 0">Cargando estado...</p>
-        </div>
-        <svg id="chev-sorteo-live" class="adm-sec-chev" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#7c3aed"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
-      </div>
-      <div id="adm-body-sorteo-live" class="adm-section-body" style="display:none">
-        <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
-          <!-- Estado actual -->
-          <div id="adm-sorteo-info" style="background:#f5f3ff;border-radius:12px;padding:12px 14px">
-            <p id="adm-sorteo-info-txt" style="font-size:13px;color:#4c1d95;margin:0;font-weight:600">—</p>
-          </div>
-          <!-- Botones -->
-          <button id="btn-sorteo-launch" onclick="sorteoLanzar()"
-            style="width:100%;background:linear-gradient(135deg,#7c3aed,#a21caf);color:white;border:none;border-radius:12px;padding:13px;font-weight:800;font-size:14px;cursor:pointer">
-            🚀 Lanzar sorteo en vivo ahora
-          </button>
-          <!-- Sacar ganador: visible solo cuando sorteo está en vivo -->
-          <div id="adm-sorteo-draw-wrap" style="display:none">
-            <button id="adm-sorteo-draw-btn" onclick="sorteoSacar()"
-              style="width:100%;background:linear-gradient(135deg,#7c3aed,#4c1d95);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer;transition:opacity .2s">
-              🎲 SACAR GANADOR #1 de 2
-            </button>
-          </div>
-          <button onclick="sorteoReset()"
-            style="width:100%;background:white;color:#64748b;border:1.5px solid #e2e8f0;border-radius:12px;padding:11px;font-weight:700;font-size:13px;cursor:pointer">
-            🔄 Resetear sorteo
-          </button>
-          <p style="font-size:11px;color:#94a3b8;text-align:center;margin:0">
-            La fecha/hora se configura en la sección "Configuración del torneo" arriba.
-            El botón activa el sorteo inmediatamente para todos los usuarios.
-          </p>
-        </div>
-      </div>
+    <!-- Sorteo: oculto durante pruebas — activar cuando se necesite -->
+    <div id="adm-sorteo-section" style="display:none">
+      <div id="adm-sorteo-info" style="display:none"><p id="adm-sorteo-info-txt"></p></div>
+      <div id="adm-sorteo-draw-wrap" style="display:none"></div>
+      <p id="adm-sorteo-estado-txt" style="display:none"></p>
     </div>
 
     <!-- Sección: Reset -->
@@ -5554,6 +5491,28 @@ async function adminResetTest() {
   } catch(e) {
     if (msg) { msg.style.background='#fef2f2'; msg.style.color='#991b1b'; msg.textContent='❌ '+e.message; }
     showToast('❌ '+e.message);
+  }
+}
+
+async function adminFixBracket() {
+  const btn = document.getElementById('btn-fix-bracket');
+  const msg = document.getElementById('fix-bracket-msg');
+  if (btn) { btn.disabled=true; btn.textContent='⏳ Propagando...'; }
+  if (msg) { msg.style.display='none'; }
+  try {
+    const r = await api('POST', '/api/admin/fix-bracket');
+    if (msg) {
+      msg.style.display='block';
+      msg.style.background='#f0fdf4'; msg.style.color='#166534';
+      msg.textContent = `✅ ${r.total} cambio(s) aplicado(s)` + (r.changes?.length ? ': ' + r.changes.map(c=>c[0]+' '+c[1]).join(', ') : '');
+    }
+    showToast('✅ Bracket actualizado');
+    _pollTick().catch(()=>{});
+  } catch(e) {
+    if (msg) { msg.style.display='block'; msg.style.background='#fef2f2'; msg.style.color='#991b1b'; msg.textContent='❌ '+e.message; }
+    showToast('❌ '+e.message);
+  } finally {
+    if (btn) { btn.disabled=false; btn.textContent='🔗 Fix Bracket — Propagar cruces'; }
   }
 }
 
