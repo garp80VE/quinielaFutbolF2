@@ -317,7 +317,7 @@
   </div>
   <div class="scroll-area px-4 py-4 space-y-3" id="games-list" style="padding-bottom:16px"></div>
   <div class="bg-white border-t border-gray-100 px-4 py-3 flex-shrink-0">
-    <button onclick="saveGroupAndBack()"
+    <button id="save-group-btn" onclick="saveGroupAndBack()"
       class="w-full py-3.5 rounded-2xl font-black text-base text-emerald-900"
       style="background:linear-gradient(135deg,#fbbf24,#f59e0b)">
       💾 &nbsp;Guardar picks del grupo
@@ -2485,6 +2485,37 @@ function renderGames(games) {
       </div>`;
     list.appendChild(card);
   });
+  updateSaveButton();
+}
+
+function updateSaveButton() {
+  const btn = document.getElementById('save-group-btn');
+  if (!btn || !curGroup) return;
+  const games = curGroup.games || [];
+  const rondaSuperiores = ['R16','QF','SF','3ER','FINAL'];
+  let allLocked = false;
+  if (games.length > 0) {
+    if (rondaSuperiores.includes(games[0].ronda)) {
+      const r32games = S.games.filter(x => x.ronda === 'R32');
+      if (r32games.length > 0) {
+        const lastR32 = r32games.reduce((a,b) => parseInt(a.jgo)>parseInt(b.jgo)?a:b);
+        allLocked = !!(lastR32.estado && lastR32.estado !== 'PROG');
+      }
+    } else {
+      allLocked = games.every(g => { const e = g.estado||''; return e && e !== 'PROG'; });
+    }
+  }
+  if (allLocked) {
+    btn.onclick = goBack;
+    btn.style.background = 'linear-gradient(135deg,#64748b,#475569)';
+    btn.className = 'w-full py-3.5 rounded-2xl font-black text-base text-white';
+    btn.innerHTML = '\u2190 &nbsp;Regresar';
+  } else {
+    btn.onclick = saveGroupAndBack;
+    btn.style.background = 'linear-gradient(135deg,#fbbf24,#f59e0b)';
+    btn.className = 'w-full py-3.5 rounded-2xl font-black text-base text-emerald-900';
+    btn.innerHTML = '&#128190; &nbsp;Guardar picks del grupo';
+  }
 }
 
 function updateGroupCounter(games) {
