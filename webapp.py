@@ -2171,7 +2171,8 @@ async def save_picks(body: SavePicksBody):
 
         _db.db_save_pick(
             int(player_id), str(pick.jgo),
-            str(pick.gol1), str(pick.gol2), str(pick.ganador)
+            str(pick.gol1), str(pick.gol2), str(pick.ganador),
+            eq1=str(pick.eq1 or ""), eq2=str(pick.eq2 or "")
         )
         guardados += 1
 
@@ -2252,11 +2253,24 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
             real_g1  = game.get("gol1",    "")
             real_g2  = game.get("gol2",    "")
             real_gan = game.get("ganador", "")
+            eq1_real = game.get("eq1", "")
+            eq2_real = game.get("eq2", "")
             pick_g1  = pk.get("g1", "") or ""
             pick_g2  = pk.get("g2", "") or ""
             pick_gan = pk.get("gan", "") or ""
+            eq1_pick = pk.get("eq1", "") or ""
+            eq2_pick = pk.get("eq2", "") or ""
 
-            if not pick_g1 or not pick_g2 or not pick_gan:
+            # teamAlive: al menos 1 equipo predicho debe estar en el partido real
+            team_alive = True
+            if eq1_real and eq2_real:
+                real_teams = {eq1_real.strip(), eq2_real.strip()}
+                pred_teams = {eq1_pick.strip(), eq2_pick.strip(), pick_gan.strip()}
+                pred_teams = {t for t in pred_teams if t and not t.startswith("Gan. ")}
+                if pred_teams and not (pred_teams & real_teams):
+                    team_alive = False
+
+            if not pick_g1 or not pick_g2 or not pick_gan or not team_alive:
                 pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
             else:
                 pts_logro = _v_logro if (real_g1 != "" and real_g2 != "" and
@@ -2276,11 +2290,13 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
             by_day[fecha]["pts"] += pts
             by_day[fecha]["games"].append({
                 "jgo": jgo_str, "ronda": game.get("ronda",""),
-                "eq1_real": game.get("eq1",""), "eq2_real": game.get("eq2",""),
+                "eq1_real": eq1_real, "eq2_real": eq2_real,
+                "pick_eq1": eq1_pick, "pick_eq2": eq2_pick,
                 "pick_gol1": pick_g1, "pick_gol2": pick_g2,
                 "pick_ganador": pick_gan,
                 "gol1_real": real_g1, "gol2_real": real_g2, "gan_real": real_gan,
                 "pts": pts, "estado": estado,
+                "team_alive": team_alive,
                 "ok_logro": pts_logro > 0, "ok_gan": pts_gan > 0,
                 "ok_gol1": pts_gol1 > 0,   "ok_gol2": pts_gol2 > 0,
             })
@@ -3748,6 +3764,110 @@ async def admin_debug_picks(jgo_desde: int = 17, jgo_hasta: int = 24, ql_admin: 
         return {"jgo_desde": jgo_desde, "jgo_hasta": jgo_hasta, "jugadores": result}
     finally:
         conn.close()
+
+@app.post("/api/admin/backfill-eq-picks")
+async def admin_backfill_eq_picks(ql_admin: str = Cookie(default="")):
+    """Rellena eq1_pick/eq2_pick retroactivamente para picks existentes que los tengan vacios.
+    Usa _inferBracketSlot (misma logica que el frontend) para deducir los equipos predichos
+    a partir del gan_pick en rondas anteriores.
+    Solo afecta filas donde eq1_pick='' Y eq2_pick=''.
+    """
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+
+    games, _ = _get_games_cache()
+    games_map = {g["jgo"]: g for g in games}
+
+    # Mapa WC2026: misma logica que webapp.py _propagate_bracket y frontend _inferBracketSlot
+    WC2026_MAP = {
+        "R16": [[0,1],[4,5],[2,3],[7,6],[8,9],[12,13],[10,11],[15,14]],
+        "QF":  [[0,1],[4,5],[2,3],[7,6]],
+        "SF":  [[0,1],[2,3]],
+        "FINAL": [[0,1]],
+        "3ER":   [[0,1]],
+    }
+    # Juegos R32 y R16 ordenados por jgo
+    def _sorted_ronda(ronda):
+        return sorted([g for g in games if g.get("ronda") == ronda],
+                      key=lambda g: int(g["jgo"]) if str(g["jgo"]).isdigit() else 0)
+
+    r32 = _sorted_ronda("R32")
+    r16 = _sorted_ronda("R16")
+    qf  = _sorted_ronda("QF")
+    sf  = _sorted_ronda("SF")
+
+    ronda_lists = {"R32": r32, "R16": r16, "QF": qf, "SF": sf}
+
+    def _infer_teams(jgo_str: str, picks_for_player: dict):
+        """Dado un jgo y los picks del jugador, infiere los equipos que el jugador
+        esperaba que jugaran ese partido (igual que _inferBracketSlot en frontend)."""
+        game = games_map.get(jgo_str)
+        if not game:
+            return "", ""
+        ronda = game.get("ronda", "")
+        if ronda == "R32":
+            return game.get("eq1",""), game.get("eq2","")
+        slot_map = WC2026_MAP.get(ronda)
+        if not slot_map:
+            return game.get("eq1",""), game.get("eq2","")
+        # Encontrar el indice de este juego en su ronda
+        ronda_games = ronda_lists.get(ronda, [])
+        try:
+            idx = next(i for i,g in enumerate(ronda_games) if g["jgo"] == jgo_str)
+        except StopIteration:
+            return game.get("eq1",""), game.get("eq2","")
+        if idx >= len(slot_map):
+            return game.get("eq1",""), game.get("eq2","")
+        prev_indices = slot_map[idx]  # [i1, i2] indices de juegos de ronda anterior
+        # Ronda anterior
+        prev_ronda = {"R16":"R32", "QF":"R16", "SF":"QF", "FINAL":"SF", "3ER":"SF"}.get(ronda)
+        if not prev_ronda:
+            return game.get("eq1",""), game.get("eq2","")
+        prev_games = ronda_lists.get(prev_ronda, [])
+
+        def _get_predicted_winner(prev_idx):
+            if prev_idx >= len(prev_games):
+                return ""
+            prev_g = prev_games[prev_idx]
+            pk = picks_for_player.get(prev_g["jgo"]) or picks_for_player.get(str(prev_g["jgo"])) or {}
+            return pk.get("gan", "") or ""
+
+        eq1 = _get_predicted_winner(prev_indices[0]) if len(prev_indices) > 0 else ""
+        eq2 = _get_predicted_winner(prev_indices[1]) if len(prev_indices) > 1 else ""
+        return eq1, eq2
+
+    conn = _db.get_conn()
+    try:
+        jugadores = conn.execute("SELECT id FROM jugadores").fetchall()
+        updated = 0
+        for j in jugadores:
+            jid = j["id"]
+            pk_rows = conn.execute(
+                "SELECT jgo, g1_pick, g2_pick, gan_pick, eq1_pick, eq2_pick FROM picks WHERE jugador_id=?",
+                (jid,)
+            ).fetchall()
+            # Construir mapa de picks del jugador para lookup rapido
+            picks_map = {r["jgo"]: {"g1": r["g1_pick"], "g2": r["g2_pick"], "gan": r["gan_pick"]}
+                         for r in pk_rows}
+            for pk in pk_rows:
+                # Solo actualizar si eq1_pick y eq2_pick estan vacios
+                if pk["eq1_pick"] or pk["eq2_pick"]:
+                    continue
+                # Solo para rondas eliminatorias (no R32, que usa equipos reales directamente)
+                game = games_map.get(pk["jgo"])
+                if not game or game.get("ronda") == "R32":
+                    continue
+                eq1p, eq2p = _infer_teams(pk["jgo"], picks_map)
+                if eq1p or eq2p:
+                    conn.execute(
+                        "UPDATE picks SET eq1_pick=?, eq2_pick=? WHERE jugador_id=? AND jgo=?",
+                        (eq1p, eq2p, jid, pk["jgo"])
+                    )
+                    updated += 1
+        conn.commit()
+        return {"updated": updated, "msg": f"Backfill completado: {updated} picks actualizados"}
+    finally:
+        conn.close()
+
 
 @app.get("/api/admin/test-espn")
 async def admin_test_espn(fecha: str = "", ql_admin: str = Cookie(default="")):

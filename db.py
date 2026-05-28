@@ -59,6 +59,8 @@ def init_db():
             g1_pick    TEXT DEFAULT '',
             g2_pick    TEXT DEFAULT '',
             gan_pick   TEXT DEFAULT '',
+            eq1_pick   TEXT DEFAULT '',
+            eq2_pick   TEXT DEFAULT '',
             PRIMARY KEY (jugador_id, jgo)
         );
         CREATE TABLE IF NOT EXISTS ligas (
@@ -75,6 +77,16 @@ def init_db():
             mensaje   TEXT DEFAULT ''
         );
     """)
+    # Migracion incremental: agregar columnas nuevas si no existen (para DBs ya desplegadas)
+    for col_sql in [
+        "ALTER TABLE picks ADD COLUMN eq1_pick TEXT DEFAULT ''",
+        "ALTER TABLE picks ADD COLUMN eq2_pick TEXT DEFAULT ''",
+    ]:
+        try:
+            conn.execute(col_sql)
+            conn.commit()
+        except Exception:
+            pass  # columna ya existe
     conn.close()
 
 # == Config ====================================================================
@@ -227,29 +239,32 @@ def db_update_game_result(jgo: str, estado: str, gol1: str, gol2: str, ganador: 
 # == Picks =====================================================================
 
 def db_get_picks(jugador_id: int) -> dict:
-    """Retorna {jgo_str: {g1, g2, gan}} para un jugador."""
+    """Retorna {jgo_str: {g1, g2, gan, eq1, eq2}} para un jugador."""
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT jgo, g1_pick, g2_pick, gan_pick FROM picks WHERE jugador_id=?",
+            "SELECT jgo, g1_pick, g2_pick, gan_pick, eq1_pick, eq2_pick FROM picks WHERE jugador_id=?",
             (jugador_id,)
         ).fetchall()
-        return {r["jgo"]: {"g1": r["g1_pick"], "g2": r["g2_pick"], "gan": r["gan_pick"]} for r in rows}
+        return {r["jgo"]: {"g1": r["g1_pick"], "g2": r["g2_pick"], "gan": r["gan_pick"],
+                            "eq1": r["eq1_pick"] or "", "eq2": r["eq2_pick"] or ""} for r in rows}
     finally:
         conn.close()
 
-def db_save_pick(jugador_id: int, jgo: str, g1: str, g2: str, gan: str):
+def db_save_pick(jugador_id: int, jgo: str, g1: str, g2: str, gan: str, eq1: str = "", eq2: str = ""):
     """Upsert de un pick individual."""
     conn = get_conn()
     with conn:
         conn.execute("""
-            INSERT INTO picks(jugador_id,jgo,g1_pick,g2_pick,gan_pick)
-            VALUES(?,?,?,?,?)
+            INSERT INTO picks(jugador_id,jgo,g1_pick,g2_pick,gan_pick,eq1_pick,eq2_pick)
+            VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(jugador_id,jgo) DO UPDATE SET
                 g1_pick=excluded.g1_pick,
                 g2_pick=excluded.g2_pick,
-                gan_pick=excluded.gan_pick
-        """, (jugador_id, str(jgo), g1, g2, gan))
+                gan_pick=excluded.gan_pick,
+                eq1_pick=excluded.eq1_pick,
+                eq2_pick=excluded.eq2_pick
+        """, (jugador_id, str(jgo), g1, g2, gan, eq1 or "", eq2 or ""))
     conn.close()
 
 def db_init_picks_for_player(jugador_id: int):
@@ -309,16 +324,30 @@ def db_get_picks_without_pick(jgo: str) -> list:
 
 def _calc_pts(g1_pick, g2_pick, gan_pick, gol1, gol2, ganador, estado,
               pts_logro_val=1, pts_gan_val=2, pts_g1_val=1, pts_g2_val=1,
-              pts_campeon_val=0, ronda=""):
+              pts_campeon_val=0, ronda="",
+              eq1_pick="", eq2_pick="", eq1_real="", eq2_real=""):
     """Calcula puntos para un pick vs resultado real.
     Retorna (pts_logro, pts_gan, pts_g1, pts_g2, total).
     pts_logro:  resultado 1/X/2 correcto (basado en goles).
     pts_gan:    ganador (nombre equipo) correcto.
     pts_g1/g2:  gol exacto correcto.
     pts_campeon: bonus si acierta campeon en ronda FINAL.
+
+    Regla teamAlive (F2): si conocemos los equipos reales (eq1_real/eq2_real),
+    el jugador debe haber predicho al menos 1 de ellos (via eq1_pick, eq2_pick
+    o gan_pick). Si ningun equipo predicho esta en el partido real -> 0 pts.
     """
     if not estado or estado == "PROG":
         return 0, 0, 0, 0, 0
+    # teamAlive: al menos 1 equipo predicho debe estar jugando el partido real
+    _eq1r = (eq1_real or "").strip()
+    _eq2r = (eq2_real or "").strip()
+    if _eq1r and _eq2r:
+        real_teams = {_eq1r, _eq2r}
+        pred_teams = {(eq1_pick or "").strip(), (eq2_pick or "").strip(), (gan_pick or "").strip()}
+        pred_teams = {t for t in pred_teams if t and not t.startswith("Gan. ")}
+        if pred_teams and not (pred_teams & real_teams):
+            return 0, 0, 0, 0, 0
     def _res(a, b):
         try: return "1" if int(a) > int(b) else ("2" if int(a) < int(b) else "X")
         except: return ""
@@ -350,7 +379,7 @@ def db_compute_standings(cfg: dict = None) -> list:
     conn = get_conn()
     try:
         games_rows = conn.execute(
-            "SELECT jgo,grupo,gol1,gol2,ganador,estado FROM horarios WHERE estado!='PROG'"
+            "SELECT jgo,grupo,eq1,eq2,gol1,gol2,ganador,estado FROM horarios WHERE estado!='PROG'"
         ).fetchall()
         games = {r["jgo"]: dict(r) for r in games_rows}
 
@@ -359,7 +388,7 @@ def db_compute_standings(cfg: dict = None) -> list:
         standings = []
         for j in jugadores:
             pk_rows = conn.execute(
-                "SELECT jgo,g1_pick,g2_pick,gan_pick FROM picks WHERE jugador_id=?",
+                "SELECT jgo,g1_pick,g2_pick,gan_pick,eq1_pick,eq2_pick FROM picks WHERE jugador_id=?",
                 (j["id"],)
             ).fetchall()
 
@@ -373,7 +402,9 @@ def db_compute_standings(cfg: dict = None) -> list:
                     pk["g1_pick"], pk["g2_pick"], pk["gan_pick"],
                     game["gol1"], game["gol2"], game["ganador"], game["estado"],
                     pts_logro_val, pts_gan_val, pts_g1_val, pts_g2_val,
-                    pts_campeon_val, game.get("grupo", "")
+                    pts_campeon_val, game.get("grupo", ""),
+                    eq1_pick=pk["eq1_pick"] or "", eq2_pick=pk["eq2_pick"] or "",
+                    eq1_real=game.get("eq1", ""), eq2_real=game.get("eq2", "")
                 )
                 pts_total += ptot
                 if pg  > 0: gan_acert += 1

@@ -312,7 +312,10 @@
         <p style="color:#93c5fd;font-size:12px;font-weight:500">Fase Eliminatoria · F1</p>
         <h2 id="games-title" class="text-xl font-black">Grupo A</h2>
       </div>
-      <div class="ml-auto bg-amber-400 text-emerald-900 text-xs font-black px-3 py-1.5 rounded-xl" id="games-counter">0/6</div>
+      <div class="ml-auto flex items-center gap-2">
+        <button onclick="_manualRefresh()" id="refresh-btn" class="bg-white bg-opacity-20 rounded-xl w-9 h-9 flex items-center justify-center text-lg no-scale" title="Actualizar">&#8635;</button>
+        <div class="bg-amber-400 text-emerald-900 text-xs font-black px-3 py-1.5 rounded-xl" id="games-counter">0/6</div>
+      </div>
     </div>
   </div>
   <div class="scroll-area px-4 py-4 space-y-3" id="games-list" style="padding-bottom:16px"></div>
@@ -2342,11 +2345,13 @@ function renderGames(games) {
       const _res = (g1, g2) => Number(g1) > Number(g2) ? '1' : Number(g1) < Number(g2) ? '2' : 'X';
       const pickResult = _res(p.gol1, p.gol2);
       const realResult = _res(g.gol1, g.gol2);
-      // Regla F2: al menos 1 equipo del pick debe estar jugando en el partido real
+      // Regla F2: al menos 1 equipo PREDICHO por el jugador debe estar en el partido real.
+      // rEq1/rEq2 son los equipos que el jugador predijo para este slot (via _inferBracketSlot).
+      // p.eq1/p.eq2 vienen de horarios (equipos reales) -- NO los usar aqui.
       const _realTeams = [g.eq1, g.eq2].filter(Boolean);
       const teamAlive = _realTeams.length === 0 ||
-        (p.eq1 && _realTeams.includes(p.eq1)) ||
-        (p.eq2 && _realTeams.includes(p.eq2)) ||
+        (rEq1 && !rEq1.startsWith('Gan. ') && _realTeams.includes(rEq1)) ||
+        (rEq2 && !rEq2.startsWith('Gan. ') && _realTeams.includes(rEq2)) ||
         (pickGan && _realTeams.includes(pickGan));
       // PTS_LOGRO: pts si resultado 90min (1/X/2) predicho coincide con real
       const pts_logro = teamAlive && (g.gol1 !== '' && g.gol2 !== '' && pickResult === realResult) ? S.pts.logro : 0;
@@ -3424,11 +3429,20 @@ window.showScreen = function(id) {
 // ─── Auto-polling en vivo ─────────────────────────────────────────
 let _pollTimer     = null;
 let _pollRunning   = false;
-const INTERVAL_LIVE = 10_000;   // 10s cuando hay partidos en vivo
-const INTERVAL_IDLE = 90_000;   // 90s cuando no hay nada activo
+const INTERVAL_LIVE   = 10_000;  // 10s  - partidos en vivo
+const INTERVAL_RECENT = 15_000;  // 15s  - hay FINAL reciente (hoy/ayer)
+const INTERVAL_IDLE   = 30_000;  // 30s  - sin actividad reciente
 
 function _hasLiveGames() {
   return S.games.some(g => ['EN VIVO','MEDIO TIEMPO','PRORROGA','PENALES','1H','2H','HT','ET','PT'].includes(g.estado));
+}
+
+function _hasRecentFinals() {
+  // True si hay algun juego FINAL con fecha de hoy o ayer
+  const now  = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const yesterday = new Date(now - 86400000).toISOString().slice(0, 10);
+  return S.games.some(g => g.estado === 'FINAL' && (g.fecha === today || g.fecha === yesterday));
 }
 
 function _updateLiveIndicator() {
@@ -3507,9 +3521,19 @@ async function _pollTick() {
   }
 }
 
+async function _manualRefresh() {
+  const btn = document.getElementById('refresh-btn');
+  if (btn) { btn.style.opacity = '0.4'; btn.style.pointerEvents = 'none'; }
+  try {
+    await _pollTick();
+  } finally {
+    if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+  }
+}
+
 function _schedulePoll() {
   if (_pollTimer) clearTimeout(_pollTimer);
-  const interval = _hasLiveGames() ? INTERVAL_LIVE : INTERVAL_IDLE;
+  const interval = _hasLiveGames() ? INTERVAL_LIVE : (_hasRecentFinals() ? INTERVAL_RECENT : INTERVAL_IDLE);
   _pollTimer = setTimeout(async () => {
     await _pollTick();
     _schedulePoll();   // reprogramar después de cada tick
