@@ -3156,10 +3156,12 @@ async function loadComparacion(force=false) {
       return;
     }
 
-    const gameCards = games.map(g => {
+    const gameCards = games.map((g, gIdx) => {
       const eq1Disp = resolveTeamName(g.eq1) || g.eq1 || '?';
       const eq2Disp = resolveTeamName(g.eq2) || g.eq2 || '?';
       const { fecha, hora } = formatLocalDT(g);
+      const cardId = `comp-card-${g.jgo}`;
+      const bodyId = `comp-body-${g.jgo}`;
 
       const rows = g.picks.map((p, i) => {
         const pg1  = p.gol1 ?? '';
@@ -3168,7 +3170,6 @@ async function loadComparacion(force=false) {
         const hasMarcador = pg1 !== '' && pg2 !== '';
         const hasPick = hasMarcador && pgan !== '';
         const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
-        // Solo mostrar ganador si hay marcador completo
         const ganDisp = hasPick ? pgan : '—';
         const rowBg = i%2===0 ? '' : 'background:#f8fafc';
         const nameSt = hasPick ? 'color:#1e293b;font-weight:600' : 'color:#94a3b8';
@@ -3179,12 +3180,22 @@ async function loadComparacion(force=false) {
         </tr>`;
       }).join('');
 
+      const picksWithGan = g.picks.filter(p => p.gan).length;
+      const totalPicks   = g.picks.length;
+      const picksBadge   = totalPicks > 0
+        ? `<span style="font-size:10px;background:#ede9fe;color:#7c3aed;border-radius:10px;padding:2px 7px;font-weight:700">${picksWithGan}/${totalPicks} picks</span>`
+        : '';
+
       return `
-        <div class="card-open" style="border-radius:14px;margin-bottom:14px;overflow:hidden">
-          <div style="padding:10px 14px 8px;border-bottom:1px solid #e2e8f0">
+        <div id="${cardId}" class="card-open" style="border-radius:14px;margin-bottom:10px;overflow:hidden">
+          <div onclick="(function(){var b=document.getElementById('${bodyId}');var a=document.getElementById('${cardId}-arrow');var open=b.style.display!=='none';b.style.display=open?'none':'block';a.style.transform=open?'rotate(0deg)':'rotate(180deg)';})()" style="padding:10px 14px 10px;cursor:pointer;user-select:none">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
               <span style="font-size:11px;font-weight:700;color:#64748b">${g.ronda||'F2'} · JGO ${g.jgo}</span>
-              <span style="font-size:11px;color:#64748b">${fecha} ${hora}</span>
+              <div style="display:flex;align-items:center;gap:6px">
+                ${picksBadge}
+                <span style="font-size:11px;color:#64748b">${fecha} ${hora}</span>
+                <span id="${cardId}-arrow" style="font-size:12px;color:#94a3b8;transition:transform .2s;display:inline-block">&#9660;</span>
+              </div>
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
               <span style="font-weight:700;font-size:13px;flex:1;text-align:right;color:#1e293b">${eq1Disp}</span>
@@ -3192,7 +3203,7 @@ async function loadComparacion(force=false) {
               <span style="font-weight:700;font-size:13px;flex:1;color:#1e293b">${eq2Disp}</span>
             </div>
           </div>
-          <div style="overflow-x:auto">
+          <div id="${bodyId}" style="display:none;overflow-x:auto">
             <table style="width:100%;border-collapse:collapse;font-size:12px">
               <thead>
                 <tr style="background:#f1f5f9">
@@ -6262,3 +6273,4 @@ function sorteoStartAnim(tipo, elegibles) {
 </script>
 </body>
 </html>
+                   
