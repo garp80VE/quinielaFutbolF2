@@ -639,10 +639,13 @@ def _propagate_bracket() -> list:
                 f"{fin_lst[0][slot]!r} -> {gan!r}"
             )
             fin_lst[0][slot] = gan
-        if ter_lst and not ter_lst[0][slot]:
+        if ter_lst:
             eq1_sf = resolve(sf_g["eq1"])
             eq2_sf = resolve(sf_g["eq2"])
             loser  = eq2_sf if gan == eq1_sf else (eq1_sf if gan == eq2_sf else None)
+            # Siempre actualizar 3ER con el perdedor (igual que FINAL con el ganador)
+            # La condicion anterior "not ter_lst[0][slot]" era incorrecta: si el slot
+            # ya tenia un valor incorrecto (ej. el ganador), nunca se corregía.
             if loser and not _parse_bracket_ref(loser) and ter_lst[0][slot] != loser:
                 if ter_lst[0][slot] and _parse_bracket_ref(ter_lst[0][slot]):
                     placeholder_map[ter_lst[0][slot]] = loser
@@ -3771,6 +3774,19 @@ async def admin_debug_picks(jgo_desde: int = 17, jgo_hasta: int = 24, ql_admin: 
         return {"jgo_desde": jgo_desde, "jgo_hasta": jgo_hasta, "jugadores": result}
     finally:
         conn.close()
+
+@app.post("/api/admin/fix-bracket")
+async def admin_fix_bracket(ql_admin: str = Cookie(default="")):
+    """Fuerza re-propagacion del bracket completo. Util para corregir 3ER u otros slots
+    que quedaron con equipos incorrectos (ej. ganadores en vez de perdedores)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    try:
+        changes = _propagate_bracket()
+        _invalidate_games()
+        return {"changes": changes, "total": len(changes)}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
 
 @app.post("/api/admin/backfill-eq-picks")
 async def admin_backfill_eq_picks(ql_admin: str = Cookie(default="")):
