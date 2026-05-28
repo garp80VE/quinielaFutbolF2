@@ -3180,19 +3180,12 @@ async function loadComparacion(force=false) {
         </tr>`;
       }).join('');
 
-      const picksWithGan = g.picks.filter(p => p.gan).length;
-      const totalPicks   = g.picks.length;
-      const picksBadge   = totalPicks > 0
-        ? `<span style="font-size:10px;background:#ede9fe;color:#7c3aed;border-radius:10px;padding:2px 7px;font-weight:700">${picksWithGan}/${totalPicks} picks</span>`
-        : '';
-
       return `
         <div id="${cardId}" class="card-open" style="border-radius:14px;margin-bottom:10px;overflow:hidden">
           <div onclick="(function(){var b=document.getElementById('${bodyId}');var a=document.getElementById('${cardId}-arrow');var open=b.style.display!=='none';b.style.display=open?'none':'block';a.style.transform=open?'rotate(0deg)':'rotate(180deg)';})()" style="padding:10px 14px 10px;cursor:pointer;user-select:none">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
               <span style="font-size:11px;font-weight:700;color:#64748b">${g.ronda||'F2'} · JGO ${g.jgo}</span>
               <div style="display:flex;align-items:center;gap:6px">
-                ${picksBadge}
                 <span style="font-size:11px;color:#64748b">${fecha} ${hora}</span>
                 <span id="${cardId}-arrow" style="font-size:12px;color:#94a3b8;transition:transform .2s;display:inline-block">&#9660;</span>
               </div>
