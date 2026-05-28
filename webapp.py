@@ -2893,44 +2893,12 @@ async def admin_get_config(ql_admin: str = Cookie(default="")):
 async def admin_save_config(body: AdminConfigSave, ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
-    ws   = state["sh"].worksheet("CONFIG")
-    rows = ws.get_all_values()
-
-    # Construir mapa clave→fila existente
-    row_map = {}
-    for i, row in enumerate(rows):
-        if row and row[0].strip():
-            row_map[row[0].strip()] = i + 1  # 1-indexed
-
-    # Separar actualizaciones vs. inserciones nuevas
-    updates   = []   # gspread batch_update format
-    new_rows  = []   # filas a agregar al final
-
-    for key, val in body.fields.items():
-        if key in row_map:
-            updates.append({
-                "range": f"B{row_map[key]}",
-                "values": [[val]],
-            })
-        else:
-            new_rows.append([key, val])
-
-    # Un solo batch_update para todas las actualizaciones (evita Quota 429)
-    if updates:
-        _sheets_retry(lambda: ws.batch_update(updates, value_input_option="RAW"))
-
-    # Inserciones de campos nuevos (normalmente pocas o ninguna)
-    for pair in new_rows:
-        next_row = len(rows) + 1
-        rows.append(pair)  # actualizar lista local para siguiente índice
-        _sheets_retry(lambda p=pair, r=next_row: ws.update(
-            [p], f"A{r}:B{r}", value_input_option="RAW"))
-
+    # Guardar en SQLite
+    _db.db_save_config(body.fields)
     # Refrescar config en memoria
-    state["cfg"] = read_config(state["sh"])
+    state["cfg"] = _db.db_get_config()
     _invalidate_games()
     return {"ok": True}
-
 
 @app.get("/api/admin/players")
 async def admin_get_players(ql_admin: str = Cookie(default="")):
