@@ -3721,6 +3721,34 @@ async def push_status(ql_admin: str = Cookie(default="")):
             "subs_file": str(_SUBS_FILE), "file_exists": _SUBS_FILE.exists()}
 
 
+@app.get("/api/admin/debug-picks")
+async def admin_debug_picks(jgo_desde: int = 17, jgo_hasta: int = 24, ql_admin: str = Cookie(default="")):
+    """Diagnóstico: muestra picks de todos los jugadores para un rango de JGO."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    conn = _db.get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT j.nombre, p.jgo, p.g1_pick, p.g2_pick, p.gan_pick
+            FROM picks p JOIN jugadores j ON j.id = p.jugador_id
+            WHERE CAST(p.jgo AS INTEGER) BETWEEN ? AND ?
+            ORDER BY j.nombre, CAST(p.jgo AS INTEGER)
+        """, (jgo_desde, jgo_hasta)).fetchall()
+        result = {}
+        for r in rows:
+            nombre = r["nombre"]
+            if nombre not in result:
+                result[nombre] = []
+            result[nombre].append({
+                "jgo": r["jgo"],
+                "g1": r["g1_pick"] or "",
+                "g2": r["g2_pick"] or "",
+                "gan": r["gan_pick"] or "",
+                "tiene_pick": bool(r["g1_pick"] or r["g2_pick"] or r["gan_pick"])
+            })
+        return {"jgo_desde": jgo_desde, "jgo_hasta": jgo_hasta, "jugadores": result}
+    finally:
+        conn.close()
+
 @app.get("/api/admin/test-espn")
 async def admin_test_espn(fecha: str = "", ql_admin: str = Cookie(default="")):
     """Diagnóstico: consulta ESPN y devuelve los partidos encontrados para una fecha."""
