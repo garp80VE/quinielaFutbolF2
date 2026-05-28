@@ -3435,8 +3435,9 @@ window.showScreen = function(id) {
 // ─── Auto-polling en vivo ─────────────────────────────────────────
 let _pollTimer     = null;
 let _pollRunning   = false;
+let _lastDataTs    = 0;   // data_ts del último poll exitoso (ms epoch)
 const INTERVAL_LIVE   = 10_000;  // 10s  - partidos en vivo
-const INTERVAL_RECENT = 15_000;  // 15s  - hay FINAL reciente (hoy/ayer)
+const INTERVAL_RECENT = 15_000;  // 15s  - hay FINAL reciente (hoy/ayer) o datos recién cambiaron
 const INTERVAL_IDLE   = 30_000;  // 30s  - sin actividad reciente
 
 function _hasLiveGames() {
@@ -3449,6 +3450,11 @@ function _hasRecentFinals() {
   const today = now.toISOString().slice(0, 10);
   const yesterday = new Date(now - 86400000).toISOString().slice(0, 10);
   return S.games.some(g => g.estado === 'FINAL' && (g.fecha === today || g.fecha === yesterday));
+}
+
+function _dataChangedRecently() {
+  // True si el servidor reportó un cambio de datos en los últimos 60s
+  return _lastDataTs > 0 && (Date.now() - _lastDataTs) < 60_000;
 }
 
 function _updateLiveIndicator() {
@@ -3472,6 +3478,12 @@ async function _pollTick() {
     const gRes = await api('GET', '/api/games');
     const newGames = gRes.games || [];
     if (!newGames.length) return;
+
+    // Detectar cambios de datos del servidor para calibrar interval
+    const serverDataTs = gRes.data_ts || 0;
+    if (serverDataTs && serverDataTs !== _lastDataTs) {
+      _lastDataTs = serverDataTs;
+    }
 
     // Actualizar S.games preservando estructura de grupos
     S.games = newGames;
@@ -3539,7 +3551,11 @@ async function _manualRefresh() {
 
 function _schedulePoll() {
   if (_pollTimer) clearTimeout(_pollTimer);
-  const interval = _hasLiveGames() ? INTERVAL_LIVE : (_hasRecentFinals() ? INTERVAL_RECENT : INTERVAL_IDLE);
+  const interval = _hasLiveGames()
+    ? INTERVAL_LIVE
+    : (_hasRecentFinals() || _dataChangedRecently())
+      ? INTERVAL_RECENT
+      : INTERVAL_IDLE;
   _pollTimer = setTimeout(async () => {
     await _pollTick();
     _schedulePoll();   // reprogramar después de cada tick

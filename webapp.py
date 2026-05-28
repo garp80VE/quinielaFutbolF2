@@ -415,6 +415,7 @@ _cache: dict = {
     "games":     None,
     "estados":   None,
     "games_ts":  0.0,
+    "data_change_ts": 0.0,  # timestamp del último cambio real de datos (para clientes)
     "prob":      None, # resultado de _compute_probabilities()
     "prob_ts":   0.0,  # timestamp del último cálculo de probabilidades
     "top5_text": "",   # top 5 en texto plano (para notificaciones)
@@ -478,6 +479,7 @@ def _get_games_cache():
 
 def _invalidate_games():
     _cache["games_ts"] = 0
+    _cache["data_change_ts"] = time.time()
 
 def _invalidate_players():
     _cache["players_ts"] = 0
@@ -2104,7 +2106,8 @@ async def get_games():
     # Adjuntar minuto desde cache en memoria (sin llamada extra a Sheets)
     for g in games:
         g["minuto"] = _live_clocks.get(g.get("espn_id", ""), "")
-    return {"games": games, "has_finals": has_finals}
+    return {"games": games, "has_finals": has_finals,
+            "data_ts": int(_cache["data_change_ts"] * 1000)}
 
 
 # ââ Picks âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
