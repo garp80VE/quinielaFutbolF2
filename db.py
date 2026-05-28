@@ -357,12 +357,22 @@ def _calc_pts(g1_pick, g2_pick, gan_pick, gol1, gol2, ganador, estado,
     g1_p     = str(g1_pick or "").strip()
     g2_p     = str(g2_pick or "").strip()
     gan_p    = (gan_pick or "").strip()
+    # Detectar orden invertido: el jugador eligio eq1_pick como su equipo1 pero en horarios
+    # ese equipo es eq2_real. En ese caso cruzar goles para comparar correctamente.
+    _e1p = (eq1_pick or "").strip()
+    _e2r_cmp = (eq2_real or "").strip()
+    _e2p = (eq2_pick or "").strip()
+    _e1r_cmp = (eq1_real or "").strip()
+    _inverted = bool((_e1p and _e2r_cmp and _e1p == _e2r_cmp) or
+                     (_e2p and _e1r_cmp and _e2p == _e1r_cmp))
+    g1r_eff = g2_real if _inverted else g1_real
+    g2r_eff = g1_real if _inverted else g2_real
     res_pick = _res(g1_p, g2_p) if (g1_p and g2_p) else ""
-    res_real = _res(g1_real, g2_real) if (g1_real and g2_real) else ""
+    res_real = _res(g1r_eff, g2r_eff) if (g1r_eff and g2r_eff) else ""
     pl  = pts_logro_val if (res_pick and res_real and res_pick == res_real) else 0
     pg  = pts_gan_val if (gan_p and gan_real and gan_p == gan_real) else 0
-    pg1 = pts_g1_val  if (g1_p and g1_real and g1_p == g1_real) else 0
-    pg2 = pts_g2_val  if (g2_p and g2_real and g2_p == g2_real) else 0
+    pg1 = pts_g1_val  if (g1_p and g1r_eff and g1_p == g1r_eff) else 0
+    pg2 = pts_g2_val  if (g2_p and g2r_eff and g2_p == g2r_eff) else 0
     pc  = pts_campeon_val if (pts_campeon_val and ronda.upper() == "FINAL"
                              and gan_p and gan_real and gan_p == gan_real) else 0
     return pl, pg, pg1, pg2, pl + pg + pg1 + pg2 + pc

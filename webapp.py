@@ -2273,11 +2273,18 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
             if not pick_g1 or not pick_g2 or not pick_gan or not team_alive:
                 pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
             else:
-                pts_logro = _v_logro if (real_g1 != "" and real_g2 != "" and
-                                          _res(pick_g1, pick_g2) == _res(real_g1, real_g2)) else 0
+                # Detectar orden invertido (eq1_pick es eq2 en horarios) y cruzar goles
+                _inverted = bool(
+                    (eq1_pick and eq2_real and eq1_pick.strip() == eq2_real.strip()) or
+                    (eq2_pick and eq1_real and eq2_pick.strip() == eq1_real.strip())
+                )
+                g1r_eff = real_g2 if _inverted else real_g1
+                g2r_eff = real_g1 if _inverted else real_g2
+                pts_logro = _v_logro if (g1r_eff != "" and g2r_eff != "" and
+                                          _res(pick_g1, pick_g2) == _res(g1r_eff, g2r_eff)) else 0
                 pts_gan   = _v_gan  if (real_gan and pick_gan == real_gan) else 0
-                pts_gol1  = _v_gol1 if (real_g1 != "" and pick_g1 == real_g1) else 0
-                pts_gol2  = _v_gol2 if (real_g2 != "" and pick_g2 == real_g2) else 0
+                pts_gol1  = _v_gol1 if (g1r_eff != "" and pick_g1 == g1r_eff) else 0
+                pts_gol2  = _v_gol2 if (g2r_eff != "" and pick_g2 == g2r_eff) else 0
                 pts_campeon = _v_campeon if (
                     _v_campeon and game.get("ronda","").upper() == "FINAL" and
                     real_gan and pick_gan == real_gan
