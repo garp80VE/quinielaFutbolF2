@@ -2577,34 +2577,89 @@ def _compute_compare_picks() -> dict:
 
 @app.get("/api/probabilities")
 async def get_probabilities():
-    """Retorna distribución de picks por partido (para pantalla Probabilidades)."""
+    """Distribucion de picks + standings para pantalla Probabilidades."""
     games, _ = _get_games_cache()
-    prog = [g for g in games if not g.get("estado") or g["estado"] == "PROG"]
-    if not prog:
-        prog = games  # si todos están terminados, mostrar todos igualmente
+    cfg = state.get("cfg", {})
 
-    result = []
-    for game in prog:
+    all_games   = games
+    fixed_games = [g for g in all_games if g.get("estado") == "FINAL"]
+    prog_games  = [g for g in all_games if not g.get("estado") or g["estado"] == "PROG"]
+
+    # Pick distribution por partido pendiente
+    game_dist = []
+    for game in prog_games:
         jgo_str   = str(game.get("jgo", ""))
-        all_picks = _db.db_get_all_picks_for_game(jgo_str)
-        total     = len(all_picks)
         eq1       = game.get("eq1", "")
         eq2       = game.get("eq2", "")
+        if not eq1 or not eq2 or eq1.startswith("Gan.") or eq2.startswith("Gan."):
+            continue
+        all_picks = _db.db_get_all_picks_for_game(jgo_str)
+        total = len(all_picks)
         c1 = sum(1 for p in all_picks if (p.get("gan_pick") or "") == eq1)
         c2 = sum(1 for p in all_picks if (p.get("gan_pick") or "") == eq2)
-        co = total - c1 - c2
-        result.append({
-            "jgo":   jgo_str,
-            "ronda": game.get("ronda",""),
-            "eq1":   eq1, "eq2": eq2,
-            "total": total,
-            "picks_eq1": c1, "picks_eq2": c2, "picks_other": co,
+        game_dist.append({
+            "jgo": jgo_str, "ronda": game.get("ronda",""),
+            "eq1": eq1, "eq2": eq2, "total": total,
+            "picks_eq1": c1, "picks_eq2": c2,
             "pct_eq1": round(c1/total*100) if total else 0,
             "pct_eq2": round(c2/total*100) if total else 0,
         })
 
-    return {"players": [], "fixed_games": 0, "games": result}
+    # Standings actuales para construir lista de jugadores
+    standings = _db.db_compute_standings(cfg)
+    if not standings:
+        return {"players": [], "fixed_games": len(fixed_games),
+                "pending_games": len(prog_games), "games": game_dist}
 
+    pts_logro_val   = int(cfg.get("PTS_LOGRO",   1) or 1)
+    pts_gan_val     = int(cfg.get("PTS_GAN",     2) or 2)
+    pts_gol1_val    = int(cfg.get("PTS_GOL1",    1) or 1)
+    pts_gol2_val    = int(cfg.get("PTS_GOL2",    1) or 1)
+    pts_campeon_val = int(cfg.get("PTS_CAMPEON", 0) or 0)
+    max_per_game    = pts_logro_val + pts_gan_val + pts_gol1_val + pts_gol2_val
+    pending_count   = len(prog_games)
+
+    lider_pts = standings[0]["pts"] if standings else 0
+    players_out = []
+    for rank_i, s in enumerate(standings):
+        cur_pts  = s["pts"]
+        max_add  = pending_count * max_per_game
+        # +PTS_CAMPEON si hay FINAL pendiente
+        has_final_pending = any(g.get("ronda","").upper()=="FINAL" for g in prog_games)
+        if has_final_pending:
+            max_add += pts_campeon_val
+        max_possible = cur_pts + max_add
+        # Probabilidad simplificada: basada en ranking relativo al lider
+        # (se actualiza a medida que avanza el torneo)
+        if pending_count == 0:
+            prob_1st = 100.0 if rank_i == 0 else 0.0
+            univ_1st = 100 if rank_i == 0 else 0
+            univ_2nd = 100 if rank_i == 1 else 0
+        else:
+            gap_to_leader = lider_pts - cur_pts
+            can_catch = max_possible >= lider_pts
+            # Probabilidad estimada: proporcional a pts relativos
+            total_pts_all = sum(ss["pts"] for ss in standings) or 1
+            raw_prob = cur_pts / total_pts_all * 100 if total_pts_all else 0
+            prob_1st = round(raw_prob, 1) if can_catch else 0.0
+            univ_1st = round(prob_1st) if can_catch else 0
+            univ_2nd = round(raw_prob * 0.8, 0) if can_catch else 0
+        players_out.append({
+            "name":         s["nombre"],
+            "rank":         rank_i + 1,
+            "current_pts":  cur_pts,
+            "max_possible": max_possible,
+            "prob_1st":     prob_1st,
+            "univ_1st":     univ_1st,
+            "univ_2nd":     univ_2nd,
+        })
+
+    return {
+        "players":      players_out,
+        "fixed_games":  len(fixed_games),
+        "pending_games": pending_count,
+        "games":        game_dist,
+    }
 
 @app.get("/api/compare-picks")
 async def get_compare_picks_all():
@@ -2625,85 +2680,49 @@ UPCOMING_TTL = 60  # segundos
 
 
 def _compute_upcoming_picks() -> dict:
-    """Retorna los partidos PROXIMOS (PROG) con los picks de cada jugador."""
-    sh = state.get("sh")
-    if not sh:
-        return {"games": [], "error": "sin conexion"}
-
+    """Retorna los partidos PROXIMOS (PROG) con picks de cada jugador -- SQLite."""
     games, _ = _get_games_cache()
     upcoming  = [g for g in games if not g.get("estado") or g["estado"] == "PROG"]
     if not upcoming:
         return {"games": []}
 
-    cfg      = state.get("cfg", {})
-    total_j  = int(cfg.get("TOTAL_JUEGOS_F2", 32))
-    last_row = 3 + total_j
-
-    if not _players_cache_ok():
-        _load_players_cache()
-
-    seen_tabs: set = set()
-    players: list  = []
-    for k, v in _cache["players"].items():
-        if k.startswith("phone:") and v.get("TAB_NOMBRE") and v.get("NOMBRE"):
-            tab = v["TAB_NOMBRE"]
-            if tab not in seen_tabs:
-                seen_tabs.add(tab)
-                players.append(v)
-
-    if not players:
-        return {"games": []}
-
-    tab_data_map = _batch_read_player_tabs(sh, players, last_row)
-
-    # Indexar filas por jgo_str para cada jugador
-    player_rows: dict = {}
-    for p in players:
-        rows_by_jgo: dict = {}
-        for row in tab_data_map.get(p["TAB_NOMBRE"], []):
-            if row and row[0].strip():
-                rows_by_jgo[row[0].strip()] = row
-        player_rows[p["TAB_NOMBRE"]] = rows_by_jgo
-
     result_games = []
     for game in upcoming:
-        jgo_str = game.get("jgo", "")
+        jgo_str = str(game.get("jgo", ""))
+        eq1     = game.get("eq1", "")
+        eq2     = game.get("eq2", "")
+        # Saltar si equipos aun no definidos (placeholder)
+        if not eq1 or not eq2 or eq1.startswith("Gan.") or eq2.startswith("Gan."):
+            continue
+
+        all_picks = _db.db_get_all_picks_for_game(jgo_str)
         game_picks = []
-        for p in players:
-            row = player_rows.get(p["TAB_NOMBRE"], {}).get(jgo_str)
-            def c(i, r=row): return r[i].strip() if r and len(r) > i else ""
-            pick_gol1 = c(6)   # G = PICK_GOL1
-            pick_gol2 = c(7)   # H = PICK_GOL2
-            pick_gan  = c(9)   # J = PICK_GANADOR (nombre equipo en F2)
+        for pk in all_picks:
             game_picks.append({
-                "nombre": p.get("NOMBRE", "?"),
-                "gol1":   pick_gol1,
-                "gol2":   pick_gol2,
-                "gan":    pick_gan,
+                "nombre": pk.get("nombre", "?"),
+                "gol1":   pk.get("g1_pick", "") or "",
+                "gol2":   pk.get("g2_pick", "") or "",
+                "gan":    pk.get("gan_pick", "") or "",
             })
 
-        # Ordenar: primero quienes tienen pick, luego por nombre
         game_picks.sort(key=lambda x: (not bool(x["gan"]), x["nombre"]))
 
         result_games.append({
             "jgo":          jgo_str,
             "ronda":        game.get("ronda",  ""),
-            "eq1":          game.get("eq1",    ""),
-            "eq2":          game.get("eq2",    ""),
+            "eq1":          eq1,
+            "eq2":          eq2,
             "fecha":        game.get("fecha",  ""),
             "hora":         game.get("hora",   ""),
             "datetime_utc": game.get("datetime_utc", ""),
             "picks":        game_picks,
         })
 
-    # Ordenar por fecha/hora
     result_games.sort(key=lambda g: g.get("datetime_utc") or g.get("fecha") or "")
-
-    data = {"games": result_games, "computed_at": datetime.now().isoformat()}
-    _upcoming_cache["data"] = data
+    out = {"games": result_games, "computed_at": datetime.now().isoformat()}
+    _upcoming_cache["data"] = out
     _upcoming_cache["ts"]   = time.time()
-    return data
-
+    return out
 
 @app.get("/api/upcoming-picks")
 async def get_upcoming_picks():
