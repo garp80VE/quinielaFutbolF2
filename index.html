@@ -2396,17 +2396,21 @@ function renderGames(games) {
     //    Si algún equipo es placeholder ('Gan. JGO X', 'Round of 32 N Winner'),
     //    no tocar el ganador — no podemos validarlo contra un placeholder.
     const _peIsReal = s => !!(s && s !== 'TBD' && !s.startsWith('Gan. ') && !s.startsWith('Perdedor ') && !isPlaceholder(s));
-    if (p.ganador && _peIsReal(pe1) && _peIsReal(pe2) && rPGanBtn !== pe1 && rPGanBtn !== pe2) {
-      // Valor realmente obsoleto (no resuelve a ninguno de los equipos confirmados)
-      p.ganador = '';
-      S.picks[String(jgo)].ganador = '';
-    }
-    if (!p.ganador && p.gol1 !== '' && p.gol2 !== '' && pe1 && pe2) {
-      // Si el marcador implica un ganador claro, auto-establecer en memoria
-      const g1n = Number(p.gol1), g2n = Number(p.gol2);
-      if (!isNaN(g1n) && !isNaN(g2n) && g1n !== g2n) {
-        p.ganador = g1n > g2n ? pe1 : pe2;
-        S.picks[String(jgo)].ganador = p.ganador;
+    // Solo normalizar ganador en partidos EDITABLES (no bloqueados/FINAL).
+    // En partidos terminados, mostrar el pick original del jugador sin modificar.
+    if (!locked) {
+      if (p.ganador && _peIsReal(pe1) && _peIsReal(pe2) && rPGanBtn !== pe1 && rPGanBtn !== pe2) {
+        // Valor obsoleto: el equipo elegido ya no juega en este slot -> limpiar
+        p.ganador = '';
+        S.picks[String(jgo)].ganador = '';
+      }
+      if (!p.ganador && p.gol1 !== '' && p.gol2 !== '' && pe1 && pe2) {
+        // Si el marcador implica un ganador claro, auto-establecer en memoria
+        const g1n = Number(p.gol1), g2n = Number(p.gol2);
+        if (!isNaN(g1n) && !isNaN(g2n) && g1n !== g2n) {
+          p.ganador = g1n > g2n ? pe1 : pe2;
+          S.picks[String(jgo)].ganador = p.ganador;
+        }
       }
     }
 
