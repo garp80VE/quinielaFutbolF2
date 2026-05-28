@@ -308,39 +308,49 @@ def db_get_picks_without_pick(jgo: str) -> list:
 # == Scoring ===================================================================
 
 def _calc_pts(g1_pick, g2_pick, gan_pick, gol1, gol2, ganador, estado,
-              pts_gan_val=3, pts_g1_val=1, pts_g2_val=1):
-    """Calcula puntos para un pick vs resultado real. Retorna (pts_gan, pts_g1, pts_g2, total)."""
+              pts_logro_val=1, pts_gan_val=2, pts_g1_val=1, pts_g2_val=1,
+              pts_campeon_val=0, ronda=""):
+    """Calcula puntos para un pick vs resultado real.
+    Retorna (pts_logro, pts_gan, pts_g1, pts_g2, total).
+    pts_logro:  resultado 1/X/2 correcto (basado en goles).
+    pts_gan:    ganador (nombre equipo) correcto.
+    pts_g1/g2:  gol exacto correcto.
+    pts_campeon: bonus si acierta campeon en ronda FINAL.
+    """
     if not estado or estado == "PROG":
-        return 0, 0, 0, 0
-    # Auto-completar gan_pick desde scores si no esta definido
-    eff_gan = (gan_pick or "").strip()
-    if not eff_gan and g1_pick and g2_pick:
-        try:
-            g1n, g2n = int(g1_pick), int(g2_pick)
-            if   g1n > g2n: eff_gan = "1"
-            elif g2n > g1n: eff_gan = "2"
-            else:           eff_gan = "E"
-        except Exception:
-            pass
-    gan_real = (ganador or "").strip()
+        return 0, 0, 0, 0, 0
+    def _res(a, b):
+        try: return "1" if int(a) > int(b) else ("2" if int(a) < int(b) else "X")
+        except: return ""
     g1_real  = str(gol1 or "").strip()
     g2_real  = str(gol2 or "").strip()
-    pg  = pts_gan_val if (eff_gan and gan_real and eff_gan == gan_real) else 0
-    pg1 = pts_g1_val  if (g1_pick and g1_real and str(g1_pick).strip() == g1_real) else 0
-    pg2 = pts_g2_val  if (g2_pick and g2_real and str(g2_pick).strip() == g2_real) else 0
-    return pg, pg1, pg2, pg + pg1 + pg2
+    gan_real = (ganador or "").strip()
+    g1_p     = str(g1_pick or "").strip()
+    g2_p     = str(g2_pick or "").strip()
+    gan_p    = (gan_pick or "").strip()
+    res_pick = _res(g1_p, g2_p) if (g1_p and g2_p) else ""
+    res_real = _res(g1_real, g2_real) if (g1_real and g2_real) else ""
+    pl  = pts_logro_val if (res_pick and res_real and res_pick == res_real) else 0
+    pg  = pts_gan_val if (gan_p and gan_real and gan_p == gan_real) else 0
+    pg1 = pts_g1_val  if (g1_p and g1_real and g1_p == g1_real) else 0
+    pg2 = pts_g2_val  if (g2_p and g2_real and g2_p == g2_real) else 0
+    pc  = pts_campeon_val if (pts_campeon_val and ronda.upper() == "FINAL"
+                             and gan_p and gan_real and gan_p == gan_real) else 0
+    return pl, pg, pg1, pg2, pl + pg + pg1 + pg2 + pc
 
 def db_compute_standings(cfg: dict = None) -> list:
     """Calcula posiciones completas desde picks + horarios. Retorna lista ordenada."""
     cfg = cfg or {}
-    pts_gan_val = int(cfg.get("PTS_GAN", 3) or 3)
-    pts_g1_val  = int(cfg.get("PTS_G1",  1) or 1)
-    pts_g2_val  = int(cfg.get("PTS_G2",  1) or 1)
+    pts_logro_val   = int(cfg.get("PTS_LOGRO",   1) or 1)
+    pts_gan_val     = int(cfg.get("PTS_GAN",     2) or 2)
+    pts_g1_val      = int(cfg.get("PTS_GOL1",    1) or 1)
+    pts_g2_val      = int(cfg.get("PTS_GOL2",    1) or 1)
+    pts_campeon_val = int(cfg.get("PTS_CAMPEON", 0) or 0)
 
     conn = get_conn()
     try:
         games_rows = conn.execute(
-            "SELECT jgo,gol1,gol2,ganador,estado FROM horarios WHERE estado!='PROG'"
+            "SELECT jgo,grupo,gol1,gol2,ganador,estado FROM horarios WHERE estado!='PROG'"
         ).fetchall()
         games = {r["jgo"]: dict(r) for r in games_rows}
 
@@ -359,10 +369,11 @@ def db_compute_standings(cfg: dict = None) -> list:
                 if not game:
                     continue
                 jugados += 1
-                pg, pg1, pg2, ptot = _calc_pts(
+                pl, pg, pg1, pg2, ptot = _calc_pts(
                     pk["g1_pick"], pk["g2_pick"], pk["gan_pick"],
                     game["gol1"], game["gol2"], game["ganador"], game["estado"],
-                    pts_gan_val, pts_g1_val, pts_g2_val
+                    pts_logro_val, pts_gan_val, pts_g1_val, pts_g2_val,
+                    pts_campeon_val, game.get("grupo", "")
                 )
                 pts_total += ptot
                 if pg  > 0: gan_acert += 1
