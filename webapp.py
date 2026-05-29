@@ -2340,8 +2340,8 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
              new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(4)
 
-    # Anchos de columna (estilo F1: goles local/visitante separados)
-    W_NUM, W_LOCAL, W_VIS, W_GL, W_GV = 10, 48, 48, 16, 16
+    # Anchos de columna (estilo F1: goles local/visitante + resultado 1/E/2)
+    W_NUM, W_LOCAL, W_VIS, W_GL, W_GV, W_RES = 9, 44, 44, 15, 15, 14
 
     # Indices para resolver cruces de bracket segun los picks del jugador
     by_jgo   = {str(g["jgo"]): g for g in games}
@@ -2365,6 +2365,13 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         gol1    = str(pk.get("g1", "")) if pk else ""
         gol2    = str(pk.get("g2", "")) if pk else ""
         ganador = pk.get("gan", "") if pk else ""
+
+        # Resultado 1/E/2 = signo del marcador predicho (logro / PTS_LOGRO)
+        if gol1 != "" and gol2 != "" and gol1.lstrip("-").isdigit() and gol2.lstrip("-").isdigit():
+            n1, n2   = int(gol1), int(gol2)
+            res_sign = "1" if n1 > n2 else ("2" if n2 > n1 else "E")
+        else:
+            res_sign = "-"
 
         # En eliminatorias el horario trae placeholders ("Round of 32 1 Winner")
         # con emparejamiento secuencial que NO refleja el bracket real. Inferir el
@@ -2393,6 +2400,7 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
             pdf.cell(W_VIS,   6, "Visitante", border=0, fill=True)
             pdf.cell(W_GL,    6, "G.Local",   border=0, fill=True, align="C")
             pdf.cell(W_GV,    6, "G.Visit.",  border=0, fill=True, align="C")
+            pdf.cell(W_RES,   6, "Res.",      border=0, fill=True, align="C")
             pdf.cell(0,       6, "Ganador",   border=0, fill=True, align="C",
                      new_x="LMARGIN", new_y="NEXT")
 
@@ -2407,11 +2415,22 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         pdf.cell(W_VIS,   6, disp_eq2[:26], border=0, fill=True)
         pdf.cell(W_GL,    6, gol1 if gol1 != "" else "-", border=0, fill=True, align="C")
         pdf.cell(W_GV,    6, gol2 if gol2 != "" else "-", border=0, fill=True, align="C")
+        # Columna Resultado (1/E/2): empate en magenta, ganador en azul
+        pdf.set_font("Helvetica", "B", 8)
+        if res_sign == "E":
+            pdf.set_text_color(190, 24, 93)
+        elif res_sign in ("1", "2"):
+            pdf.set_text_color(37, 99, 235)
+        else:
+            pdf.set_text_color(180, 180, 180)
+        pdf.cell(W_RES, 6, res_sign, border=0, fill=True, align="C")
+        # Columna Ganador (nombre del equipo)
         if ganador:
             pdf.set_text_color(0, 104, 71)
             pdf.set_font("Helvetica", "B", 8)
         else:
             pdf.set_text_color(180, 180, 180)
+            pdf.set_font("Helvetica", "", 8)
         pdf.cell(0, 6, ganador[:22] if ganador else "-",
                  border=0, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
 
