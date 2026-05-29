@@ -2659,7 +2659,7 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
             eq1_pick = pk.get("eq1", "") or ""
             eq2_pick = pk.get("eq2", "") or ""
 
-            # teamAlive: al menos 1 equipo predicho debe estar en el partido real
+            # teamAlive (solo para mostrar el flag; _calc_pts lo aplica internamente)
             team_alive = True
             if eq1_real and eq2_real:
                 real_teams = {eq1_real.strip(), eq2_real.strip()}
@@ -2668,26 +2668,13 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
                 if pred_teams and not (pred_teams & real_teams):
                     team_alive = False
 
-            if not pick_g1 or not pick_g2 or not pick_gan or not team_alive:
-                pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
-            else:
-                # Detectar orden invertido (eq1_pick es eq2 en horarios) y cruzar goles
-                _inverted = bool(
-                    (eq1_pick and eq2_real and eq1_pick.strip() == eq2_real.strip()) or
-                    (eq2_pick and eq1_real and eq2_pick.strip() == eq1_real.strip())
-                )
-                g1r_eff = real_g2 if _inverted else real_g1
-                g2r_eff = real_g1 if _inverted else real_g2
-                pts_logro = _v_logro if (g1r_eff != "" and g2r_eff != "" and
-                                          _res(pick_g1, pick_g2) == _res(g1r_eff, g2r_eff)) else 0
-                pts_gan   = _v_gan  if (real_gan and pick_gan == real_gan) else 0
-                pts_gol1  = _v_gol1 if (g1r_eff != "" and pick_g1 == g1r_eff) else 0
-                pts_gol2  = _v_gol2 if (g2r_eff != "" and pick_g2 == g2r_eff) else 0
-                pts_campeon = _v_campeon if (
-                    _v_campeon and game.get("ronda","").upper() == "FINAL" and
-                    real_gan and pick_gan == real_gan
-                ) else 0
-                pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_campeon
+            # Calculo centralizado (misma funcion que la Tabla y la auditoria)
+            pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db._calc_pts(
+                pick_g1, pick_g2, pick_gan, real_g1, real_g2, real_gan, estado,
+                _v_logro, _v_gan, _v_gol1, _v_gol2, _v_campeon,
+                game.get("ronda", "") or game.get("grupo", ""),
+                eq1_pick=eq1_pick, eq2_pick=eq2_pick, eq1_real=eq1_real, eq2_real=eq2_real,
+            )
 
             fecha = game.get("fecha", "")
             if fecha not in by_day:

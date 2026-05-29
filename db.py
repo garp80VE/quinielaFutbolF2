@@ -344,52 +344,79 @@ def _calc_pts(g1_pick, g2_pick, gan_pick, gol1, gol2, ganador, estado,
               eq1_pick="", eq2_pick="", eq1_real="", eq2_real=""):
     """Calcula puntos para un pick vs resultado real.
     Retorna (pts_logro, pts_gan, pts_g1, pts_g2, total).
-    pts_logro:  resultado 1/X/2 correcto (basado en goles).
-    pts_gan:    ganador (nombre equipo) correcto.
-    pts_g1/g2:  gol exacto correcto.
-    pts_campeon: bonus si acierta campeon en ronda FINAL.
 
-    Regla teamAlive (F2): si conocemos los equipos reales (eq1_real/eq2_real),
+    Reglas (F2):
+    - pts_logro:  acertar si el partido a los 90' quedo EMPATE o NO-EMPATE
+                  (no importa quien gane, solo empate vs no-empate).
+    - pts_gan:    acertar el equipo que avanza (ganador, por nombre).
+    - pts_g1/g2:  acertar el marcador exacto de CADA equipo real, por NOMBRE:
+                  solo cuenta si el jugador predijo a ese equipo con ese marcador.
+                  Si el equipo predicho no esta en el partido, su gol no cuenta
+                  aunque el numero coincida por posicion.
+    - pts_campeon: bonus si acierta el campeon en ronda FINAL.
+
+    Regla teamAlive (R16+): si conocemos los equipos reales (eq1_real/eq2_real),
     el jugador debe haber predicho al menos 1 de ellos (via eq1_pick, eq2_pick
     o gan_pick). Si ningun equipo predicho esta en el partido real -> 0 pts.
     """
     if not estado or estado == "PROG":
         return 0, 0, 0, 0, 0
-    # teamAlive: al menos 1 equipo predicho debe estar jugando el partido real
+
     _eq1r = (eq1_real or "").strip()
     _eq2r = (eq2_real or "").strip()
+    e1p   = (eq1_pick or "").strip()
+    e2p   = (eq2_pick or "").strip()
+    gan_p = (gan_pick or "").strip()
+    gan_real = (ganador or "").strip()
+
+    # teamAlive: al menos 1 equipo predicho debe estar jugando el partido real
     if _eq1r and _eq2r:
         real_teams = {_eq1r, _eq2r}
-        pred_teams = {(eq1_pick or "").strip(), (eq2_pick or "").strip(), (gan_pick or "").strip()}
+        pred_teams = {e1p, e2p, gan_p}
         pred_teams = {t for t in pred_teams if t and not t.startswith("Gan. ")}
         if pred_teams and not (pred_teams & real_teams):
             return 0, 0, 0, 0, 0
-    def _res(a, b):
-        try: return "1" if int(a) > int(b) else ("2" if int(a) < int(b) else "X")
-        except: return ""
-    g1_real  = str(gol1 or "").strip()
-    g2_real  = str(gol2 or "").strip()
-    gan_real = (ganador or "").strip()
-    g1_p     = str(g1_pick or "").strip()
-    g2_p     = str(g2_pick or "").strip()
-    gan_p    = (gan_pick or "").strip()
-    # Detectar orden invertido: el jugador eligio eq1_pick como su equipo1 pero en horarios
-    # ese equipo es eq2_real. En ese caso cruzar goles para comparar correctamente.
-    _e1p = (eq1_pick or "").strip()
-    _e2r_cmp = (eq2_real or "").strip()
-    _e2p = (eq2_pick or "").strip()
-    _e1r_cmp = (eq1_real or "").strip()
-    _inverted = bool((_e1p and _e2r_cmp and _e1p == _e2r_cmp) or
-                     (_e2p and _e1r_cmp and _e2p == _e1r_cmp))
-    g1r_eff = g2_real if _inverted else g1_real
-    g2r_eff = g1_real if _inverted else g2_real
-    res_pick = _res(g1_p, g2_p) if (g1_p and g2_p) else ""
-    res_real = _res(g1r_eff, g2r_eff) if (g1r_eff and g2r_eff) else ""
-    pl  = pts_logro_val if (res_pick and res_real and res_pick == res_real) else 0
-    pg  = pts_gan_val if (gan_p and gan_real and gan_p == gan_real) else 0
-    pg1 = pts_g1_val  if (g1_p and g1r_eff and g1_p == g1r_eff) else 0
-    pg2 = pts_g2_val  if (g2_p and g2r_eff and g2_p == g2r_eff) else 0
-    pc  = pts_campeon_val if (pts_campeon_val and ronda.upper() == "FINAL"
+
+    def _num(x):
+        try: return int(str(x).strip())
+        except: return None
+
+    n_g1r, n_g2r = _num(gol1), _num(gol2)
+    n_g1p, n_g2p = _num(g1_pick), _num(g2_pick)
+
+    # ── Resultado 90': empate vs no-empate (no importa quien gane) ──
+    pl = 0
+    if None not in (n_g1r, n_g2r, n_g1p, n_g2p):
+        if (n_g1r == n_g2r) == (n_g1p == n_g2p):
+            pl = pts_logro_val
+
+    # ── Ganador (equipo que avanza, por nombre) ──
+    pg = pts_gan_val if (gan_p and gan_real and gan_p == gan_real) else 0
+
+    # ── Goles por NOMBRE de equipo (no por posicion) ──
+    def _gol_predicho_para(equipo):
+        """Gol que el jugador asigno a 'equipo' segun el slot donde lo puso."""
+        if e1p and e1p == equipo: return n_g1p
+        if e2p and e2p == equipo: return n_g2p
+        return None
+
+    pg1 = pg2 = 0
+    if _eq1r and _eq2r and (e1p or e2p):
+        gp_eq1 = _gol_predicho_para(_eq1r)
+        gp_eq2 = _gol_predicho_para(_eq2r)
+        if gp_eq1 is not None and n_g1r is not None and gp_eq1 == n_g1r:
+            pg1 = pts_g1_val
+        if gp_eq2 is not None and n_g2r is not None and gp_eq2 == n_g2r:
+            pg2 = pts_g2_val
+    else:
+        # Sin nombres de equipo en el pick (datos antiguos): comparar por posicion
+        if n_g1p is not None and n_g1r is not None and n_g1p == n_g1r:
+            pg1 = pts_g1_val
+        if n_g2p is not None and n_g2r is not None and n_g2p == n_g2r:
+            pg2 = pts_g2_val
+
+    # ── Bono campeon ──
+    pc = pts_campeon_val if (pts_campeon_val and ronda.upper() == "FINAL"
                              and gan_p and gan_real and gan_p == gan_real) else 0
     return pl, pg, pg1, pg2, pl + pg + pg1 + pg2 + pc
 
