@@ -2572,10 +2572,9 @@ async def get_public_config():
 @app.get("/api/standings")
 async def get_standings():
     try:
-        cached = _cache.get("standings_rows")
-        if cached is not None:
-            return {"rows": cached}
-        # Cache no inicializada — calcular desde SQLite (sin bloquear Sheets)
+        # Calcular SIEMPRE en vivo desde SQLite (igual que /api/my-points). La cache
+        # se mantiene solo para otros consumidores (top3/top5), pero el endpoint no
+        # debe servir una cache potencialmente vieja (bug: tabla en 0 tras simular).
         cfg = state.get("cfg", {})
         st  = _db.db_compute_standings(cfg)
         if not st:
