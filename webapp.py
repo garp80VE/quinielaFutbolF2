@@ -2833,9 +2833,9 @@ async def get_game_picks(jgo: int = Query(...)):
     _v_gol2    = int(cfg.get("PTS_GOL2",  1) or 1)
     _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
 
-    def _res(g1, g2):
-        try: return "1" if int(g1) > int(g2) else ("2" if int(g1) < int(g2) else "X")
-        except: return ""
+    eq1_real = game.get("eq1", "")
+    eq2_real = game.get("eq2", "")
+    _ronda   = game.get("ronda", "") or game.get("grupo", "")
 
     all_picks = _db.db_get_all_picks_for_game(str(jgo))
     game_picks = []
@@ -2844,19 +2844,13 @@ async def get_game_picks(jgo: int = Query(...)):
         pick_gol2 = pk.get("g2_pick", "") or ""
         pick_gan  = pk.get("gan_pick", "") or ""
 
-        if not pick_gol1 or not pick_gol2 or not pick_gan:
-            pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
-        else:
-            pts_logro = _v_logro if (real_g1 != "" and real_g2 != "" and
-                                      _res(pick_gol1, pick_gol2) == _res(real_g1, real_g2)) else 0
-            pts_gan   = _v_gan  if (real_gan and pick_gan == real_gan) else 0
-            pts_gol1  = _v_gol1 if (real_g1 != "" and pick_gol1 == real_g1) else 0
-            pts_gol2  = _v_gol2 if (real_g2 != "" and pick_gol2 == real_g2) else 0
-            pts_campeon = _v_campeon if (
-                _v_campeon and game.get("ronda","").upper() == "FINAL" and
-                real_gan and pick_gan == real_gan
-            ) else 0
-            pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_campeon
+        # Calculo centralizado (misma regla que Tabla / Mis Puntos / Auditoria)
+        pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db._calc_pts(
+            pick_gol1, pick_gol2, pick_gan, real_g1, real_g2, real_gan, estado,
+            _v_logro, _v_gan, _v_gol1, _v_gol2, _v_campeon, _ronda,
+            eq1_pick=pk.get("eq1_pick", "") or "", eq2_pick=pk.get("eq2_pick", "") or "",
+            eq1_real=eq1_real, eq2_real=eq2_real,
+        )
 
         game_picks.append({
             "nombre":    pk.get("nombre", ""),
@@ -2913,37 +2907,16 @@ def _compute_compare_picks() -> dict:
             pick_gol2 = pk.get("g2_pick", "") or ""
             pick_gan  = pk.get("gan_pick", "") or ""
 
-            real_eq1   = game.get("eq1", "")
-            real_eq2   = game.get("eq2", "")
-            team_alive = (
-                not real_eq1 or not real_eq2 or not pick_gan or
-                pick_gan == real_eq1 or pick_gan == real_eq2
+            # Calculo centralizado (misma regla que Tabla / Mis Puntos / Auditoria)
+            pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db._calc_pts(
+                pick_gol1, pick_gol2, pick_gan, real_g1, real_g2, real_gan, estado,
+                int(cfg.get("PTS_LOGRO", 1) or 1), int(cfg.get("PTS_GAN", 2) or 2),
+                int(cfg.get("PTS_GOL1", 1) or 1), int(cfg.get("PTS_GOL2", 1) or 1),
+                int(cfg.get("PTS_CAMPEON", 0) or 0),
+                game.get("ronda", "") or game.get("grupo", ""),
+                eq1_pick=pk.get("eq1_pick", "") or "", eq2_pick=pk.get("eq2_pick", "") or "",
+                eq1_real=game.get("eq1", ""), eq2_real=game.get("eq2", ""),
             )
-
-            if not pick_gol1 or not pick_gol2 or not pick_gan or not team_alive:
-                pts = pts_logro = pts_gan = pts_gol1 = pts_gol2 = 0
-            else:
-                _v_logro   = int(cfg.get("PTS_LOGRO", 1) or 1)
-                _v_gan     = int(cfg.get("PTS_GAN",   2) or 2)
-                _v_gol1    = int(cfg.get("PTS_GOL1",  1) or 1)
-                _v_gol2    = int(cfg.get("PTS_GOL2",  1) or 1)
-
-                def _res(g1, g2):
-                    try: return "1" if int(g1) > int(g2) else ("2" if int(g1) < int(g2) else "X")
-                    except: return ""
-
-                pts_logro = _v_logro if (g1_known and g2_known and
-                                         _res(pick_gol1, pick_gol2) == _res(real_g1, real_g2)) else 0
-                pts_gan   = _v_gan  if (gan_known and pick_gan == real_gan) else 0
-                pts_gol1  = _v_gol1 if (g1_known and pick_gol1 == real_g1) else 0
-                pts_gol2  = _v_gol2 if (g2_known and pick_gol2 == real_g2) else 0
-                _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
-                pts_campeon = _v_campeon if (
-                    _v_campeon and
-                    game.get("ronda", "").upper() == "FINAL" and
-                    gan_known and pick_gan == real_gan
-                ) else 0
-                pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_campeon
 
             game_picks.append({
                 "nombre":    pk.get("nombre", ""),
@@ -3165,7 +3138,7 @@ ADMIN_CONFIG_FIELDS = [
     ("STRIPE_ACTIVO",       "Pago con tarjeta activo (1=sí, 0=no)"),
     ("FREEZE_EQUIPOS",      "Congelar nombres de equipos (1=no sobreescribir desde ESPN, 0=actualizar)"),
     ("MODO_PRUEBA",         "Modo Prueba (1=usar ESPN_ID_TEST para scores, 0=producción)"),
-    ("PTS_LOGRO",           "Puntos por resultado 90min correcto (1/X/2)"),
+    ("PTS_LOGRO",           "Puntos por acertar empate/no-empate a los 90min"),
     ("PTS_GAN",             "Puntos por ganador correcto (extra/penales)"),
     ("PTS_GOL1",            "Puntos por gol equipo 1 correcto"),
     ("PTS_GOL2",            "Puntos por gol equipo 2 correcto"),

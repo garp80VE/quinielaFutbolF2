@@ -313,7 +313,7 @@ def db_get_all_picks_for_game(jgo: str) -> list:
     conn = get_conn()
     try:
         rows = conn.execute("""
-            SELECT j.nombre, p.g1_pick, p.g2_pick, p.gan_pick
+            SELECT j.nombre, p.g1_pick, p.g2_pick, p.gan_pick, p.eq1_pick, p.eq2_pick
             FROM picks p JOIN jugadores j ON j.id = p.jugador_id
             WHERE p.jgo=?
         """, (str(jgo),)).fetchall()
