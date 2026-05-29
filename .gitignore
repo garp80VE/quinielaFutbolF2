@@ -21,6 +21,14 @@ venv/
 # Node
 node_modules/
 
+# Base de datos local (la real vive en /data en produccion)
+quiniela.db
+*.db-wal
+*.db-shm
+
+# Backups y descargas temporales
+*.zip
+
 # Logs y temporales
 *.log
 .DS_Store
