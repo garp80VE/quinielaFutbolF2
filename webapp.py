@@ -483,6 +483,7 @@ def _invalidate_games():
 
 def _invalidate_players():
     _cache["players_ts"] = 0
+    _cache["standings_rows"] = None  # forzar recompute en próximo /api/standings
 
 # ── Propagación de bracket (Modo Prueba) ──────────────────────────────────────
 
@@ -2182,6 +2183,9 @@ async def save_picks(body: SavePicksBody):
         )
         guardados += 1
 
+    if guardados:
+        _cache["standings_rows"] = None  # invalidar para que próximo /api/standings recompute
+
     return {"guardados": guardados, "bloqueados": bloqueados}
 
 
@@ -2208,15 +2212,12 @@ async def get_public_config():
 @app.get("/api/standings")
 async def get_standings():
     try:
-        # Servir desde caché en memoria si está disponible (actualizada por _update_standings)
         cached = _cache.get("standings_rows")
-        if cached:
-            return {"rows": cached}
-        # Fallback: leer desde Sheets si la caché aún no se ha poblado
-        ws   = state["sh"].worksheet("POSICIONES")
-        rows = ws.get_all_values()
-        data = [r for r in rows[1:] if any(c.strip() for c in r)]
-        return {"rows": data}
+        if not cached:
+            # Cache vacía (nuevo jugador o primer arranque) — computar al momento
+            _update_standings()
+            cached = _cache.get("standings_rows")
+        return {"rows": cached or []}
     except Exception:
         return {"rows": []}
 
@@ -4647,180 +4648,4 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
     except Exception as e:
         errors.append(f"Error recalculando standings: {e}")
 
-    return {"ok": not errors, "log": log, "errors": errors}
-
-
-
-@app.post("/api/admin/reset")
-async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")):
-    """Archiva el sheet actual en Drive y resetea jugadores/horarios/picks para nueva quiniela."""
-    if not _admin_check(ql_admin):
-        raise HTTPException(403, "No autorizado")
-
-    cfg = state.get("cfg", {})
-    reset_key = cfg.get("RESET_KEY", "RESET2026")
-    if body.keyword.strip() != reset_key:
-        raise HTTPException(403, "Clave incorrecta")
-
-    torneo    = cfg.get("TORNEO", "QuinielaF2")
-    fecha_ini = cfg.get("FECHA_INICIO_F2", "").replace("-", "")
-    fecha_fin = cfg.get("FECHA_FIN_F2",    "").replace("-", "")
-    copy_name = f"{torneo}.{fecha_ini}.{fecha_fin}"
-
-    # 1. Archivar copia en Drive (best effort)
-    archive_warn = ""
-    sh = state.get("sh")
-    if sh:
-        try:
-            from googleapiclient.discovery import build as _gapi_build
-            from google.oauth2.service_account import Credentials as _Creds
-            creds = _Creds.from_service_account_file(
-                os.environ.get("QL_CREDS", "credentials.json"), scopes=SCOPES)
-            drive = _gapi_build("drive", "v3", credentials=creds, cache_discovery=False)
-            file_info  = drive.files().get(fileId=sh.id, fields="owners,parents").execute()
-            owner_email = (file_info.get("owners") or [{}])[0].get("emailAddress", "")
-            parents    = file_info.get("parents", [])
-            copy_body  = {"name": copy_name}
-            if parents:
-                copy_body["parents"] = parents
-            copy_meta = drive.files().copy(
-                fileId=sh.id, body=copy_body, supportsAllDrives=True).execute()
-            copy_id = copy_meta.get("id")
-            print(f"[reset] Copia creada: {copy_name} (id={copy_id})")
-            if owner_email:
-                drive.permissions().create(
-                    fileId=copy_id,
-                    body={"role": "writer", "type": "user", "emailAddress": owner_email},
-                    sendNotificationEmail=False
-                ).execute()
-        except Exception as e_drive:
-            archive_warn = f"[WARN] No se pudo archivar en Drive: {e_drive}. "
-            print(f"[reset] Drive error: {e_drive}")
-
-    # 2. Limpiar Sheets (best effort)
-    if sh:
-        try:
-            reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "INSTRUCCIONES"}
-            for ws in sh.worksheets():
-                if ws.title not in reserved:
-                    sh.del_worksheet(ws)
-                time.sleep(0.1)
-            ws_j = sh.worksheet("JUGADORES")
-            rows_j = ws_j.get_all_values()
-            hi, _ = _jugadores_headers(rows_j)
-            first_data = hi + 2
-            if len(rows_j) >= first_data:
-                ws_j.batch_clear([f"A{first_data}:Z{len(rows_j) + 5}"])
-            sh.worksheet("POSICIONES").batch_clear(["A3:Z100"])
-            sh.worksheet("HORARIOS").batch_clear(["A3:L1000"])
-        except Exception as e:
-            print(f"[reset] WARN Sheets clear: {e}")
-
-    # 3. Limpiar SQLite
-    try:
-        conn_r = _db.get_conn()
-        with conn_r:
-            conn_r.execute("DELETE FROM picks")
-            conn_r.execute("DELETE FROM jugadores")
-            conn_r.execute("DELETE FROM horarios")
-            conn_r.execute("DELETE FROM chat")
-        conn_r.close()
-        print("[reset] SQLite limpiado")
-    except Exception as e_sql:
-        print(f"[reset] SQLite error: {e_sql}")
-
-    _cache["players"].clear()
-    _invalidate_games()
-    state["cfg"] = _db.db_get_config()
-
-    msg = (f"{archive_warn}SQLite reseteado."
-           if archive_warn else
-           f"Archivado como '{copy_name}' y todo reseteado.")
-    return {"ok": True, "msg": msg}
-
-
-@app.post("/api/admin/reset-test")
-async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
-    """
-    Modo prueba: borra resultados (ganador/goles/estado) desde una ronda en adelante
-    y resetea los eq1/eq2 de esas rondas a placeholders de bracket.
-    Body: { ronda_desde: "R32" | "R16" | "QF" | "SF" | "FINAL" }
-    """
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-
-    ronda_desde = str(body.get("ronda_desde", "R32")).strip().upper()
-    RONDAS_ORDER = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
-    ROF_MAP = {"R16": 32, "QF": 16, "SF": 8, "3ER": 4, "FINAL": 4}
-
-    if ronda_desde not in RONDAS_ORDER:
-        raise HTTPException(400, f"ronda_desde invalida. Usar: {RONDAS_ORDER}")
-
-    idx_desde = RONDAS_ORDER.index(ronda_desde)
-    rondas_a_limpiar = RONDAS_ORDER[idx_desde:]
-
-    horarios = _db.db_get_horarios()
-    ronda_games: dict = {}
-    for h in horarios:
-        ronda = h.get("grupo", "")
-        ronda_games.setdefault(ronda, []).append(h)
-    for k in ronda_games:
-        ronda_games[k].sort(key=lambda h: int(str(h["jgo"])) if str(h["jgo"]).isdigit() else 0)
-
-    conn = _db.get_conn()
-    cleared = 0
-    with conn:
-        for ronda in rondas_a_limpiar:
-            games = ronda_games.get(ronda, [])
-            for h in games:
-                jgo = str(h["jgo"])
-                conn.execute(
-                    "UPDATE horarios SET ganador='', gol1='', gol2='', estado='PROG' WHERE jgo=?",
-                    (jgo,))
-                cleared += 1
-                if ronda in ROF_MAP:
-                    rof = ROF_MAP[ronda]
-                    games_sorted = ronda_games.get(ronda, [])
-                    i = games_sorted.index(h)
-                    eq1_new = f"Round of {rof} {2*i+1} Winner"
-                    eq2_new = f"Round of {rof} {2*i+2} Winner"
-                    conn.execute("UPDATE horarios SET eq1=?, eq2=? WHERE jgo=?",
-                                 (eq1_new, eq2_new, jgo))
-
-    conn.close()
-
-    # Borrar picks correspondientes a las rondas limpiadas
-    jgos_limpiados = []
-    for ronda in rondas_a_limpiar:
-        for h in ronda_games.get(ronda, []):
-            jgos_limpiados.append(str(h["jgo"]))
-
-    if jgos_limpiados:
-        conn2 = _db.get_conn()
-        with conn2:
-            placeholders = ",".join("?" * len(jgos_limpiados))
-            conn2.execute(f"DELETE FROM picks WHERE jgo IN ({placeholders})", jgos_limpiados)
-        conn2.close()
-
-    _invalidate_games()
-    return {
-        "ok":  True,
-        "msg": f"Reseteados {cleared} partido(s) desde {ronda_desde} "
-               f"({', '.join(rondas_a_limpiar)}) y picks eliminados."
-    }
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 - Backend")
-    parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
-                        help="Puerto HTTP (default: $PORT o 8080)")
-    parser.add_argument("--sheet", type=str, default="",
-                        help="ID del Google Sheet (opcional)")
-    parser.add_argument("--creds", type=str, default="credentials.json",
-                        help="Ruta al credentials.json")
-    args = parser.parse_args()
-
-    if args.sheet:
-        os.environ["QL_SHEET"] = args.sheet
-    if args.creds:
-        os.environ["QL_CREDS"] = args.creds
-    uvicorn.run(app, host="0.0.0.0", port=args.port)
+  
