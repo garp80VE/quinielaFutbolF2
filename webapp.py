@@ -2296,6 +2296,12 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
     raw_picks = _db.db_get_picks(int(player_id))
     games     = _db.db_get_horarios()
 
+    # HORARIOS guarda la ronda en la columna 'grupo' (R32/R16/QF/SF/3ER/FINAL).
+    # Normalizar a 'ronda' para que la resolucion de bracket la lea correctamente.
+    for g in games:
+        if not g.get("ronda"):
+            g["ronda"] = g.get("grupo", "") or ""
+
     RONDA_ORDER   = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
     RONDA_LABEL   = {
         "R32": "Dieciseisavos",
