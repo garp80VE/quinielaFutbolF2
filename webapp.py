@@ -838,6 +838,7 @@ def _jugador_db_to_cache(p: dict) -> dict:
         "TELEFONO":       p.get("whatsapp", ""),
         "TAB_NOMBRE":     p.get("tab_nombre", ""),
         "PAGADO":         "1" if p.get("pagado") else "",
+        "REGLAS_OK":      1 if p.get("reglas_ok") else 0,
         "FECHA REG.":     p.get("fecha_reg", ""),
         "FECHA_REGISTRO": p.get("fecha_reg", ""),
         "#":              str(p.get("num", "")),
@@ -2013,6 +2014,7 @@ async def auth_check(body: AuthCheck, response: Response):
             "phone": p.get("WHATSAPP","") or p.get("TELEFONO",""),
             "email": p.get("EMAIL",""),
             "pagado": is_paid,
+            "reglas_ok": bool(p.get("REGLAS_OK")),
             "stripe_activo": stripe_activo}
 
 
@@ -2131,6 +2133,22 @@ async def player_self_delete(
 
     # Limpiar cookie de sesion
     response.delete_cookie("ql_session", path="/")
+    return {"ok": True}
+
+
+@app.post("/api/player/accept-rules")
+async def player_accept_rules(phone: str = Query(""), email: str = Query(""),
+                              ql_session: str = Cookie(default="")):
+    """Marca que el jugador leyo y acepto el reglamento (modal obligatorio)."""
+    p = (find_player_any(phone=ql_session, email=ql_session) if ql_session else None) \
+        or find_player_any(phone=phone, email=email)
+    if not p:
+        raise HTTPException(404, "Jugador no encontrado")
+    player_id = p.get("_id") or p.get("id")
+    if not player_id:
+        raise HTTPException(404, "Jugador sin ID")
+    _db.db_set_reglas_ok(int(player_id), True)
+    _invalidate_players()
     return {"ok": True}
 
 

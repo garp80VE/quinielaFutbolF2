@@ -35,7 +35,8 @@ def init_db():
             whatsapp   TEXT    DEFAULT '',
             fecha_reg  TEXT    DEFAULT '',
             tab_nombre TEXT    DEFAULT '',
-            pagado     INTEGER DEFAULT 0
+            pagado     INTEGER DEFAULT 0,
+            reglas_ok  INTEGER DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_jug_whatsapp ON jugadores(whatsapp);
         CREATE INDEX IF NOT EXISTS idx_jug_email    ON jugadores(email);
@@ -81,6 +82,7 @@ def init_db():
     for col_sql in [
         "ALTER TABLE picks ADD COLUMN eq1_pick TEXT DEFAULT ''",
         "ALTER TABLE picks ADD COLUMN eq2_pick TEXT DEFAULT ''",
+        "ALTER TABLE jugadores ADD COLUMN reglas_ok INTEGER DEFAULT 0",
     ]:
         try:
             conn.execute(col_sql)
@@ -117,7 +119,7 @@ def db_get_jugadores() -> list:
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT id, num, email, nombre, whatsapp, fecha_reg, tab_nombre, pagado "
+            "SELECT id, num, email, nombre, whatsapp, fecha_reg, tab_nombre, pagado, reglas_ok "
             "FROM jugadores ORDER BY num, id"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -178,6 +180,20 @@ def db_mark_paid(phone: str, paid: bool = True) -> bool:
                 r = conn.execute(
                     "UPDATE jugadores SET pagado=? WHERE whatsapp=?",
                     (1 if paid else 0, phone.strip())
+                )
+        return r.rowcount > 0
+    finally:
+        conn.close()
+
+def db_set_reglas_ok(jugador_id: int, ok: bool = True) -> bool:
+    """Marca que el jugador ya leyo/acepto el reglamento. Retorna True si existia."""
+    conn = get_conn()
+    try:
+        with _db_lock:
+            with conn:
+                r = conn.execute(
+                    "UPDATE jugadores SET reglas_ok=? WHERE id=?",
+                    (1 if ok else 0, int(jugador_id))
                 )
         return r.rowcount > 0
     finally:

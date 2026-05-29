@@ -1060,6 +1060,29 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- ═══ Modal obligatorio: Reglamento (bloqueante, una sola vez) ═══ -->
+<div id="rules-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.78);backdrop-filter:blur(2px);align-items:center;justify-content:center;padding:16px">
+  <div style="background:#fff;border-radius:18px;width:100%;max-width:460px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.4)">
+    <div style="background:linear-gradient(135deg,#002868,#1a3a8a);padding:18px 20px;flex-shrink:0">
+      <p style="color:#fff;font-weight:900;font-size:17px;margin:0">📋 Reglamento de la Quiniela</p>
+      <p style="color:#bfdbfe;font-size:12px;margin:4px 0 0">Lee hasta el final para poder continuar</p>
+    </div>
+    <div id="rules-modal-body" onscroll="_rulesOnScroll()"
+         style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:18px 20px;font-size:13.5px;color:#374151;line-height:1.7;white-space:pre-wrap"></div>
+    <div id="rules-scroll-hint" style="flex-shrink:0;text-align:center;font-size:11px;color:#94a3b8;padding:4px 0;background:#f8fafc">▼ Desliza hasta el final ▼</div>
+    <div style="flex-shrink:0;border-top:1px solid #e2e8f0;padding:14px 20px;background:#fff">
+      <label id="rules-check-label" style="display:flex;align-items:center;gap:9px;cursor:not-allowed;opacity:.5;margin-bottom:12px">
+        <input type="checkbox" id="rules-checkbox" disabled onchange="_rulesUpdateBtn()" style="width:18px;height:18px;flex-shrink:0;accent-color:#002868">
+        <span style="font-size:13px;color:#1e293b;font-weight:600">He leído y acepto el reglamento</span>
+      </label>
+      <button id="rules-confirm-btn" disabled onclick="confirmReglas()"
+        style="width:100%;background:#cbd5e1;color:#fff;border:none;border-radius:12px;padding:13px;font-weight:800;font-size:14px;cursor:not-allowed">
+        Confirmar
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Banner Android: descarga APK -->
 <div id="banner-android" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;
   background:#002868;color:white;padding:14px 16px;
@@ -1705,7 +1728,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (phone) {
     try {
       const r = await api('POST','/api/auth/check',{phone});
-      if (r.registered) { S.pagado = r.pagado || false; S.stripe_activo = r.stripe_activo || false; }
+      if (r.registered) { S.pagado = r.pagado || false; S.stripe_activo = r.stripe_activo || false; S.reglas_ok = r.reglas_ok || false; }
       if (r.registered) {
         S.phone  = phone;
         S.nombre = r.nombre || sess.nombre || '';
@@ -1827,6 +1850,7 @@ async function doAuth() {
     if (r.registered) {
       S.phone = phone; S.nombre = r.nombre;
       S.pagado = r.pagado || false; S.stripe_activo = r.stripe_activo || false;
+      S.reglas_ok = r.reglas_ok || false;
       saveSession(phone, r.nombre);
       await openDashboard();
     } else {
@@ -2017,6 +2041,7 @@ async function openDashboard() {
   _updateInstallBtn();
   showScreen('s-dashboard');
   await loadDashboard();
+  _maybeShowRulesModal();
   await _checkPaymentStatus();
   // Verificar estado del sorteo al entrar — muestra la pestaña si hay sorteo activo
   sorteoCheckEstado();
@@ -2026,6 +2051,79 @@ async function openDashboard() {
       // Solo hacer check si NO estamos ya en la pantalla de sorteo (que tiene su propio polling de 2s)
       if (_sorteoFase === 'idle' || _sorteoFase === '') sorteoCheckEstado();
     }, 15000);
+  }
+}
+
+// ─── Modal obligatorio de Reglamento ──────────────────────────────────────
+function _maybeShowRulesModal() {
+  if (S.reglas_ok) return;                       // ya aceptó antes
+  const texto = (S.premios_reglas || '').trim();
+  if (!texto) return;                            // sin reglamento configurado → no bloquear
+  const modal = document.getElementById('rules-modal');
+  const body  = document.getElementById('rules-modal-body');
+  const chk   = document.getElementById('rules-checkbox');
+  const lbl   = document.getElementById('rules-check-label');
+  const btn   = document.getElementById('rules-confirm-btn');
+  const hint  = document.getElementById('rules-scroll-hint');
+  if (!modal || !body) return;
+  // Reset de estado
+  body.textContent = texto;
+  chk.checked = false; chk.disabled = true;
+  lbl.style.opacity = '.5'; lbl.style.cursor = 'not-allowed';
+  _rulesUpdateBtn();
+  modal.style.display = 'flex';
+  // Si el texto es corto y no necesita scroll, habilitar de una vez
+  requestAnimationFrame(() => {
+    body.scrollTop = 0;
+    if (body.scrollHeight <= body.clientHeight + 8) {
+      _rulesEnableCheck();
+    } else {
+      if (hint) hint.style.display = 'block';
+    }
+  });
+}
+
+function _rulesOnScroll() {
+  const body = document.getElementById('rules-modal-body');
+  if (!body) return;
+  if (body.scrollTop + body.clientHeight >= body.scrollHeight - 8) {
+    _rulesEnableCheck();
+  }
+}
+
+function _rulesEnableCheck() {
+  const chk  = document.getElementById('rules-checkbox');
+  const lbl  = document.getElementById('rules-check-label');
+  const hint = document.getElementById('rules-scroll-hint');
+  if (chk && chk.disabled) {
+    chk.disabled = false;
+    lbl.style.opacity = '1'; lbl.style.cursor = 'pointer';
+    if (hint) hint.style.display = 'none';
+  }
+}
+
+function _rulesUpdateBtn() {
+  const chk = document.getElementById('rules-checkbox');
+  const btn = document.getElementById('rules-confirm-btn');
+  if (!btn) return;
+  const ready = chk && chk.checked && !chk.disabled;
+  btn.disabled = !ready;
+  btn.style.background = ready ? 'linear-gradient(135deg,#006847,#059669)' : '#cbd5e1';
+  btn.style.cursor     = ready ? 'pointer' : 'not-allowed';
+}
+
+async function confirmReglas() {
+  const btn = document.getElementById('rules-confirm-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando...'; }
+  try {
+    await api('POST', `/api/player/accept-rules?phone=${encodeURIComponent(S.phone || '')}`);
+    S.reglas_ok = true;
+    const modal = document.getElementById('rules-modal');
+    if (modal) modal.style.display = 'none';
+    showToast('✅ ¡Listo! Ya puedes participar');
+  } catch(e) {
+    showToast('❌ ' + (e.message || 'No se pudo guardar'));
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirmar'; }
   }
 }
 
@@ -2056,6 +2154,7 @@ async function loadDashboard() {
       if (cfgRes.pts_gol1    != null) S.pts.gol1    = cfgRes.pts_gol1;
       if (cfgRes.pts_gol2    != null) S.pts.gol2    = cfgRes.pts_gol2;
       if (cfgRes.pts_campeon != null) S.pts.campeon = cfgRes.pts_campeon;
+      S.premios_reglas = cfgRes.premios_reglas || '';
     }
 
     // Agrupar por ronda (F2)
