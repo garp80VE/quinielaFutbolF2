@@ -705,11 +705,6 @@ class RegisterBody(BaseModel):
 class ArchiveResetBody(BaseModel):
     keyword: str
 
-class PushSubscribeBody(BaseModel):
-    subscription: dict
-    email: str = ""
-    phone: str = ""
-
 class Pick(BaseModel):
     jgo: int
     eq1: str = ""    # equipo 1 elegido por usuario
