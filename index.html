@@ -223,6 +223,10 @@
       <div style="height:10px;background:rgba(0,0,0,.2);border-radius:9999px;overflow:hidden">
         <div id="prog-bar" style="height:100%;background:linear-gradient(90deg,#EF3340,#F5B800);border-radius:9999px;transition:width .5s" style="width:0%"></div>
       </div>
+      <button id="dash-pdf-btn" onclick="infoDownloadPDF()"
+        style="display:none;width:100%;margin-top:12px;background:rgba(255,255,255,.18);color:white;border:1px solid rgba(255,255,255,.28);border-radius:11px;padding:10px;font-weight:800;font-size:13px;cursor:pointer" class="no-scale">
+        📄 Descargar mis picks (PDF)
+      </button>
     </div>
   </div>
 
@@ -2201,6 +2205,8 @@ function updateProgress() {
   const pct    = total > 0 ? (filled/total)*100 : 0;
   document.getElementById('prog-text').textContent = `${filled} / ${total}`;
   document.getElementById('prog-bar').style.width  = pct + '%';
+  const dashPdf = document.getElementById('dash-pdf-btn');
+  if (dashPdf) dashPdf.style.display = (total > 0 && filled === total) ? 'block' : 'none';
 }
 
 const hasPick = jgo => {
@@ -2865,8 +2871,9 @@ function _updateInfoProgress(torneoActivo) {
 }
 
 async function infoDownloadPDF() {
-  const btn = document.querySelector('#info-pdf-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando PDF...'; }
+  const btns = [document.getElementById('info-pdf-btn'),
+                document.getElementById('dash-pdf-btn')].filter(Boolean);
+  btns.forEach(b => { b.disabled = true; b.textContent = '⏳ Generando PDF...'; });
   try {
     const url = `/api/picks/pdf?phone=${encodeURIComponent(S.phone || '')}`;
     const resp = await fetch(url, { credentials: 'include' });
@@ -2889,7 +2896,7 @@ async function infoDownloadPDF() {
   } catch(e) {
     showToast('❌ ' + e.message);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '📄 Descargar mis picks (PDF)'; }
+    btns.forEach(b => { b.disabled = false; b.textContent = '📄 Descargar mis picks (PDF)'; });
   }
 }
 
