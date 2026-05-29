@@ -2098,6 +2098,176 @@ async def auth_logout(response: Response):
     return {"ok": True}
 
 
+@app.post("/api/player/self-delete")
+async def player_self_delete(
+    response: Response,
+    phone: str = Query(""),
+    email: str = Query(""),
+):
+    """El propio jugador se retira - solo permitido si el torneo NO esta activo."""
+    if _torneo_activo().get("activo"):
+        raise HTTPException(403, "No puedes retirarte mientras el torneo esta activo")
+    p = find_player_any(phone=phone, email=email)
+    if not p:
+        raise HTTPException(404, "Jugador no encontrado")
+    player_id = p.get("_id") or p.get("id")
+    if not player_id:
+        raise HTTPException(404, "Jugador sin ID")
+
+    # Cancelar suscripciones push de este jugador
+    phone_norm  = p.get("WHATSAPP") or p.get("TELEFONO") or ""
+    email_clean = p.get("EMAIL") or ""
+    if _push_subs:
+        _push_subs[:] = [
+            s for s in _push_subs
+            if not (s.get("_phone") == phone_norm or s.get("_email") == email_clean)
+        ]
+        _subs_save()
+
+    # Eliminar picks + jugador de SQLite
+    _db.db_delete_player(int(player_id))
+    _invalidate_players()
+    _cache["players"].clear()
+    _cache["standings_rows"] = None
+
+    # Limpiar cookie de sesion
+    response.delete_cookie("ql_session", path="/")
+    return {"ok": True}
+
+
+@app.get("/api/picks/pdf")
+async def picks_pdf(phone: str = Query(""), email: str = Query("")):
+    """Genera un PDF con todos los picks del jugador."""
+    from fpdf import FPDF
+    from io import BytesIO
+    from datetime import datetime as _dt
+    import re as _re
+
+    p = find_player_any(phone=phone, email=email)
+    if not p:
+        raise HTTPException(404, "Jugador no encontrado")
+    player_id = p.get("_id") or p.get("id")
+    if not player_id:
+        raise HTTPException(404, "Jugador sin ID")
+
+    nombre    = p.get("NOMBRE", "Jugador")
+    tel       = phone or p.get("WHATSAPP") or p.get("TELEFONO") or "sin-tel"
+    tel_clean = _re.sub(r"[^\d]", "", tel)
+
+    raw_picks = _db.db_get_picks(int(player_id))
+    games     = _db.db_get_horarios()
+
+    RONDA_ORDER   = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
+    RONDA_LABEL   = {
+        "R32": "Dieciseisavos",
+        "R16": "Octavos de Final",
+        "QF":  "Cuartos de Final",
+        "SF":  "Semifinal",
+        "3ER": "Tercer Puesto",
+        "FINAL": "Final",
+    }
+    RONDA_ORD_MAP = {k: i for i, k in enumerate(RONDA_ORDER)}
+
+    sorted_games = sorted(
+        games,
+        key=lambda g: (
+            RONDA_ORD_MAP.get(g.get("ronda") or g.get("grupo", ""), 99),
+            g.get("fecha", ""),
+            g.get("hora", ""),
+            int(g.get("jgo", 0)) if str(g.get("jgo", "")).isdigit() else 0,
+        ),
+    )
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=14)
+
+    # Encabezado
+    pdf.set_fill_color(0, 40, 104)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 11, "Mis Picks - WFC 2026", new_x="LMARGIN", new_y="NEXT", fill=True, align="C")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_fill_color(26, 58, 138)
+    pdf.cell(0, 7, f"  {nombre}  |  {tel}  |  {_dt.now().strftime('%d/%m/%Y %H:%M')}",
+             new_x="LMARGIN", new_y="NEXT", fill=True)
+    pdf.ln(3)
+
+    # Contenido por ronda
+    current_ronda = None
+    for g in sorted_games:
+        ronda = g.get("ronda") or g.get("grupo") or "?"
+        eq1   = g.get("eq1") or ""
+        eq2   = g.get("eq2") or ""
+        if not eq1 or not eq2:
+            continue
+        jgo_str = str(g["jgo"])
+        pk      = raw_picks.get(jgo_str) or raw_picks.get(int(g["jgo"]), {})
+        gol1    = str(pk.get("g1", "")) if pk else ""
+        gol2    = str(pk.get("g2", "")) if pk else ""
+        ganador = pk.get("gan", "") if pk else ""
+
+        if ronda != current_ronda:
+            current_ronda = ronda
+            label = RONDA_LABEL.get(ronda, ronda)
+            pdf.set_fill_color(245, 184, 0)
+            pdf.set_text_color(26, 26, 26)
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.cell(0, 8, f"  {label}", new_x="LMARGIN", new_y="NEXT", fill=True)
+            pdf.ln(1)
+            pdf.set_fill_color(240, 242, 255)
+            pdf.set_text_color(60, 60, 90)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(10, 6, "#",         border=0, fill=True)
+            pdf.cell(52, 6, "Local",     border=0, fill=True)
+            pdf.cell(20, 6, "Marcador",  border=0, fill=True, align="C")
+            pdf.cell(52, 6, "Visitante", border=0, fill=True, align="R")
+            pdf.cell(0,  6, "Ganador",   border=0, fill=True, align="C",
+                     new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
+
+        if int(g["jgo"]) % 2 == 0:
+            pdf.set_fill_color(255, 255, 255)
+        else:
+            pdf.set_fill_color(249, 250, 252)
+        pdf.set_text_color(30, 30, 30)
+        pdf.set_font("Helvetica", "B" if ganador else "", 9)
+        marcador = f"{gol1}-{gol2}" if (gol1 != "" and gol2 != "") else "-"
+        pdf.cell(10, 6, jgo_str,   border=0, fill=True)
+        pdf.cell(52, 6, eq1[:24],  border=0, fill=True)
+        pdf.cell(20, 6, marcador,  border=0, fill=True, align="C")
+        pdf.cell(52, 6, eq2[:24],  border=0, fill=True, align="R")
+        if ganador:
+            pdf.set_text_color(0, 104, 71)
+        else:
+            pdf.set_text_color(180, 180, 180)
+        pdf.cell(0, 6, ganador[:20] if ganador else "-",
+                 border=0, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
+
+    # Pie
+    pdf.ln(4)
+    pdf.set_text_color(150, 150, 150)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.cell(0, 5, "Generado por Quiniela WFC 2026",
+             align="C", new_x="LMARGIN", new_y="NEXT")
+
+    ts_str    = _dt.now().strftime("%Y%m%d%H%M")
+    nom_clean = _re.sub(r"[^\w]", "_", nombre)[:20]
+    filename  = f"{nom_clean}_{tel_clean}_{ts_str}.pdf"
+
+    buf = BytesIO()
+    buf.write(pdf.output())
+    buf.seek(0)
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+
 # ââ Partidos ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.get("/api/games")
@@ -2184,7 +2354,7 @@ async def save_picks(body: SavePicksBody):
         guardados += 1
 
     if guardados:
-        _cache["standings_rows"] = None  # invalidar para que próximo /api/standings recompute
+        _cache["standings_rows"] = None  # invalidar standings al guardar picks
 
     return {"guardados": guardados, "bloqueados": bloqueados}
 
@@ -2213,11 +2383,25 @@ async def get_public_config():
 async def get_standings():
     try:
         cached = _cache.get("standings_rows")
-        if not cached:
-            # Cache vacía (nuevo jugador o primer arranque) — computar al momento
-            _update_standings()
-            cached = _cache.get("standings_rows")
-        return {"rows": cached or []}
+        if cached is not None:
+            return {"rows": cached}
+        # Cache no inicializada — calcular desde SQLite (sin bloquear Sheets)
+        cfg = state.get("cfg", {})
+        st  = _db.db_compute_standings(cfg)
+        if not st:
+            return {"rows": []}
+        lider = st[0]["pts"]
+        rows, pos = [], 1
+        for i, s in enumerate(st):
+            if i > 0:
+                prev = st[i - 1]
+                if not (s["pts"] == prev["pts"] and s["gan"] == prev["gan"] and
+                        s["g1"] + s["g2"] == prev["g1"] + prev["g2"]):
+                    pos = i + 1
+            rows.append([pos, s["nombre"], s["pts"], s["pts"] - lider])
+        result = [["POS", "NOMBRE", "Ptos", "Diferencia"]] + rows
+        _cache["standings_rows"] = result
+        return {"rows": result}
     except Exception:
         return {"rows": []}
 
@@ -3284,6 +3468,7 @@ async def prize_info():
                          tie_1st=tie_1st, tie_2nd=tie_2nd,
                          fee_pct=fee_pct)
     result["costo"] = cost
+    result["torneo_activo"] = _torneo_activo().get("activo", False)
     return result
 
 
@@ -4648,4 +4833,180 @@ async def admin_setup_all(ql_admin: str = Cookie(default="")):
     except Exception as e:
         errors.append(f"Error recalculando standings: {e}")
 
-  
+    return {"ok": not errors, "log": log, "errors": errors}
+
+
+
+@app.post("/api/admin/reset")
+async def admin_reset(body: ArchiveResetBody, ql_admin: str = Cookie(default="")):
+    """Archiva el sheet actual en Drive y resetea jugadores/horarios/picks para nueva quiniela."""
+    if not _admin_check(ql_admin):
+        raise HTTPException(403, "No autorizado")
+
+    cfg = state.get("cfg", {})
+    reset_key = cfg.get("RESET_KEY", "RESET2026")
+    if body.keyword.strip() != reset_key:
+        raise HTTPException(403, "Clave incorrecta")
+
+    torneo    = cfg.get("TORNEO", "QuinielaF2")
+    fecha_ini = cfg.get("FECHA_INICIO_F2", "").replace("-", "")
+    fecha_fin = cfg.get("FECHA_FIN_F2",    "").replace("-", "")
+    copy_name = f"{torneo}.{fecha_ini}.{fecha_fin}"
+
+    # 1. Archivar copia en Drive (best effort)
+    archive_warn = ""
+    sh = state.get("sh")
+    if sh:
+        try:
+            from googleapiclient.discovery import build as _gapi_build
+            from google.oauth2.service_account import Credentials as _Creds
+            creds = _Creds.from_service_account_file(
+                os.environ.get("QL_CREDS", "credentials.json"), scopes=SCOPES)
+            drive = _gapi_build("drive", "v3", credentials=creds, cache_discovery=False)
+            file_info  = drive.files().get(fileId=sh.id, fields="owners,parents").execute()
+            owner_email = (file_info.get("owners") or [{}])[0].get("emailAddress", "")
+            parents    = file_info.get("parents", [])
+            copy_body  = {"name": copy_name}
+            if parents:
+                copy_body["parents"] = parents
+            copy_meta = drive.files().copy(
+                fileId=sh.id, body=copy_body, supportsAllDrives=True).execute()
+            copy_id = copy_meta.get("id")
+            print(f"[reset] Copia creada: {copy_name} (id={copy_id})")
+            if owner_email:
+                drive.permissions().create(
+                    fileId=copy_id,
+                    body={"role": "writer", "type": "user", "emailAddress": owner_email},
+                    sendNotificationEmail=False
+                ).execute()
+        except Exception as e_drive:
+            archive_warn = f"[WARN] No se pudo archivar en Drive: {e_drive}. "
+            print(f"[reset] Drive error: {e_drive}")
+
+    # 2. Limpiar Sheets (best effort)
+    if sh:
+        try:
+            reserved = {"HORARIOS", "JUGADORES", "POSICIONES", "CONFIG", "INSTRUCCIONES"}
+            for ws in sh.worksheets():
+                if ws.title not in reserved:
+                    sh.del_worksheet(ws)
+                time.sleep(0.1)
+            ws_j = sh.worksheet("JUGADORES")
+            rows_j = ws_j.get_all_values()
+            hi, _ = _jugadores_headers(rows_j)
+            first_data = hi + 2
+            if len(rows_j) >= first_data:
+                ws_j.batch_clear([f"A{first_data}:Z{len(rows_j) + 5}"])
+            sh.worksheet("POSICIONES").batch_clear(["A3:Z100"])
+            sh.worksheet("HORARIOS").batch_clear(["A3:L1000"])
+        except Exception as e:
+            print(f"[reset] WARN Sheets clear: {e}")
+
+    # 3. Limpiar SQLite
+    try:
+        conn_r = _db.get_conn()
+        with conn_r:
+            conn_r.execute("DELETE FROM picks")
+            conn_r.execute("DELETE FROM jugadores")
+            conn_r.execute("DELETE FROM horarios")
+            conn_r.execute("DELETE FROM chat")
+        conn_r.close()
+        print("[reset] SQLite limpiado")
+    except Exception as e_sql:
+        print(f"[reset] SQLite error: {e_sql}")
+
+    _cache["players"].clear()
+    _invalidate_games()
+    state["cfg"] = _db.db_get_config()
+
+    msg = (f"{archive_warn}SQLite reseteado."
+           if archive_warn else
+           f"Archivado como '{copy_name}' y todo reseteado.")
+    return {"ok": True, "msg": msg}
+
+
+@app.post("/api/admin/reset-test")
+async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
+    """
+    Modo prueba: borra resultados (ganador/goles/estado) desde una ronda en adelante
+    y resetea los eq1/eq2 de esas rondas a placeholders de bracket.
+    Body: { ronda_desde: "R32" | "R16" | "QF" | "SF" | "FINAL" }
+    """
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+
+    ronda_desde = str(body.get("ronda_desde", "R32")).strip().upper()
+    RONDAS_ORDER = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
+    ROF_MAP = {"R16": 32, "QF": 16, "SF": 8, "3ER": 4, "FINAL": 4}
+
+    if ronda_desde not in RONDAS_ORDER:
+        raise HTTPException(400, f"ronda_desde invalida. Usar: {RONDAS_ORDER}")
+
+    idx_desde = RONDAS_ORDER.index(ronda_desde)
+    rondas_a_limpiar = RONDAS_ORDER[idx_desde:]
+
+    horarios = _db.db_get_horarios()
+    ronda_games: dict = {}
+    for h in horarios:
+        ronda = h.get("grupo", "")
+        ronda_games.setdefault(ronda, []).append(h)
+    for k in ronda_games:
+        ronda_games[k].sort(key=lambda h: int(str(h["jgo"])) if str(h["jgo"]).isdigit() else 0)
+
+    conn = _db.get_conn()
+    cleared = 0
+    with conn:
+        for ronda in rondas_a_limpiar:
+            games = ronda_games.get(ronda, [])
+            for h in games:
+                jgo = str(h["jgo"])
+                conn.execute(
+                    "UPDATE horarios SET ganador='', gol1='', gol2='', estado='PROG' WHERE jgo=?",
+                    (jgo,))
+                cleared += 1
+                if ronda in ROF_MAP:
+                    rof = ROF_MAP[ronda]
+                    games_sorted = ronda_games.get(ronda, [])
+                    i = games_sorted.index(h)
+                    eq1_new = f"Round of {rof} {2*i+1} Winner"
+                    eq2_new = f"Round of {rof} {2*i+2} Winner"
+                    conn.execute("UPDATE horarios SET eq1=?, eq2=? WHERE jgo=?",
+                                 (eq1_new, eq2_new, jgo))
+
+    conn.close()
+
+    # Borrar picks correspondientes a las rondas limpiadas
+    jgos_limpiados = []
+    for ronda in rondas_a_limpiar:
+        for h in ronda_games.get(ronda, []):
+            jgos_limpiados.append(str(h["jgo"]))
+
+    if jgos_limpiados:
+        conn2 = _db.get_conn()
+        with conn2:
+            placeholders = ",".join("?" * len(jgos_limpiados))
+            conn2.execute(f"DELETE FROM picks WHERE jgo IN ({placeholders})", jgos_limpiados)
+        conn2.close()
+
+    _invalidate_games()
+    return {
+        "ok":  True,
+        "msg": f"Reseteados {cleared} partido(s) desde {ronda_desde} "
+               f"({', '.join(rondas_a_limpiar)}) y picks eliminados."
+    }
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Quiniela Futbol F2 - Backend")
+    parser.add_argument("--port",  type=int, default=int(os.environ.get("PORT", 8080)),
+                        help="Puerto HTTP (default: $PORT o 8080)")
+    parser.add_argument("--sheet", type=str, default="",
+                        help="ID del Google Sheet (opcional)")
+    parser.add_argument("--creds", type=str, default="credentials.json",
+                        help="Ruta al credentials.json")
+    args = parser.parse_args()
+
+    if args.sheet:
+        os.environ["QL_SHEET"] = args.sheet
+    if args.creds:
+        os.environ["QL_CREDS"] = args.creds
+    uvicorn.run(app, host="0.0.0.0", port=args.port)

@@ -1228,6 +1228,39 @@
 
     </div>
 
+    <!-- ── Mis Picks: progreso + PDF ── -->
+    <div style="background:white;border-radius:16px;overflow:hidden;box-shadow:0 1px 8px rgba(0,40,104,.07)">
+      <div style="background:linear-gradient(135deg,#002868,#1a3a8a);padding:12px 16px;display:flex;align-items:center;gap:10px">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="white" style="width:20px;height:20px;flex-shrink:0">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        <p style="font-weight:800;font-size:15px;color:white;margin:0;flex:1">Mis Picks</p>
+        <span id="info-picks-count" style="background:rgba(255,255,255,.2);color:white;border-radius:6px;padding:2px 9px;font-size:11px;font-weight:800">0 / 0</span>
+      </div>
+      <div style="padding:14px 16px">
+        <div style="height:10px;background:#e2e8f0;border-radius:9999px;overflow:hidden;margin-bottom:12px">
+          <div id="info-picks-bar" style="height:100%;background:linear-gradient(90deg,#002868,#EF3340);border-radius:9999px;transition:width .5s;width:0%"></div>
+        </div>
+        <button id="info-pdf-btn" onclick="infoDownloadPDF()"
+          style="display:none;width:100%;background:linear-gradient(135deg,#006847,#059669);color:white;border:none;border-radius:11px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+          📄 Descargar mis picks (PDF)
+        </button>
+        <p id="info-pdf-hint" style="display:none;font-size:11px;color:#94a3b8;text-align:center;margin:6px 0 0">Disponible cuando completes todos tus picks</p>
+      </div>
+    </div>
+
+    <!-- ── Retirarme ── -->
+    <div id="info-retire-card" style="display:none;background:white;border-radius:16px;overflow:hidden;box-shadow:0 1px 8px rgba(0,40,104,.07)">
+      <div style="padding:14px 16px">
+        <p style="font-weight:700;font-size:13px;color:#1e293b;margin:0 0 4px">¿Quieres retirarte de la quiniela?</p>
+        <p style="font-size:11px;color:#64748b;margin:0 0 12px">Esto eliminará tu cuenta y todos tus picks. Solo disponible antes de que inicie el torneo.</p>
+        <button onclick="infoSelfDelete()"
+          style="width:100%;background:linear-gradient(135deg,#dc2626,#b91c1c);color:white;border:none;border-radius:11px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
+          🚪 Retirarme de la quiniela
+        </button>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -2796,9 +2829,88 @@ async function loadInfo(force=false) {
       prizeCard.style.display = 'none';
     }
 
+    // ── Picks progress + PDF + Retirarme ──────────────────────────────────────
+    _updateInfoProgress(prize ? prize.torneo_activo : false);
+
     _infoLoaded = true;
   } catch(e) { console.warn('[info]', e); }
   _refreshInfoNotifStatus();
+}
+
+function _updateInfoProgress(torneoActivo) {
+  const total  = S.games.filter(g => g.eq1 && g.eq2).length;
+  const filled = S.games.filter(g => g.eq1 && g.eq2 && hasPick(g.jgo)).length;
+  const pct    = total > 0 ? Math.round((filled / total) * 100) : 0;
+
+  const countEl = document.getElementById('info-picks-count');
+  const barEl   = document.getElementById('info-picks-bar');
+  const pdfBtn  = document.getElementById('info-pdf-btn');
+  const pdfHint = document.getElementById('info-pdf-hint');
+  const retCard = document.getElementById('info-retire-card');
+
+  if (countEl) countEl.textContent = `${filled} / ${total}`;
+  if (barEl)   barEl.style.width   = pct + '%';
+
+  const complete = total > 0 && filled === total;
+  if (pdfBtn)  { pdfBtn.style.display  = complete ? 'block' : 'none'; }
+  if (pdfHint) { pdfHint.style.display = !complete && total > 0 ? 'block' : 'none'; }
+
+  // Botón Retirarme: solo si torneo NO activo
+  if (retCard) retCard.style.display = torneoActivo ? 'none' : 'block';
+}
+
+async function infoDownloadPDF() {
+  const btn = document.querySelector('#info-pdf-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generando PDF...'; }
+  try {
+    const url = `/api/picks/pdf?phone=${encodeURIComponent(S.phone || '')}`;
+    const resp = await fetch(url, { credentials: 'include' });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `Error ${resp.status}`);
+    }
+    // Disparar descarga
+    const blob = await resp.blob();
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    const cd   = resp.headers.get('Content-Disposition') || '';
+    const m    = cd.match(/filename="([^"]+)"/);
+    a.download = m ? m[1] : 'mis_picks.pdf';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    showToast('✅ PDF descargado');
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📄 Descargar mis picks (PDF)'; }
+  }
+}
+
+async function infoSelfDelete() {
+  const confirmed = confirm(
+    '¿Seguro que quieres retirarte de la quiniela?\n\nEsto eliminará tu cuenta y TODOS tus picks de forma permanente.'
+  );
+  if (!confirmed) return;
+  const btn = document.querySelector('#info-retire-card button');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Procesando...'; }
+  try {
+    await api('POST', `/api/player/self-delete?phone=${encodeURIComponent(S.phone || '')}`);
+    // Limpiar sesión local
+    localStorage.removeItem('ql_p');
+    localStorage.removeItem('ql_n');
+    localStorage.removeItem('ql_last');
+    S.phone = S.nombre = null;
+    S.games = []; S.picks = {}; S.groups = {};
+    _infoLoaded = false;
+    showToast('👋 Te has retirado de la quiniela');
+    setTimeout(() => showScreen('s-auth'), 800);
+  } catch(e) {
+    const msg = e.message || 'Error al retirarte';
+    showToast('❌ ' + msg);
+    if (btn) { btn.disabled = false; btn.textContent = '🚪 Retirarme de la quiniela'; }
+  }
 }
 
 function _refreshInfoNotifStatus() {
@@ -6230,6 +6342,11 @@ function sorteoStartAnim(tipo, elegibles) {
         ctx.fill();
         ctx.strokeStyle='#a0916a'; ctx.lineWidth=1.2; ctx.stroke();
       });
+      ctx.beginPath(); ctx.arc(cx,cy,Ri,a0,a1); ctx.closePath();
+        ctx.fillStyle = isWin ? '#fbbf24' : segFill[i];
+        ctx.fill();
+        ctx.strokeStyle='#a0916a'; ctx.lineWidth=1.2; ctx.stroke();
+      });
       ctx.beginPath(); ctx.arc(cx,cy,Ri,0,Math.PI*2);
       ctx.strokeStyle='#d97706'; ctx.lineWidth=2; ctx.stroke();
 
@@ -6306,4 +6423,3 @@ function sorteoStartAnim(tipo, elegibles) {
 </script>
 </body>
 </html>
-                   
