@@ -2184,18 +2184,24 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=14)
 
-    # Encabezado
-    pdf.set_fill_color(0, 40, 104)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 11, "Mis Picks - WFC 2026", new_x="LMARGIN", new_y="NEXT", fill=True, align="C")
+    # ── Encabezado (estilo F1) ─────────────────────────────────────────────
+    torneo = state.get("cfg", {}).get("TORNEO", "Quiniela")
+    pdf.set_text_color(0, 40, 104)
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 11, torneo, new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.set_text_color(40, 40, 40)
     pdf.set_font("Helvetica", "", 10)
-    pdf.set_fill_color(26, 58, 138)
-    pdf.cell(0, 7, f"  {nombre}  |  {tel}  |  {_dt.now().strftime('%d/%m/%Y %H:%M')}",
-             new_x="LMARGIN", new_y="NEXT", fill=True)
-    pdf.ln(3)
+    pdf.cell(0, 6, f"Jugador: {nombre}", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 6, f"Telefono: {tel}",   new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 6, f"Generado: {_dt.now().strftime('%d/%m/%Y %H:%M')}",
+             new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(4)
+
+    # Anchos de columna (estilo F1: goles local/visitante separados)
+    W_NUM, W_LOCAL, W_VIS, W_GL, W_GV = 10, 48, 48, 16, 16
 
     # Contenido por ronda
+    total_count = filled_count = 0
     current_ronda = None
     for g in sorted_games:
         ronda = g.get("ronda") or g.get("grupo") or "?"
@@ -2209,6 +2215,10 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         gol2    = str(pk.get("g2", "")) if pk else ""
         ganador = pk.get("gan", "") if pk else ""
 
+        total_count += 1
+        if ganador:
+            filled_count += 1
+
         if ronda != current_ronda:
             current_ronda = ronda
             label = RONDA_LABEL.get(ronda, ronda)
@@ -2217,41 +2227,43 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
             pdf.set_font("Helvetica", "B", 11)
             pdf.cell(0, 8, f"  {label}", new_x="LMARGIN", new_y="NEXT", fill=True)
             pdf.ln(1)
-            pdf.set_fill_color(240, 242, 255)
-            pdf.set_text_color(60, 60, 90)
-            pdf.set_font("Helvetica", "B", 9)
-            pdf.cell(10, 6, "#",         border=0, fill=True)
-            pdf.cell(52, 6, "Local",     border=0, fill=True)
-            pdf.cell(20, 6, "Marcador",  border=0, fill=True, align="C")
-            pdf.cell(52, 6, "Visitante", border=0, fill=True, align="R")
-            pdf.cell(0,  6, "Ganador",   border=0, fill=True, align="C",
+            # Cabecera de columnas (azul con texto blanco, estilo F1)
+            pdf.set_fill_color(0, 40, 104)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.cell(W_NUM,   6, "#",         border=0, fill=True, align="C")
+            pdf.cell(W_LOCAL, 6, "Local",     border=0, fill=True)
+            pdf.cell(W_VIS,   6, "Visitante", border=0, fill=True)
+            pdf.cell(W_GL,    6, "G.Local",   border=0, fill=True, align="C")
+            pdf.cell(W_GV,    6, "G.Visit.",  border=0, fill=True, align="C")
+            pdf.cell(0,       6, "Ganador",   border=0, fill=True, align="C",
                      new_x="LMARGIN", new_y="NEXT")
-            pdf.ln(1)
 
         if int(g["jgo"]) % 2 == 0:
             pdf.set_fill_color(255, 255, 255)
         else:
-            pdf.set_fill_color(249, 250, 252)
+            pdf.set_fill_color(245, 247, 250)
         pdf.set_text_color(30, 30, 30)
-        pdf.set_font("Helvetica", "B" if ganador else "", 9)
-        marcador = f"{gol1}-{gol2}" if (gol1 != "" and gol2 != "") else "-"
-        pdf.cell(10, 6, jgo_str,   border=0, fill=True)
-        pdf.cell(52, 6, eq1[:24],  border=0, fill=True)
-        pdf.cell(20, 6, marcador,  border=0, fill=True, align="C")
-        pdf.cell(52, 6, eq2[:24],  border=0, fill=True, align="R")
+        pdf.set_font("Helvetica", "", 8)
+        pdf.cell(W_NUM,   6, jgo_str,  border=0, fill=True, align="C")
+        pdf.cell(W_LOCAL, 6, eq1[:26], border=0, fill=True)
+        pdf.cell(W_VIS,   6, eq2[:26], border=0, fill=True)
+        pdf.cell(W_GL,    6, gol1 if gol1 != "" else "-", border=0, fill=True, align="C")
+        pdf.cell(W_GV,    6, gol2 if gol2 != "" else "-", border=0, fill=True, align="C")
         if ganador:
             pdf.set_text_color(0, 104, 71)
+            pdf.set_font("Helvetica", "B", 8)
         else:
             pdf.set_text_color(180, 180, 180)
-        pdf.cell(0, 6, ganador[:20] if ganador else "-",
+        pdf.cell(0, 6, ganador[:22] if ganador else "-",
                  border=0, fill=True, align="C", new_x="LMARGIN", new_y="NEXT")
 
-    # Pie
+    # ── Pie (estilo F1) ─────────────────────────────────────────────────────
     pdf.ln(4)
-    pdf.set_text_color(150, 150, 150)
-    pdf.set_font("Helvetica", "I", 8)
-    pdf.cell(0, 5, "Generado por Quiniela WFC 2026",
-             align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(120, 120, 120)
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.cell(0, 5, f"Picks completados: {filled_count} / {total_count}",
+             align="R", new_x="LMARGIN", new_y="NEXT")
 
     ts_str    = _dt.now().strftime("%Y%m%d%H%M")
     nom_clean = _re.sub(r"[^\w]", "_", nombre)[:20]
