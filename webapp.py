@@ -2366,10 +2366,10 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         gol2    = str(pk.get("g2", "")) if pk else ""
         ganador = pk.get("gan", "") if pk else ""
 
-        # Resultado 1/E/2 = signo del marcador predicho (logro / PTS_LOGRO)
+        # Resultado del marcador predicho (el ganador ya lo da la columna Ganador):
+        # E = empate, G = hay ganador por marcador (logro / PTS_LOGRO)
         if gol1 != "" and gol2 != "" and gol1.lstrip("-").isdigit() and gol2.lstrip("-").isdigit():
-            n1, n2   = int(gol1), int(gol2)
-            res_sign = "1" if n1 > n2 else ("2" if n2 > n1 else "E")
+            res_sign = "E" if int(gol1) == int(gol2) else "G"
         else:
             res_sign = "-"
 
@@ -2415,11 +2415,11 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         pdf.cell(W_VIS,   6, disp_eq2[:26], border=0, fill=True)
         pdf.cell(W_GL,    6, gol1 if gol1 != "" else "-", border=0, fill=True, align="C")
         pdf.cell(W_GV,    6, gol2 if gol2 != "" else "-", border=0, fill=True, align="C")
-        # Columna Resultado (1/E/2): empate en magenta, ganador en azul
+        # Columna Resultado (G/E): empate en magenta, ganador en azul
         pdf.set_font("Helvetica", "B", 8)
         if res_sign == "E":
             pdf.set_text_color(190, 24, 93)
-        elif res_sign in ("1", "2"):
+        elif res_sign == "G":
             pdf.set_text_color(37, 99, 235)
         else:
             pdf.set_text_color(180, 180, 180)
