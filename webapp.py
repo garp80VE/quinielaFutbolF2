@@ -4794,21 +4794,27 @@ async def admin_sim_range(body: dict, ql_admin: str = Cookie(default="")):
         g1 = random.choice(_GOALS)
         g2 = random.choice(_GOALS)
 
-        # En eliminatorias (R32, R16, QF, SF, 3ER, FINAL) no puede haber empate → elegir ganador al azar
+        # Eliminatorias (R32...FINAL): el marcador PUEDE quedar empatado (1-1) y
+        # se resuelve por penales -> uno avanza. Conservamos el empate en el
+        # marcador (para puntuar PTS_LOGRO) y elegimos al ganador que avanza.
         ronda = h.get("grupo", "")
         knockout = ronda in ("R32", "R16", "QF", "SF", "3ER", "FINAL")
-        if g1 == g2 and knockout:
-            if random.random() < 0.5:
-                g1 = g2 + 1
-            else:
-                g2 = g1 + 1
-
-        ganador = eq1 if g1 > g2 else (eq2 if g2 > g1 else "")
+        empate = (g1 == g2)
+        if g1 > g2:
+            ganador = eq1
+        elif g2 > g1:
+            ganador = eq2
+        elif knockout:
+            ganador = eq1 if random.random() < 0.5 else eq2  # penales
+        else:
+            ganador = ""  # fase de grupos: empate sin ganador
 
         ult_act = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
         _db.db_update_game_result(jgo, "FINAL", str(g1), str(g2), ganador, ult_act)
 
-        results.append({"jgo": jgo_n, "eq1": eq1, "eq2": eq2, "g1": g1, "g2": g2, "ganador": ganador or "Empate", "skip": False})
+        results.append({"jgo": jgo_n, "eq1": eq1, "eq2": eq2, "g1": g1, "g2": g2,
+                        "ganador": ganador or "Empate",
+                        "penales": bool(empate and knockout and ganador), "skip": False})
         applied += 1
 
     # Propagar bracket (actualiza EQ1/EQ2 de rondas siguientes)
