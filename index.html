@@ -2902,15 +2902,47 @@ async function infoSelfDelete() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Procesando...'; }
   try {
     await api('POST', `/api/player/self-delete?phone=${encodeURIComponent(S.phone || '')}`);
-    // Limpiar sesión local
+
+    // ── Limpieza completa del cliente ──────────────────────────────────────
+    // 1) Desvincular push (servidor ya canceló la sub, aquí limpiamos el navegador)
+    try {
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await api('POST', '/api/push/unsubscribe', { endpoint: sub.endpoint }).catch(()=>{});
+          await sub.unsubscribe().catch(()=>{});
+        }
+      }
+    } catch(_) {}
+
+    // 2) Borrar cachés de la PWA
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch(_) {}
+
+    // 3) Desregistrar el Service Worker
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+    } catch(_) {}
+
+    // 4) Limpiar sesión local
     localStorage.removeItem('ql_p');
     localStorage.removeItem('ql_n');
     localStorage.removeItem('ql_last');
     S.phone = S.nombre = null;
     S.games = []; S.picks = {}; S.groups = {};
     _infoLoaded = false;
+
+    // 5) Redirigir a / (recarga real para arrancar limpio)
     showToast('👋 Te has retirado de la quiniela');
-    setTimeout(() => showScreen('s-auth'), 800);
+    setTimeout(() => { window.location.href = '/'; }, 800);
   } catch(e) {
     const msg = e.message || 'Error al retirarte';
     showToast('❌ ' + msg);

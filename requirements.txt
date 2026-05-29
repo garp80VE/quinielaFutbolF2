@@ -8,4 +8,3 @@ python-multipart
 pywebpush
 google-api-python-client
 fpdf2
-fpdf2

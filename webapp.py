@@ -2098,11 +2098,15 @@ async def player_self_delete(
     response: Response,
     phone: str = Query(""),
     email: str = Query(""),
+    ql_session: str = Cookie(default=""),
 ):
-    """El propio jugador se retira - solo permitido si el torneo NO esta activo."""
+    """El propio jugador se retira - solo permitido si el torneo NO esta activo.
+    Identifica al jugador por la cookie de sesion (ql_session = telefono o email);
+    phone/email en query se mantienen como fallback para compatibilidad."""
     if _torneo_activo().get("activo"):
         raise HTTPException(403, "No puedes retirarte mientras el torneo esta activo")
-    p = find_player_any(phone=phone, email=email)
+    p = (find_player_any(phone=ql_session, email=ql_session) if ql_session else None) \
+        or find_player_any(phone=phone, email=email)
     if not p:
         raise HTTPException(404, "Jugador no encontrado")
     player_id = p.get("_id") or p.get("id")
@@ -2131,14 +2135,17 @@ async def player_self_delete(
 
 
 @app.get("/api/picks/pdf")
-async def picks_pdf(phone: str = Query(""), email: str = Query("")):
-    """Genera un PDF con todos los picks del jugador."""
+async def picks_pdf(phone: str = Query(""), email: str = Query(""),
+                    ql_session: str = Cookie(default="")):
+    """Genera un PDF con todos los picks del jugador.
+    Identifica al jugador por la cookie de sesion; phone/email son fallback."""
     from fpdf import FPDF
     from io import BytesIO
     from datetime import datetime as _dt
     import re as _re
 
-    p = find_player_any(phone=phone, email=email)
+    p = (find_player_any(phone=ql_session, email=ql_session) if ql_session else None) \
+        or find_player_any(phone=phone, email=email)
     if not p:
         raise HTTPException(404, "Jugador no encontrado")
     player_id = p.get("_id") or p.get("id")
