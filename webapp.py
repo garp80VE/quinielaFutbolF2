@@ -4171,6 +4171,80 @@ async def admin_debug_picks(jgo_desde: int = 17, jgo_hasta: int = 24, ql_admin: 
     finally:
         conn.close()
 
+@app.get("/api/admin/player-points")
+async def admin_player_points(q: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Diagnostico: desglose de puntos por juego de UN jugador, con la MISMA
+    funcion de calculo que la tabla de posiciones (_calc_pts). Util para auditar.
+    Uso: /api/admin/player-points?q=eudi  (q = nombre parcial, telefono, email o id)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    if not q.strip():
+        raise HTTPException(400, "Falta ?q= (nombre, telefono, email o id)")
+    ql = q.strip().lower()
+    jugadores = _db.db_get_jugadores()
+    match = next((j for j in jugadores if (
+        ql in (j.get("nombre", "").lower())
+        or ql == (j.get("whatsapp", "").lower())
+        or ql == (j.get("email", "").lower())
+        or ql == str(j.get("id", "")))), None)
+    if not match:
+        raise HTTPException(404, f"Jugador no encontrado para '{q}'")
+
+    cfg = state.get("cfg", {})
+    vL = int(cfg.get("PTS_LOGRO", 1) or 1); vG = int(cfg.get("PTS_GAN", 2) or 2)
+    v1 = int(cfg.get("PTS_GOL1", 1) or 1);  v2 = int(cfg.get("PTS_GOL2", 1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
+
+    picks    = _db.db_get_picks(match["id"])
+    by_jgo   = {str(h["jgo"]): h for h in _db.db_get_horarios()}
+
+    juegos = []
+    tot = {"logro": 0, "gan": 0, "gol1": 0, "gol2": 0, "campeon": 0, "total": 0}
+    for jgo_str in sorted(by_jgo, key=lambda x: int(x) if x.isdigit() else 0):
+        h = by_jgo[jgo_str]
+        estado = h.get("estado", "")
+        if not estado or estado == "PROG":
+            continue
+        pk = picks.get(jgo_str, {})
+        pl, pg, pg1, pg2, total = _db._calc_pts(
+            pk.get("g1", ""), pk.get("g2", ""), pk.get("gan", ""),
+            h.get("gol1", ""), h.get("gol2", ""), h.get("ganador", ""), estado,
+            vL, vG, v1, v2, vC, h.get("grupo", ""),
+            eq1_pick=pk.get("eq1", ""), eq2_pick=pk.get("eq2", ""),
+            eq1_real=h.get("eq1", ""), eq2_real=h.get("eq2", ""),
+        )
+        pc = total - (pl + pg + pg1 + pg2)  # campeon = lo que _calc_pts sumo aparte
+        # teamAlive (mismo criterio que _calc_pts) para mostrarlo explicito
+        team_alive = True
+        e1r = (h.get("eq1", "") or "").strip(); e2r = (h.get("eq2", "") or "").strip()
+        if e1r and e2r:
+            real = {e1r, e2r}
+            pred = {(pk.get("eq1", "") or "").strip(), (pk.get("eq2", "") or "").strip(),
+                    (pk.get("gan", "") or "").strip()}
+            pred = {t for t in pred if t and not t.startswith("Gan. ")}
+            if pred and not (pred & real):
+                team_alive = False
+        juegos.append({
+            "jgo": jgo_str, "ronda": h.get("grupo", ""),
+            "eq1_real": h.get("eq1", ""), "eq2_real": h.get("eq2", ""),
+            "marcador_real": f"{h.get('gol1','')}-{h.get('gol2','')}", "gan_real": h.get("ganador", ""),
+            "pick_marcador": f"{pk.get('g1','')}-{pk.get('g2','')}", "pick_gan": pk.get("gan", ""),
+            "eq1_pick": pk.get("eq1", ""), "eq2_pick": pk.get("eq2", ""),
+            "team_alive": team_alive,
+            "pts_logro": pl, "pts_gan": pg, "pts_gol1": pg1, "pts_gol2": pg2, "pts_campeon": pc,
+            "pts": total,
+        })
+        tot["logro"] += pl; tot["gan"] += pg; tot["gol1"] += pg1
+        tot["gol2"] += pg2; tot["campeon"] += pc; tot["total"] += total
+
+    return {
+        "jugador": match.get("nombre", ""), "jugador_id": match["id"],
+        "valores_pts": {"logro": vL, "gan": vG, "gol1": v1, "gol2": v2, "campeon": vC},
+        "totales": tot,
+        "juegos_finalizados": len(juegos),
+        "juegos": juegos,
+    }
+
+
 @app.post("/api/admin/fix-bracket")
 async def admin_fix_bracket(ql_admin: str = Cookie(default="")):
     """Fuerza re-propagacion del bracket completo. Util para corregir 3ER u otros slots
