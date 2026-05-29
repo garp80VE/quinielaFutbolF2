@@ -2134,6 +2134,143 @@ async def player_self_delete(
     return {"ok": True}
 
 
+# ── Resolucion de bracket para el PDF ────────────────────────────────────────
+# Port del frontend (_parseBracketRef / resolveTeamName / _inferBracketSlot).
+# En eliminatorias HORARIOS trae placeholders secuenciales ("Round of 32 1 Winner")
+# que NO reflejan el cruce real del Mundial 2026; el cruce correcto se infiere con
+# WC2026_MAP a partir de los ganadores que predijo el jugador en rondas anteriores.
+_RONDA_MAP_EN = {32: "R32", 16: "R16", 8: "QF", 4: "SF"}
+_FEED_RONDA   = {"R16": "R32", "QF": "R16", "SF": "QF", "3ER": "SF", "FINAL": "SF"}
+_WC2026_MAP   = {
+    "R16":   [[0, 3], [2, 5], [1, 4], [6, 7], [11, 10], [9, 8], [14, 13], [12, 15]],
+    "QF":    [[0, 1], [4, 5], [2, 3], [7, 6]],
+    "SF":    [[0, 1], [2, 3]],
+    "FINAL": [[0, 1]],
+}
+
+def _parse_bracket_ref(raw: str):
+    import re as _re
+    if not raw:
+        return None
+    m = _re.match(r"Round of (\d+) (\d+) Winner", raw, _re.I)
+    if m:
+        ronda = _RONDA_MAP_EN.get(int(m.group(1)))
+        if ronda:
+            return {"ronda": ronda, "nth": int(m.group(2)), "type": "winner", "jgo": None}
+    typ = "loser" if _re.match(r"^Perdedor", raw, _re.I) else "winner"
+    if _re.match(r"^(Ganador|Perdedor)", raw, _re.I):
+        for pat, ronda in ((r"Dieciseisavos", "R32"), (r"Octavos", "R16"),
+                           (r"Cuartos", "QF"), (r"Semifinal", "SF")):
+            if _re.search(pat, raw, _re.I):
+                mp = _re.search(r"\((\d+)\)", raw)
+                me = _re.search(r"\s(\d+)$", raw)
+                nth = int(mp.group(1)) if mp else (int(me.group(1)) if me else None)
+                if nth is not None:
+                    return {"ronda": ronda, "nth": nth, "type": typ, "jgo": None}
+    mg = _re.search(r"(?:Winner\s+)?Game\s+(\d+)(?:\s+Winner)?", raw, _re.I)
+    if mg:
+        return {"ronda": None, "nth": None, "type": "winner", "jgo": int(mg.group(1))}
+    return None
+
+def _is_placeholder(name: str) -> bool:
+    return _parse_bracket_ref(name) is not None
+
+def _resolve_team_name(raw, by_jgo, by_ronda, picks, depth=0):
+    if not raw or depth > 8:
+        return raw
+    ref = _parse_bracket_ref(raw)
+    if not ref:
+        return raw  # ya es un nombre real
+    if ref["jgo"]:
+        ref_game = by_jgo.get(str(ref["jgo"]))
+    else:
+        rg  = by_ronda.get(ref["ronda"], [])
+        idx = ref["nth"] - 1
+        ref_game = rg[idx] if 0 <= idx < len(rg) else None
+    if not ref_game:
+        return raw
+    pk  = picks.get(str(ref_game["jgo"])) or {}
+    gan = pk.get("gan", "")
+    if not gan:
+        return raw  # sin pick → mantener placeholder
+    if ref["type"] == "loser":
+        r1 = _resolve_team_name(ref_game.get("eq1", ""), by_jgo, by_ronda, picks, depth + 1)
+        r2 = _resolve_team_name(ref_game.get("eq2", ""), by_jgo, by_ronda, picks, depth + 1)
+        if gan == r1 or gan == pk.get("eq1"):
+            return r2 or pk.get("eq2") or raw
+        if gan == r2 or gan == pk.get("eq2"):
+            return r1 or pk.get("eq1") or raw
+        return raw
+    return _resolve_team_name(gan, by_jgo, by_ronda, picks, depth + 1)
+
+def _infer_bracket_slot(game, slot, by_jgo, by_ronda, picks):
+    feed_ronda = _FEED_RONDA.get(game.get("ronda"))
+    if not feed_ronda:
+        return None  # R32 / fase de grupos: no se infiere
+    this_round = by_ronda.get(game.get("ronda"), [])
+    my_idx = next((i for i, g in enumerate(this_round)
+                   if str(g["jgo"]) == str(game["jgo"])), -1)
+    if my_idx < 0:
+        return None
+    feed_games = by_ronda.get(feed_ronda, [])
+
+    if game.get("ronda") == "3ER":  # perdedor SF1 vs perdedor SF2
+        sf_idx  = 0 if slot == "eq1" else 1
+        sf_game = feed_games[sf_idx] if sf_idx < len(feed_games) else None
+        if not sf_game:
+            return None
+        pk = picks.get(str(sf_game["jgo"])) or {}
+        if not pk.get("gan"):
+            return f"Perdedor SF{sf_idx + 1}"
+        gan    = _resolve_team_name(pk["gan"], by_jgo, by_ronda, picks) or pk["gan"]
+        sf_eq1 = _resolve_team_name(sf_game.get("eq1", ""), by_jgo, by_ronda, picks) or sf_game.get("eq1", "")
+        sf_eq2 = _resolve_team_name(sf_game.get("eq2", ""), by_jgo, by_ronda, picks) or sf_game.get("eq2", "")
+        if not sf_eq1 or sf_eq1 == "TBD":
+            sf_eq1 = _resolve_team_name(pk.get("eq1", ""), by_jgo, by_ronda, picks) or pk.get("eq1", "")
+        if not sf_eq2 or sf_eq2 == "TBD":
+            sf_eq2 = _resolve_team_name(pk.get("eq2", ""), by_jgo, by_ronda, picks) or pk.get("eq2", "")
+        if not sf_eq1 or sf_eq1 == "TBD":
+            inf = _infer_bracket_slot(sf_game, "eq1", by_jgo, by_ronda, picks)
+            if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
+                sf_eq1 = inf
+        if not sf_eq2 or sf_eq2 == "TBD":
+            inf = _infer_bracket_slot(sf_game, "eq2", by_jgo, by_ronda, picks)
+            if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
+                sf_eq2 = inf
+        loser = sf_eq2 if gan == sf_eq1 else (sf_eq1 if gan == sf_eq2 else "")
+        return loser or f"Perdedor SF{sf_idx + 1}"
+
+    slot_idx  = 0 if slot == "eq1" else 1
+    ronda_map = _WC2026_MAP.get(game.get("ronda"))
+    if ronda_map and my_idx < len(ronda_map):
+        feed_idx = ronda_map[my_idx][slot_idx]
+    else:
+        feed_idx = my_idx * 2 if slot == "eq1" else my_idx * 2 + 1  # fallback secuencial
+    feed_game = feed_games[feed_idx] if 0 <= feed_idx < len(feed_games) else None
+    if not feed_game:
+        return None
+    pk = picks.get(str(feed_game["jgo"])) or {}
+    if not pk.get("gan"):
+        return f"Gan. JGO {feed_game['jgo']}"
+    resolved = _resolve_team_name(pk["gan"], by_jgo, by_ronda, picks) or pk["gan"]
+    return f"Gan. JGO {feed_game['jgo']}" if _is_placeholder(resolved) else resolved
+
+def _disp_team_pdf(game, slot, by_jgo, by_ronda, picks):
+    """Equipo a mostrar en el PDF para un slot: el que predijo el jugador."""
+    raw = game.get(slot) or ""
+    if game.get("ronda") not in _FEED_RONDA:
+        return raw  # R32 / grupos: equipo real directo
+    inf = _infer_bracket_slot(game, slot, by_jgo, by_ronda, picks)
+    if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
+        return inf
+    # Fallbacks: pick guardado (si es nombre real) → resolver placeholder → inf/raw
+    stored = (picks.get(str(game["jgo"])) or {}).get(slot) or ""
+    if stored and not _is_placeholder(stored):
+        return stored
+    resolved = _resolve_team_name(raw, by_jgo, by_ronda, picks)
+    return resolved or inf or raw
+
+
 @app.get("/api/picks/pdf")
 async def picks_pdf(phone: str = Query(""), email: str = Query(""),
                     ql_session: str = Cookie(default="")):
@@ -2200,6 +2337,14 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
     # Anchos de columna (estilo F1: goles local/visitante separados)
     W_NUM, W_LOCAL, W_VIS, W_GL, W_GV = 10, 48, 48, 16, 16
 
+    # Indices para resolver cruces de bracket segun los picks del jugador
+    by_jgo   = {str(g["jgo"]): g for g in games}
+    by_ronda = {}
+    for g in games:
+        by_ronda.setdefault(g.get("ronda") or g.get("grupo") or "?", []).append(g)
+    for k in by_ronda:
+        by_ronda[k].sort(key=lambda g: int(g["jgo"]) if str(g["jgo"]).isdigit() else 0)
+
     # Contenido por ronda
     total_count = filled_count = 0
     current_ronda = None
@@ -2214,6 +2359,12 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         gol1    = str(pk.get("g1", "")) if pk else ""
         gol2    = str(pk.get("g2", "")) if pk else ""
         ganador = pk.get("gan", "") if pk else ""
+
+        # En eliminatorias el horario trae placeholders ("Round of 32 1 Winner")
+        # con emparejamiento secuencial que NO refleja el bracket real. Inferir el
+        # cruce que predijo el jugador con WC2026_MAP + sus ganadores previos.
+        disp_eq1 = _disp_team_pdf(g, "eq1", by_jgo, by_ronda, raw_picks)
+        disp_eq2 = _disp_team_pdf(g, "eq2", by_jgo, by_ronda, raw_picks)
 
         total_count += 1
         if ganador:
@@ -2245,9 +2396,9 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
             pdf.set_fill_color(245, 247, 250)
         pdf.set_text_color(30, 30, 30)
         pdf.set_font("Helvetica", "", 8)
-        pdf.cell(W_NUM,   6, jgo_str,  border=0, fill=True, align="C")
-        pdf.cell(W_LOCAL, 6, eq1[:26], border=0, fill=True)
-        pdf.cell(W_VIS,   6, eq2[:26], border=0, fill=True)
+        pdf.cell(W_NUM,   6, jgo_str,       border=0, fill=True, align="C")
+        pdf.cell(W_LOCAL, 6, disp_eq1[:26], border=0, fill=True)
+        pdf.cell(W_VIS,   6, disp_eq2[:26], border=0, fill=True)
         pdf.cell(W_GL,    6, gol1 if gol1 != "" else "-", border=0, fill=True, align="C")
         pdf.cell(W_GV,    6, gol2 if gol2 != "" else "-", border=0, fill=True, align="C")
         if ganador:
