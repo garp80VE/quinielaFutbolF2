@@ -3969,11 +3969,16 @@ async def admin_debug_picks(jgo_desde: int = 17, jgo_hasta: int = 24, ql_admin: 
         conn.close()
 
 @app.get("/api/admin/player-points")
-async def admin_player_points(q: str = Query(""), ql_admin: str = Cookie(default="")):
+async def admin_player_points(q: str = Query(""), key: str = Query(""),
+                              ql_admin: str = Cookie(default="")):
     """Diagnostico: desglose de puntos por juego de UN jugador, con la MISMA
-    funcion de calculo que la tabla de posiciones (_calc_pts). Util para auditar.
-    Uso: /api/admin/player-points?q=eudi  (q = nombre parcial, telefono, email o id)."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    funcion de calculo que la tabla de posiciones. Util para auditar.
+    Uso: /api/admin/player-points?q=eudi          (logueado como admin), o
+         /api/admin/player-points?q=eudi&key=CLAVE (CLAVE = tu contraseña admin),
+    para abrirlo directo en el navegador sin login."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
     if not q.strip():
         raise HTTPException(400, "Falta ?q= (nombre, telefono, email o id)")
     ql = q.strip().lower()
