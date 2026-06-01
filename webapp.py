@@ -4046,6 +4046,82 @@ async def admin_player_points(q: str = Query(""), key: str = Query(""),
     }
 
 
+@app.get("/api/admin/all-player-points")
+async def admin_all_player_points(key: str = Query(""), ql_admin: str = Cookie(default=""),
+                                  solo_jugados: int = Query(1)):
+    """Diagnostico: desglose de puntos por juego de TODOS los jugadores (mismo
+    calculo que la tabla, con inferencia de bracket).
+    Uso: /api/admin/all-player-points?key=TU_CLAVE_ADMIN
+         &solo_jugados=0  -> incluye tambien partidos no finalizados (pts=null)."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+
+    cfg = state.get("cfg", {})
+    vL = int(cfg.get("PTS_LOGRO", 1) or 1); vG = int(cfg.get("PTS_GAN", 2) or 2)
+    v1 = int(cfg.get("PTS_GOL1", 1) or 1);  v2 = int(cfg.get("PTS_GOL2", 1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
+
+    by_jgo, by_ronda = _db.build_bracket_index(_db.db_get_horarios())
+    grouped = _db.db_get_all_picks_grouped()
+    jgo_orden = sorted(by_jgo, key=lambda x: int(x) if x.isdigit() else 0)
+
+    jugadores_out = []
+    for pid, data in grouped.items():
+        pp = data["picks"]
+        juegos = []
+        tot = {"logro": 0, "gan": 0, "gol1": 0, "gol2": 0, "campeon": 0, "total": 0}
+        for jgo_str in jgo_orden:
+            h = by_jgo[jgo_str]
+            estado = h.get("estado", "")
+            jugado = bool(estado and estado != "PROG")
+            if solo_jugados and not jugado:
+                continue
+            pk = pp.get(jgo_str, {})
+            eq1_inf = _db._disp_team(h, "eq1", by_jgo, by_ronda, pp)
+            eq2_inf = _db._disp_team(h, "eq2", by_jgo, by_ronda, pp)
+            if jugado:
+                pl, pg, pg1, pg2, total = _db.calc_pts_inferred(
+                    h, pk, by_jgo, by_ronda, pp, vL, vG, v1, v2, vC)
+                pc = total - (pl + pg + pg1 + pg2)
+            else:
+                pl = pg = pg1 = pg2 = pc = 0
+                total = None
+            team_alive = True
+            e1r = (h.get("eq1", "") or "").strip(); e2r = (h.get("eq2", "") or "").strip()
+            if jugado and e1r and e2r:
+                real = {e1r, e2r}
+                pred = {(eq1_inf or "").strip(), (eq2_inf or "").strip(), (pk.get("gan", "") or "").strip()}
+                pred = {t for t in pred if t and not t.startswith("Gan. ")}
+                if pred and not (pred & real):
+                    team_alive = False
+            juegos.append({
+                "jgo": jgo_str, "ronda": h.get("grupo", ""), "estado": estado,
+                "eq1_real": h.get("eq1", ""), "eq2_real": h.get("eq2", ""),
+                "marcador_real": f"{h.get('gol1','')}-{h.get('gol2','')}", "gan_real": h.get("ganador", ""),
+                "pick_marcador": f"{pk.get('g1','')}-{pk.get('g2','')}", "pick_gan": pk.get("gan", ""),
+                "eq1_pick_inferido": eq1_inf, "eq2_pick_inferido": eq2_inf,
+                "eq1_pick_guardado": pk.get("eq1", ""), "eq2_pick_guardado": pk.get("eq2", ""),
+                "team_alive": team_alive,
+                "pts_logro": pl, "pts_gan": pg, "pts_gol1": pg1, "pts_gol2": pg2,
+                "pts_campeon": pc, "pts": total,
+            })
+            if jugado:
+                tot["logro"] += pl; tot["gan"] += pg; tot["gol1"] += pg1
+                tot["gol2"] += pg2; tot["campeon"] += pc; tot["total"] += total
+        jugadores_out.append({
+            "jugador": data.get("nombre", ""), "jugador_id": pid,
+            "totales": tot, "juegos": juegos,
+        })
+
+    jugadores_out.sort(key=lambda x: -x["totales"]["total"])
+    return {
+        "valores_pts": {"logro": vL, "gan": vG, "gol1": v1, "gol2": v2, "campeon": vC},
+        "n_jugadores": len(jugadores_out),
+        "jugadores": jugadores_out,
+    }
+
+
 @app.post("/api/admin/fix-bracket")
 async def admin_fix_bracket(ql_admin: str = Cookie(default="")):
     """Fuerza re-propagacion del bracket completo. Util para corregir 3ER u otros slots
