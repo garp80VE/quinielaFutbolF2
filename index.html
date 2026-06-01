@@ -2142,7 +2142,8 @@ async function loadDashboard() {
     Object.entries(rawPicks).forEach(([k,v]) => {
       S.picks[k] = {
         eq1: v.eq1||'', gol1: v.gol1||'', gol2: v.gol2||'',
-        eq2: v.eq2||'', ganador: v.ganador||''
+        eq2: v.eq2||'', ganador: v.ganador||'',
+        pts: (v.pts === undefined ? null : v.pts)   // calculado por el backend
       };
     });
     S.teams     = tRes?.teams || [];
@@ -2418,39 +2419,10 @@ function renderGames(games) {
       ? 'w-full text-center text-xs font-bold border-2 border-gray-100 bg-gray-100 rounded-2xl py-2 px-1 text-gray-400 cursor-not-allowed'
       : 'w-full text-center text-xs font-bold border-2 border-blue-100 bg-white rounded-2xl py-2 px-1 focus:outline-none focus:border-blue-400 transition-all cursor-pointer';
 
-    // Puntos F2: usa valores de S.pts (cargados desde public-config / admin)
-    let pts = null;
-    if ((isFinal || isLive) && p.ganador !== '' && p.gol1 !== '' && p.gol2 !== '') {
-      const pickGan = p.ganador || '';
-      const _res = (g1, g2) => Number(g1) > Number(g2) ? '1' : Number(g1) < Number(g2) ? '2' : 'X';
-      const pickResult = _res(p.gol1, p.gol2);
-      // Regla F2: al menos 1 equipo PREDICHO por el jugador debe estar en el partido real.
-      // rEq1/rEq2 son los equipos que el jugador predijo para este slot (via _inferBracketSlot).
-      // p.eq1/p.eq2 vienen de horarios (equipos reales) -- NO los usar aqui.
-      const _realTeams = [g.eq1, g.eq2].filter(Boolean);
-      const teamAlive = _realTeams.length === 0 ||
-        (rEq1 && !rEq1.startsWith('Gan. ') && _realTeams.includes(rEq1)) ||
-        (rEq2 && !rEq2.startsWith('Gan. ') && _realTeams.includes(rEq2)) ||
-        (pickGan && _realTeams.includes(pickGan));
-      // Detectar orden invertido: el jugador eligio rEq1 como su "eq1" pero en horarios
-      // ese equipo es eq2 (o viceversa). En ese caso cruzar goles para comparar correctamente.
-      // Ej: jugador puso NZ(1) vs Egipto(0) pero horarios tiene eq1=Egipto gol1=0, eq2=NZ gol2=1
-      const _teamsInverted = (rEq1 && g.eq2 && rEq1 === g.eq2) || (rEq2 && g.eq1 && rEq2 === g.eq1);
-      const gol1_r = _teamsInverted ? g.gol2 : g.gol1;
-      const gol2_r = _teamsInverted ? g.gol1 : g.gol2;
-      const realResult = _res(gol1_r, gol2_r);
-      // PTS_LOGRO: pts si resultado 90min (1/X/2) predicho coincide con real
-      const pts_logro = teamAlive && (gol1_r !== '' && gol2_r !== '' && pickResult === realResult) ? S.pts.logro : 0;
-      // PTS_GAN: pts si ganador predicho coincide con ganador real
-      const pts_gan = teamAlive && (!!g.ganador && pickGan === g.ganador) ? S.pts.gan : 0;
-      // PTS_GOL1: pts si cantidad de goles del equipo elegido como eq1 coincide con el real
-      const pts_gol1 = teamAlive && (gol1_r !== '' && String(p.gol1) === String(gol1_r)) ? S.pts.gol1 : 0;
-      // PTS_GOL2: pts si cantidad de goles del equipo elegido como eq2 coincide con el real
-      const pts_gol2 = teamAlive && (gol2_r !== '' && String(p.gol2) === String(gol2_r)) ? S.pts.gol2 : 0;
-      // PTS_CAMPEON: bono si es la FINAL y acertó al ganador
-      const pts_camp = teamAlive && (S.pts.campeon && g.ronda === 'FINAL' && !!g.ganador && pickGan === g.ganador) ? S.pts.campeon : 0;
-      pts = pts_logro + pts_gan + pts_gol1 + pts_gol2 + pts_camp;
-    }
+    // Puntos F2: calculados por el BACKEND (_calc_pts, fuente unica de verdad).
+    // La card solo los muestra; ya no se recalculan en el frontend para evitar
+    // divergencias con la Tabla / Mis Puntos / Comparar.
+    const pts = (p.pts === undefined ? null : p.pts);
 
     function makeTeamSelect(id, val, disabled) {
       const opts = teamsForSlot.map(t =>

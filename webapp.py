@@ -487,40 +487,8 @@ def _invalidate_players():
 
 # ── Propagación de bracket (Modo Prueba) ──────────────────────────────────────
 
-def _parse_bracket_ref(name: str):
-    """
-    Detecta si un nombre de equipo es un placeholder de bracket y retorna
-    {'ronda': str, 'nth': int, 'type': 'winner'|'loser'} o None.
-    Soporta inglés ("Round of 32 1 Winner") y español ("Ganador Octavos de Final (1)",
-    "Ganador Semifinal 1", "Perdedor Semifinal 2").
-    """
-    if not name:
-        return None
-    # Inglés: "Round of 32 1 Winner"
-    m = re.match(r'Round of (\d+) (\d+) Winner', name, re.I)
-    if m:
-        ronda_map = {32: 'R32', 16: 'R16', 8: 'QF', 4: 'SF'}
-        ronda = ronda_map.get(int(m.group(1)))
-        if ronda:
-            return {'ronda': ronda, 'nth': int(m.group(2)), 'type': 'winner'}
-
-    # Español: Ganador/Perdedor + nombre de ronda + número
-    is_loser = bool(re.match(r'Perdedor', name, re.I))
-    if re.match(r'(Ganador|Perdedor)', name, re.I):
-        span_map = [
-            (re.compile(r'Dieciseisavos', re.I), 'R32'),
-            (re.compile(r'Octavos',       re.I), 'R16'),
-            (re.compile(r'Cuartos',       re.I), 'QF'),
-            (re.compile(r'Semifinal',     re.I), 'SF'),
-        ]
-        for pat, ronda in span_map:
-            if pat.search(name):
-                m_paren = re.search(r'\((\d+)\)', name)
-                m_end   = re.search(r'\s(\d+)\s*$', name)
-                nth = int(m_paren.group(1)) if m_paren else (int(m_end.group(1)) if m_end else None)
-                if nth:
-                    return {'ronda': ronda, 'nth': nth, 'type': 'loser' if is_loser else 'winner'}
-    return None
+# _parse_bracket_ref se define como alias de _db._parse_bracket_ref mas abajo
+# (fuente unica en db.py). _propagate_bracket lo usa en runtime.
 
 
 def _propagate_bracket() -> list:
@@ -2152,141 +2120,13 @@ async def player_accept_rules(phone: str = Query(""), email: str = Query(""),
     return {"ok": True}
 
 
-# ── Resolucion de bracket para el PDF ────────────────────────────────────────
-# Port del frontend (_parseBracketRef / resolveTeamName / _inferBracketSlot).
-# En eliminatorias HORARIOS trae placeholders secuenciales ("Round of 32 1 Winner")
-# que NO reflejan el cruce real del Mundial 2026; el cruce correcto se infiere con
-# WC2026_MAP a partir de los ganadores que predijo el jugador en rondas anteriores.
-_RONDA_MAP_EN = {32: "R32", 16: "R16", 8: "QF", 4: "SF"}
-_FEED_RONDA   = {"R16": "R32", "QF": "R16", "SF": "QF", "3ER": "SF", "FINAL": "SF"}
-_WC2026_MAP   = {
-    "R16":   [[0, 3], [2, 5], [1, 4], [6, 7], [11, 10], [9, 8], [14, 13], [12, 15]],
-    "QF":    [[0, 1], [4, 5], [2, 3], [7, 6]],
-    "SF":    [[0, 1], [2, 3]],
-    "FINAL": [[0, 1]],
-}
-
-def _parse_bracket_ref(raw: str):
-    import re as _re
-    if not raw:
-        return None
-    m = _re.match(r"Round of (\d+) (\d+) Winner", raw, _re.I)
-    if m:
-        ronda = _RONDA_MAP_EN.get(int(m.group(1)))
-        if ronda:
-            return {"ronda": ronda, "nth": int(m.group(2)), "type": "winner", "jgo": None}
-    typ = "loser" if _re.match(r"^Perdedor", raw, _re.I) else "winner"
-    if _re.match(r"^(Ganador|Perdedor)", raw, _re.I):
-        for pat, ronda in ((r"Dieciseisavos", "R32"), (r"Octavos", "R16"),
-                           (r"Cuartos", "QF"), (r"Semifinal", "SF")):
-            if _re.search(pat, raw, _re.I):
-                mp = _re.search(r"\((\d+)\)", raw)
-                me = _re.search(r"\s(\d+)$", raw)
-                nth = int(mp.group(1)) if mp else (int(me.group(1)) if me else None)
-                if nth is not None:
-                    return {"ronda": ronda, "nth": nth, "type": typ, "jgo": None}
-    mg = _re.search(r"(?:Winner\s+)?Game\s+(\d+)(?:\s+Winner)?", raw, _re.I)
-    if mg:
-        return {"ronda": None, "nth": None, "type": "winner", "jgo": int(mg.group(1))}
-    return None
-
-def _is_placeholder(name: str) -> bool:
-    return _parse_bracket_ref(name) is not None
-
-def _resolve_team_name(raw, by_jgo, by_ronda, picks, depth=0):
-    if not raw or depth > 8:
-        return raw
-    ref = _parse_bracket_ref(raw)
-    if not ref:
-        return raw  # ya es un nombre real
-    if ref["jgo"]:
-        ref_game = by_jgo.get(str(ref["jgo"]))
-    else:
-        rg  = by_ronda.get(ref["ronda"], [])
-        idx = ref["nth"] - 1
-        ref_game = rg[idx] if 0 <= idx < len(rg) else None
-    if not ref_game:
-        return raw
-    pk  = picks.get(str(ref_game["jgo"])) or {}
-    gan = pk.get("gan", "")
-    if not gan:
-        return raw  # sin pick → mantener placeholder
-    if ref["type"] == "loser":
-        r1 = _resolve_team_name(ref_game.get("eq1", ""), by_jgo, by_ronda, picks, depth + 1)
-        r2 = _resolve_team_name(ref_game.get("eq2", ""), by_jgo, by_ronda, picks, depth + 1)
-        if gan == r1 or gan == pk.get("eq1"):
-            return r2 or pk.get("eq2") or raw
-        if gan == r2 or gan == pk.get("eq2"):
-            return r1 or pk.get("eq1") or raw
-        return raw
-    return _resolve_team_name(gan, by_jgo, by_ronda, picks, depth + 1)
-
-def _infer_bracket_slot(game, slot, by_jgo, by_ronda, picks):
-    feed_ronda = _FEED_RONDA.get(game.get("ronda"))
-    if not feed_ronda:
-        return None  # R32 / fase de grupos: no se infiere
-    this_round = by_ronda.get(game.get("ronda"), [])
-    my_idx = next((i for i, g in enumerate(this_round)
-                   if str(g["jgo"]) == str(game["jgo"])), -1)
-    if my_idx < 0:
-        return None
-    feed_games = by_ronda.get(feed_ronda, [])
-
-    if game.get("ronda") == "3ER":  # perdedor SF1 vs perdedor SF2
-        sf_idx  = 0 if slot == "eq1" else 1
-        sf_game = feed_games[sf_idx] if sf_idx < len(feed_games) else None
-        if not sf_game:
-            return None
-        pk = picks.get(str(sf_game["jgo"])) or {}
-        if not pk.get("gan"):
-            return f"Perdedor SF{sf_idx + 1}"
-        gan    = _resolve_team_name(pk["gan"], by_jgo, by_ronda, picks) or pk["gan"]
-        sf_eq1 = _resolve_team_name(sf_game.get("eq1", ""), by_jgo, by_ronda, picks) or sf_game.get("eq1", "")
-        sf_eq2 = _resolve_team_name(sf_game.get("eq2", ""), by_jgo, by_ronda, picks) or sf_game.get("eq2", "")
-        if not sf_eq1 or sf_eq1 == "TBD":
-            sf_eq1 = _resolve_team_name(pk.get("eq1", ""), by_jgo, by_ronda, picks) or pk.get("eq1", "")
-        if not sf_eq2 or sf_eq2 == "TBD":
-            sf_eq2 = _resolve_team_name(pk.get("eq2", ""), by_jgo, by_ronda, picks) or pk.get("eq2", "")
-        if not sf_eq1 or sf_eq1 == "TBD":
-            inf = _infer_bracket_slot(sf_game, "eq1", by_jgo, by_ronda, picks)
-            if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
-                sf_eq1 = inf
-        if not sf_eq2 or sf_eq2 == "TBD":
-            inf = _infer_bracket_slot(sf_game, "eq2", by_jgo, by_ronda, picks)
-            if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
-                sf_eq2 = inf
-        loser = sf_eq2 if gan == sf_eq1 else (sf_eq1 if gan == sf_eq2 else "")
-        return loser or f"Perdedor SF{sf_idx + 1}"
-
-    slot_idx  = 0 if slot == "eq1" else 1
-    ronda_map = _WC2026_MAP.get(game.get("ronda"))
-    if ronda_map and my_idx < len(ronda_map):
-        feed_idx = ronda_map[my_idx][slot_idx]
-    else:
-        feed_idx = my_idx * 2 if slot == "eq1" else my_idx * 2 + 1  # fallback secuencial
-    feed_game = feed_games[feed_idx] if 0 <= feed_idx < len(feed_games) else None
-    if not feed_game:
-        return None
-    pk = picks.get(str(feed_game["jgo"])) or {}
-    if not pk.get("gan"):
-        return f"Gan. JGO {feed_game['jgo']}"
-    resolved = _resolve_team_name(pk["gan"], by_jgo, by_ronda, picks) or pk["gan"]
-    return f"Gan. JGO {feed_game['jgo']}" if _is_placeholder(resolved) else resolved
-
-def _disp_team_pdf(game, slot, by_jgo, by_ronda, picks):
-    """Equipo a mostrar en el PDF para un slot: el que predijo el jugador."""
-    raw = game.get(slot) or ""
-    if game.get("ronda") not in _FEED_RONDA:
-        return raw  # R32 / grupos: equipo real directo
-    inf = _infer_bracket_slot(game, slot, by_jgo, by_ronda, picks)
-    if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
-        return inf
-    # Fallbacks: pick guardado (si es nombre real) → resolver placeholder → inf/raw
-    stored = (picks.get(str(game["jgo"])) or {}).get(slot) or ""
-    if stored and not _is_placeholder(stored):
-        return stored
-    resolved = _resolve_team_name(raw, by_jgo, by_ronda, picks)
-    return resolved or inf or raw
+# ── Inferencia de bracket: vive en db.py (fuente unica). Aliases para mantener
+#    las referencias existentes (PDF, _propagate_bracket, scoring). ──
+_parse_bracket_ref  = _db._parse_bracket_ref
+_is_placeholder     = _db._is_placeholder
+_resolve_team_name  = _db._resolve_team_name
+_infer_bracket_slot = _db._infer_bracket_slot
+_disp_team_pdf      = _db._disp_team
 
 
 @app.get("/api/picks/pdf")
@@ -2500,17 +2340,28 @@ async def get_picks(email: str = Query(""), phone: str = Query("")):
     if not player_id:
         return {"picks": {}}
     raw = _db.db_get_picks(int(player_id))
-    # Formato esperado por el frontend: {jgo: {eq1,gol1,gol2,eq2,ganador}}
-    games_map = {str(g["jgo"]): g for g in _db.db_get_horarios()}
+    # Formato esperado por el frontend: {jgo: {eq1,gol1,gol2,eq2,ganador,pts}}
+    # pts lo calcula el backend con inferencia de bracket (fuente unica de verdad).
+    by_jgo, by_ronda = _db.build_bracket_index(_db.db_get_horarios())
+    cfg = state.get("cfg", {})
+    vL = int(cfg.get("PTS_LOGRO", 1) or 1); vG = int(cfg.get("PTS_GAN", 2) or 2)
+    v1 = int(cfg.get("PTS_GOL1", 1) or 1);  v2 = int(cfg.get("PTS_GOL2", 1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
     picks = {}
     for jgo, pk in raw.items():
-        gm = games_map.get(str(jgo), {})
+        gm     = by_jgo.get(str(jgo), {})
+        estado = gm.get("estado", "")
+        pts    = None
+        if estado and estado != "PROG":
+            _, _, _, _, pts = _db.calc_pts_inferred(
+                gm, pk, by_jgo, by_ronda, raw, vL, vG, v1, v2, vC)
         picks[str(jgo)] = {
             "eq1":     gm.get("eq1", ""),
             "gol1":    pk.get("g1", ""),
             "gol2":    pk.get("g2", ""),
             "eq2":     gm.get("eq2", ""),
             "ganador": pk.get("gan", ""),
+            "pts":     pts,
         }
     return {"picks": picks}
 
@@ -2624,6 +2475,7 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
 
         cfg    = state.get("cfg", {})
         games, _ = _get_games_cache()
+        by_jgo, by_ronda = _db.build_bracket_index(games)
 
         _v_logro   = int(cfg.get("PTS_LOGRO", 1) or 1)
         _v_gan     = int(cfg.get("PTS_GAN",   2) or 2)
@@ -2631,17 +2483,13 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
         _v_gol2    = int(cfg.get("PTS_GOL2",  1) or 1)
         _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
 
-        def _res(g1, g2):
-            try: return "1" if int(g1) > int(g2) else ("2" if int(g1) < int(g2) else "X")
-            except: return ""
-
-        picks_raw = _db.db_get_picks(player["_id"])  # {jgo_str: {g1,g2,gan}}
+        picks_raw = _db.db_get_picks(player["_id"])  # {jgo_str: {g1,g2,gan,eq1,eq2}}
 
         by_day    = {}
         total_pts = 0
 
         for jgo_str, pk in picks_raw.items():
-            game = next((g for g in games if g["jgo"] == jgo_str), None)
+            game = by_jgo.get(jgo_str)
             if not game:
                 continue
             estado = game.get("estado", "")
@@ -2668,13 +2516,10 @@ async def get_my_points(email: str = Query(""), phone: str = Query("")):
                 if pred_teams and not (pred_teams & real_teams):
                     team_alive = False
 
-            # Calculo centralizado (misma funcion que la Tabla y la auditoria)
-            pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db._calc_pts(
-                pick_g1, pick_g2, pick_gan, real_g1, real_g2, real_gan, estado,
-                _v_logro, _v_gan, _v_gol1, _v_gol2, _v_campeon,
-                game.get("ronda", "") or game.get("grupo", ""),
-                eq1_pick=eq1_pick, eq2_pick=eq2_pick, eq1_real=eq1_real, eq2_real=eq2_real,
-            )
+            # Calculo centralizado con inferencia de bracket (fuente unica de verdad)
+            pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db.calc_pts_inferred(
+                game, pk, by_jgo, by_ronda, picks_raw,
+                _v_logro, _v_gan, _v_gol1, _v_gol2, _v_campeon)
 
             fecha = game.get("fecha", "")
             if fecha not in by_day:
@@ -2833,27 +2678,23 @@ async def get_game_picks(jgo: int = Query(...)):
     _v_gol2    = int(cfg.get("PTS_GOL2",  1) or 1)
     _v_campeon = int(cfg.get("PTS_CAMPEON", 0) or 0)
 
-    eq1_real = game.get("eq1", "")
-    eq2_real = game.get("eq2", "")
-    _ronda   = game.get("ronda", "") or game.get("grupo", "")
-
-    all_picks = _db.db_get_all_picks_for_game(str(jgo))
+    # Picks de cada jugador con inferencia de bracket (fuente unica de verdad)
+    by_jgo, by_ronda = _db.build_bracket_index(games)
+    grouped = _db.db_get_all_picks_grouped()
     game_picks = []
-    for pk in all_picks:
-        pick_gol1 = pk.get("g1_pick", "") or ""
-        pick_gol2 = pk.get("g2_pick", "") or ""
-        pick_gan  = pk.get("gan_pick", "") or ""
-
-        # Calculo centralizado (misma regla que Tabla / Mis Puntos / Auditoria)
-        pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db._calc_pts(
-            pick_gol1, pick_gol2, pick_gan, real_g1, real_g2, real_gan, estado,
-            _v_logro, _v_gan, _v_gol1, _v_gol2, _v_campeon, _ronda,
-            eq1_pick=pk.get("eq1_pick", "") or "", eq2_pick=pk.get("eq2_pick", "") or "",
-            eq1_real=eq1_real, eq2_real=eq2_real,
-        )
-
+    for _pid, data in grouped.items():
+        pp = data["picks"]
+        pk = pp.get(str(jgo))
+        if not pk:
+            continue
+        pick_gol1 = pk.get("g1", "") or ""
+        pick_gol2 = pk.get("g2", "") or ""
+        pick_gan  = pk.get("gan", "") or ""
+        pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db.calc_pts_inferred(
+            game, pk, by_jgo, by_ronda, pp,
+            _v_logro, _v_gan, _v_gol1, _v_gol2, _v_campeon)
         game_picks.append({
-            "nombre":    pk.get("nombre", ""),
+            "nombre":    data.get("nombre", ""),
             "pick_gol1": pick_gol1, "pick_gol2": pick_gol2,
             "pick_gan":  pick_gan,  "pts": pts,
             "ok_logro":  pts_logro > 0, "ok_gan": pts_gan > 0,
@@ -2882,6 +2723,11 @@ def _compute_compare_picks() -> dict:
         return {"games": []}
 
     cfg = state.get("cfg", {})
+    vL = int(cfg.get("PTS_LOGRO", 1) or 1); vG = int(cfg.get("PTS_GAN", 2) or 2)
+    v1 = int(cfg.get("PTS_GOL1", 1) or 1);  v2 = int(cfg.get("PTS_GOL2", 1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
+    by_jgo, by_ronda = _db.build_bracket_index(games)
+    grouped = _db.db_get_all_picks_grouped()
     all_final    = True
     result_games = []
 
@@ -2895,31 +2741,22 @@ def _compute_compare_picks() -> dict:
         if estado != "FINAL":
             all_final = False
 
-        g1_known  = real_g1  != ""
-        g2_known  = real_g2  != ""
-        gan_known = real_gan != ""
-
-        all_picks  = _db.db_get_all_picks_for_game(jgo_str)
         game_picks = []
+        for _pid, data in grouped.items():
+            pp = data["picks"]
+            pk = pp.get(jgo_str)
+            if not pk:
+                continue
+            pick_gol1 = pk.get("g1", "") or ""
+            pick_gol2 = pk.get("g2", "") or ""
+            pick_gan  = pk.get("gan", "") or ""
 
-        for pk in all_picks:
-            pick_gol1 = pk.get("g1_pick", "") or ""
-            pick_gol2 = pk.get("g2_pick", "") or ""
-            pick_gan  = pk.get("gan_pick", "") or ""
-
-            # Calculo centralizado (misma regla que Tabla / Mis Puntos / Auditoria)
-            pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db._calc_pts(
-                pick_gol1, pick_gol2, pick_gan, real_g1, real_g2, real_gan, estado,
-                int(cfg.get("PTS_LOGRO", 1) or 1), int(cfg.get("PTS_GAN", 2) or 2),
-                int(cfg.get("PTS_GOL1", 1) or 1), int(cfg.get("PTS_GOL2", 1) or 1),
-                int(cfg.get("PTS_CAMPEON", 0) or 0),
-                game.get("ronda", "") or game.get("grupo", ""),
-                eq1_pick=pk.get("eq1_pick", "") or "", eq2_pick=pk.get("eq2_pick", "") or "",
-                eq1_real=game.get("eq1", ""), eq2_real=game.get("eq2", ""),
-            )
+            # Calculo centralizado con inferencia de bracket (fuente unica de verdad)
+            pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db.calc_pts_inferred(
+                game, pk, by_jgo, by_ronda, pp, vL, vG, v1, v2, vC)
 
             game_picks.append({
-                "nombre":    pk.get("nombre", ""),
+                "nombre":    data.get("nombre", ""),
                 "pick_eq1":  "",
                 "pick_gol1": pick_gol1,
                 "pick_gol2": pick_gol2,
@@ -4155,7 +3992,7 @@ async def admin_player_points(q: str = Query(""), ql_admin: str = Cookie(default
     vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
 
     picks    = _db.db_get_picks(match["id"])
-    by_jgo   = {str(h["jgo"]): h for h in _db.db_get_horarios()}
+    by_jgo, by_ronda = _db.build_bracket_index(_db.db_get_horarios())
 
     juegos = []
     tot = {"logro": 0, "gan": 0, "gol1": 0, "gol2": 0, "campeon": 0, "total": 0}
@@ -4165,20 +4002,18 @@ async def admin_player_points(q: str = Query(""), ql_admin: str = Cookie(default
         if not estado or estado == "PROG":
             continue
         pk = picks.get(jgo_str, {})
-        pl, pg, pg1, pg2, total = _db._calc_pts(
-            pk.get("g1", ""), pk.get("g2", ""), pk.get("gan", ""),
-            h.get("gol1", ""), h.get("gol2", ""), h.get("ganador", ""), estado,
-            vL, vG, v1, v2, vC, h.get("grupo", ""),
-            eq1_pick=pk.get("eq1", ""), eq2_pick=pk.get("eq2", ""),
-            eq1_real=h.get("eq1", ""), eq2_real=h.get("eq2", ""),
-        )
-        pc = total - (pl + pg + pg1 + pg2)  # campeon = lo que _calc_pts sumo aparte
-        # teamAlive (mismo criterio que _calc_pts) para mostrarlo explicito
+        # Equipos que predijo el jugador (inferidos del bracket) y puntos
+        eq1_inf = _db._disp_team(h, "eq1", by_jgo, by_ronda, picks)
+        eq2_inf = _db._disp_team(h, "eq2", by_jgo, by_ronda, picks)
+        pl, pg, pg1, pg2, total = _db.calc_pts_inferred(
+            h, pk, by_jgo, by_ronda, picks, vL, vG, v1, v2, vC)
+        pc = total - (pl + pg + pg1 + pg2)  # campeon = lo que sumo aparte
+        # teamAlive con los equipos inferidos (para mostrarlo explicito)
         team_alive = True
         e1r = (h.get("eq1", "") or "").strip(); e2r = (h.get("eq2", "") or "").strip()
         if e1r and e2r:
             real = {e1r, e2r}
-            pred = {(pk.get("eq1", "") or "").strip(), (pk.get("eq2", "") or "").strip(),
+            pred = {(eq1_inf or "").strip(), (eq2_inf or "").strip(),
                     (pk.get("gan", "") or "").strip()}
             pred = {t for t in pred if t and not t.startswith("Gan. ")}
             if pred and not (pred & real):
@@ -4188,7 +4023,8 @@ async def admin_player_points(q: str = Query(""), ql_admin: str = Cookie(default
             "eq1_real": h.get("eq1", ""), "eq2_real": h.get("eq2", ""),
             "marcador_real": f"{h.get('gol1','')}-{h.get('gol2','')}", "gan_real": h.get("ganador", ""),
             "pick_marcador": f"{pk.get('g1','')}-{pk.get('g2','')}", "pick_gan": pk.get("gan", ""),
-            "eq1_pick": pk.get("eq1", ""), "eq2_pick": pk.get("eq2", ""),
+            "eq1_pick_inferido": eq1_inf, "eq2_pick_inferido": eq2_inf,
+            "eq1_pick_guardado": pk.get("eq1", ""), "eq2_pick_guardado": pk.get("eq2", ""),
             "team_alive": team_alive,
             "pts_logro": pl, "pts_gan": pg, "pts_gol1": pg1, "pts_gol2": pg2, "pts_campeon": pc,
             "pts": total,
