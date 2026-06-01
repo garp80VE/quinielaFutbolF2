@@ -2143,6 +2143,7 @@ async function loadDashboard() {
       S.picks[k] = {
         eq1: v.eq1||'', gol1: v.gol1||'', gol2: v.gol2||'',
         eq2: v.eq2||'', ganador: v.ganador||'',
+        peq1: v.peq1||'', peq2: v.peq2||'',   // equipos predichos (inferidos por backend)
         pts: (v.pts === undefined ? null : v.pts)   // calculado por el backend
       };
     });
@@ -2406,6 +2407,14 @@ function renderGames(games) {
       const _inf2Ok = !!(rEq2 && rEq2 !== 'TBD' && !rEq2.startsWith('Gan. ') && !rEq2.startsWith('Perdedor ') && !isPlaceholder(rEq2));
       if (!_inf1Ok && _pickIsRealName(p.eq1)) rEq1 = p.eq1;
       if (!_inf2Ok && _pickIsRealName(p.eq2)) rEq2 = p.eq2;
+    }
+    // Fuente unica de verdad: el backend ya infiere los equipos PREDICHOS del
+    // jugador (peq1/peq2). Preferirlos evita que el _inferBracketSlot del front
+    // diverja (p.ej. en 3er puesto, donde mostraba los equipos reales en vez de
+    // los que el jugador eligio). Asi se ve el ganador que el jugador predijo.
+    if (g.ronda && g.ronda !== 'R32') {
+      if (_pickIsRealName(p.peq1)) rEq1 = p.peq1;
+      if (_pickIsRealName(p.peq2)) rEq2 = p.peq2;
     }
     // Para R32 los equipos están fijos; para rondas superiores son TBD → dropdown
     // Los inferred "Gan. " y "Perdedor " son semi-conocidos: se muestran como <p> pero no como equipo confirmado

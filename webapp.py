@@ -2360,6 +2360,11 @@ async def get_picks(email: str = Query(""), phone: str = Query("")):
             "gol1":    pk.get("g1", ""),
             "gol2":    pk.get("g2", ""),
             "eq2":     gm.get("eq2", ""),
+            # peq1/peq2: equipos que el jugador PREDIJO para este cruce (inferidos
+            # del bracket). En eliminatorias difieren de eq1/eq2 (reales). El front
+            # los usa para mostrar el pick del jugador, no el partido real.
+            "peq1":    _db._disp_team(gm, "eq1", by_jgo, by_ronda, raw) if gm else "",
+            "peq2":    _db._disp_team(gm, "eq2", by_jgo, by_ronda, raw) if gm else "",
             "ganador": pk.get("gan", ""),
             "pts":     pts,
         }
