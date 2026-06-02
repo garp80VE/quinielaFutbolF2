@@ -16,6 +16,7 @@ import asyncio
 import glob
 import json
 import os
+import random
 import re
 import sys
 import threading
@@ -1273,6 +1274,48 @@ def _update_standings():
     print(f"[standings] {len(standings)} jugador(es) desde SQLite")
 
 
+_PLACEHOLDER_KW = ("winner", "round of", "gan.", "ganador de", "perdedor",
+                   "2nd place", "place", "vencedor", "por definir", "tbd")
+
+def _es_placeholder(nombre: str) -> bool:
+    """True si el nombre del equipo es un marcador de bracket sin resolver."""
+    n = (nombre or "").strip().lower()
+    return not n or any(k in n for k in _PLACEHOLDER_KW)
+
+
+def _resolver_empates_sin_ganador(games) -> int:
+    """En eliminatoria, TODO empate FINAL debe tener un ganador. Si ESPN no lo
+    definió (ej. amistosos de prueba que terminan empatados), el sistema elige
+    uno AL AZAR automáticamente y propaga el bracket. Idempotente: solo actúa
+    sobre partidos FINAL empatados que aún no tienen ganador."""
+    cambiado = 0
+    for g in games:
+        if (g.get("estado") or "").strip() != "FINAL":
+            continue
+        if (g.get("ganador") or "").strip():
+            continue
+        g1 = (g.get("gol1") or "").strip(); g2 = (g.get("gol2") or "").strip()
+        if not g1 or not g2 or g1 != g2:
+            continue  # sin marcador o no es empate
+        e1 = (g.get("eq1") or "").strip(); e2 = (g.get("eq2") or "").strip()
+        if _es_placeholder(e1) or _es_placeholder(e2):
+            continue  # equipos aún no resueltos
+        gan = random.choice([e1, e2])
+        _db.db_update_game_result(
+            str(g["jgo"]), "FINAL", g1, g2, gan,
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        print(f"[empate-azar] JGO {g['jgo']}: {e1} {g1}-{g2} {e2} -> {gan}")
+        cambiado += 1
+    if cambiado:
+        _invalidate_games()
+        _cache["standings_rows"] = None
+        try:
+            _propagate_bracket()
+        except Exception as e:
+            print(f"[empate-azar] propagate: {e}")
+    return cambiado
+
+
 def _updater_loop():
     """Loop de actualizacion de scores desde ESPN. Lee/escribe en SQLite."""
     print("[updater] Iniciando en segundo plano")
@@ -1301,6 +1344,12 @@ def _updater_loop():
                 _write_daily_backup()
             except Exception as e:
                 print(f"[updater-backup] {e}")
+
+            try:
+                if _resolver_empates_sin_ganador(games):
+                    games, _ = _get_games_cache()  # recargar tras resolver
+            except Exception as e:
+                print(f"[updater-empate] {e}")
 
             if modo_prueba:
                 time.sleep(max(0, interval - (time.time() - t0)))
