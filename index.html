@@ -5439,6 +5439,35 @@ async function adminSyncRealResults() {
 
 // ── Editor de equipos / resultados (set-game-result) ─────────────────────────
 let _gameEditorJgos = [];   // jgos cargados actualmente
+let _gameEditorData = {};   // {jgo: {estado,gol1,gol2,eq1,eq2,ganador}}
+
+async function setGameGanador(jgo, lado) {
+  const d = _gameEditorData[String(jgo)] || {};
+  let ganador;
+  if (lado === 'eq1')      ganador = d.eq1;
+  else if (lado === 'eq2') ganador = d.eq2;
+  else {  // azar
+    const opts = [d.eq1, d.eq2].filter(Boolean);
+    if (!opts.length) { showToast('Sin equipos definidos'); return; }
+    ganador = opts[Math.floor(Math.random() * opts.length)];
+  }
+  if (!ganador) { showToast('Sin equipo'); return; }
+  try {
+    // Conserva estado y marcador actuales; solo fija el ganador.
+    await api('POST', '/api/admin/set-game-result', {
+      jgo: String(jgo),
+      estado: d.estado || 'FINAL',
+      gol1: String(d.gol1), gol2: String(d.gol2),
+      ganador
+    });
+    showToast(`🏆 JGO ${jgo}: ${ganador}`);
+    // Propagar el bracket para que el ganador avance a la siguiente ronda
+    try { await api('POST', '/api/admin/propagate-bracket'); } catch(_) {}
+    loadGameEditor();
+  } catch(e) {
+    showToast('❌ ' + e.message);
+  }
+}
 
 async function loadGameEditor() {
   const ronda  = document.getElementById('game-edit-ronda').value;
@@ -5459,6 +5488,10 @@ async function loadGameEditor() {
       return;
     }
     _gameEditorJgos = filtered.map(g => String(g.jgo));
+    _gameEditorData = {};
+    filtered.forEach(g => { _gameEditorData[String(g.jgo)] = {
+      estado: g.estado||'', gol1: (g.gol1??''), gol2: (g.gol2??''),
+      eq1: g.eq1||'', eq2: g.eq2||'', ganador: g.ganador||'' }; });
     const rondaOpts = ['','R32','R16','QF','SF','3ER','FINAL'].map(r =>
       `<option value="${r}" ${!r?'disabled':''} ${r===''?'':''}>${r||'— Ronda —'}</option>`
     ).join('');
@@ -5466,6 +5499,24 @@ async function loadGameEditor() {
       const grp     = g.ronda || g.grupo || '';
       const grpOpts = ['R32','R16','QF','SF','3ER','FINAL'].map(r =>
         `<option value="${r}" ${r===grp?'selected':''}>${r}</option>`).join('');
+      // Control de ganador: solo si el partido tiene marcador cargado
+      const tieneResultado = (g.gol1!==''&&g.gol1!=null) && (g.gol2!==''&&g.gol2!=null);
+      const _gw = (lado, txt) => {
+        const sel = (lado==='eq1' && g.ganador && g.ganador===g.eq1) ||
+                    (lado==='eq2' && g.ganador && g.ganador===g.eq2);
+        const bg  = sel ? '#16a34a' : '#f0fdf4';
+        const col = sel ? 'white'   : '#15803d';
+        return `<button onclick="setGameGanador('${g.jgo}','${lado}')"
+          style="flex:1;border:1.5px solid #86efac;border-radius:7px;padding:5px 4px;font-size:11px;font-weight:800;cursor:pointer;background:${bg};color:${col};min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${txt}</button>`;
+      };
+      const ganBlock = tieneResultado ? `
+        <div style="display:flex;gap:4px;align-items:center;margin-top:6px">
+          <span style="font-size:10px;color:#15803d;font-weight:800;flex-shrink:0">🏆 ${g.gol1}-${g.gol2}</span>
+          ${_gw('eq1', (g.eq1||'Eq1'))}
+          <button onclick="setGameGanador('${g.jgo}','azar')" title="Ganador al azar"
+            style="flex-shrink:0;border:1.5px solid #fcd34d;border-radius:7px;padding:5px 8px;font-size:13px;cursor:pointer;background:#fffbeb">🎲</button>
+          ${_gw('eq2', (g.eq2||'Eq2'))}
+        </div>` : '';
       return `
       <div style="background:white;border:1.5px solid #e0f2fe;border-radius:10px;padding:9px 11px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -5490,6 +5541,7 @@ async function loadGameEditor() {
             onclick="this.select()" onfocus="this.select()"
             style="flex:1;border:1.5px solid #fde68a;border-radius:7px;padding:5px 7px;font-size:11px;font-weight:600;outline:none;min-width:0;background:#fffbeb">
         </div>
+        ${ganBlock}
       </div>`;
     }).join('');
     if (btnAll) btnAll.style.display = 'block';
