@@ -5099,10 +5099,13 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
     """
     Modo prueba: borra resultados (ganador/goles/estado) desde una ronda en adelante
     y resetea los eq1/eq2 de esas rondas a placeholders de bracket.
-    Body: { ronda_desde: "R32" | "R16" | "QF" | "SF" | "FINAL" }
+    Body: { ronda_desde: "R32"|"R16"|"QF"|"SF"|"FINAL", mantener_picks: bool }
+    Si mantener_picks=True, conserva las apuestas de los jugadores (solo borra los
+    resultados reales). Por defecto False (comportamiento clasico: borra picks).
     """
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
 
+    mantener_picks = bool(body.get("mantener_picks", False))
     ronda_desde = str(body.get("ronda_desde", "R32")).strip().upper()
     RONDAS_ORDER = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
     ROF_MAP = {"R16": 32, "QF": 16, "SF": 8, "3ER": 4, "FINAL": 4}
@@ -5143,13 +5146,13 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
 
     conn.close()
 
-    # Borrar picks correspondientes a las rondas limpiadas
+    # Borrar picks de las rondas limpiadas (salvo que se pida mantenerlos)
     jgos_limpiados = []
     for ronda in rondas_a_limpiar:
         for h in ronda_games.get(ronda, []):
             jgos_limpiados.append(str(h["jgo"]))
 
-    if jgos_limpiados:
+    if jgos_limpiados and not mantener_picks:
         conn2 = _db.get_conn()
         with conn2:
             placeholders = ",".join("?" * len(jgos_limpiados))
@@ -5157,10 +5160,12 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
         conn2.close()
 
     _invalidate_games()
+    _cache["standings_rows"] = None
     return {
         "ok":  True,
         "msg": f"Reseteados {cleared} partido(s) desde {ronda_desde} "
-               f"({', '.join(rondas_a_limpiar)}) y picks eliminados."
+               f"({', '.join(rondas_a_limpiar)}). "
+               + ("Apuestas CONSERVADAS." if mantener_picks else "Picks eliminados.")
     }
 
 

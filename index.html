@@ -753,6 +753,10 @@
                 <option value="SF">SF — Conservar hasta QF</option>
               </select>
             </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;cursor:pointer">
+              <input type="checkbox" id="reset-test-mantener" style="width:16px;height:16px;accent-color:#be123c">
+              <span style="font-size:12px;color:#9f1239;font-weight:700">Conservar apuestas de los jugadores (solo borrar resultados reales)</span>
+            </label>
             <button onclick="adminResetTest()"
               style="width:100%;background:linear-gradient(135deg,#be123c,#e11d48);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">
               🗑️ Aplicar reset
@@ -5706,14 +5710,16 @@ function showDbTab(tab) {
 
 async function adminResetTest() {
   const ronda = document.getElementById('reset-test-ronda')?.value || 'R32';
+  const mantener = document.getElementById('reset-test-mantener')?.checked || false;
   const msg   = document.getElementById('reset-test-msg');
+  const queTexto = mantener ? 'los RESULTADOS reales (las apuestas se conservan)' : 'los resultados Y las apuestas';
   const confirmMsg = ronda === 'R32'
-    ? '⚠️ Esto borrará TODOS los resultados y picks de prueba. ¿Confirmar?'
-    : `⚠️ Borrar resultados y picks desde ${ronda} en adelante. ¿Confirmar?`;
+    ? `⚠️ Esto borrará ${queTexto} de TODAS las rondas. ¿Confirmar?`
+    : `⚠️ Borrar ${queTexto} desde ${ronda} en adelante (R32 se conserva). ¿Confirmar?`;
   if (!confirm(confirmMsg)) return;
   if (msg) { msg.style.display='block'; msg.style.background='#fef9c3'; msg.style.color='#92400e'; msg.textContent='⏳ Reiniciando...'; }
   try {
-    const r = await api('POST', '/api/admin/reset-test', { ronda_desde: ronda });
+    const r = await api('POST', '/api/admin/reset-test', { ronda_desde: ronda, mantener_picks: mantener });
     if (msg) { msg.style.background='#f0fdf4'; msg.style.color='#166534'; msg.textContent=r.msg; }
     showToast('✅ Reset aplicado');
     // Refrescar estado
