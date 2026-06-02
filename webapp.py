@@ -3433,10 +3433,9 @@ async def admin_prize(ql_admin: str = Cookie(default="")):
     fee_pct     = float(cfg.get("FEE_PCT",          "0") or "0")
     ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
     paid = 0
-    for row in rows[header_idx + 1:]:
-        if not any(c.strip() for c in row): continue
-        d = {headers[i]: (row[i].strip() if i < len(row) else "") for i in range(len(headers))}
-        d = _normalize_player(d)
+    for row in rows:  # rows son dicts (SQLite via _jugador_db_to_cache)
+        if not row: continue
+        d = _normalize_player(row)
         if d.get("PAGADO", "").upper() in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"):
             paid += 1
     tie_1st, tie_2nd = _get_tie_counts()
@@ -3458,28 +3457,20 @@ async def admin_player_paid(body: dict, ql_admin: str = Cookie(default="")):
     paid  = body.get("paid", True)
     if not email and not phone:
         raise HTTPException(400, "email o teléfono requerido")
-    ws, rows, header_idx, headers = _read_jugadores_cached()
-    # Asegurar columna PAGADO
-    if "PAGADO" not in headers:
-        col = len(headers) + 1
-        with _sheets_lock:
-            _sheets_retry(lambda: ws.update_cell(header_idx + 1, col, "PAGADO"))
-        headers.append("PAGADO")
-    pagado_col = headers.index("PAGADO") + 1
-    email_col  = headers.index("EMAIL") + 1 if "EMAIL" in headers else None
-    phone_col  = None
-    for pk in ("WHATSAPP", "TELEFONO"):
-        if pk in headers:
-            phone_col = headers.index(pk) + 1
-            break
-    for i, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
-        row_email = (row[email_col - 1].strip().lower() if email_col and email_col - 1 < len(row) else "")
-        row_phone = _normalize_phone(row[phone_col - 1] if phone_col and phone_col - 1 < len(row) else "")
-        if (email and row_email == email) or (phone and row_phone == phone):
-            with _sheets_lock:
-                _sheets_retry(lambda r=i, c=pagado_col: ws.update_cell(r, c, "1" if paid else ""))
-            return {"ok": True, "paid": paid}
-    raise HTTPException(404, "Jugador no encontrado")
+    p = find_player_any(phone=phone, email=email)
+    if not p:
+        raise HTTPException(404, "Jugador no encontrado")
+    pid = p.get("_id") or p.get("id")
+    if not pid:
+        raise HTTPException(404, "Jugador sin ID")
+    conn = _db.get_conn()
+    with conn:
+        conn.execute("UPDATE jugadores SET pagado=? WHERE id=?",
+                     (1 if paid else 0, int(pid)))
+    conn.close()
+    _invalidate_players()
+    _cache["players"].clear()
+    return {"ok": True, "paid": paid}
 
 
 @app.post("/api/admin/player-delete")
@@ -3527,10 +3518,9 @@ async def prize_info():
     fee_pct     = float(cfg.get("FEE_PCT",          "0") or "0")
     ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
     paid  = 0
-    for row in rows[header_idx + 1:]:
-        if not any(c.strip() for c in row): continue
-        d = {headers[i]: (row[i].strip() if i < len(row) else "") for i in range(len(headers))}
-        d = _normalize_player(d)
+    for row in rows:  # rows son dicts (SQLite via _jugador_db_to_cache)
+        if not row: continue
+        d = _normalize_player(row)
         if d.get("PAGADO", "").upper() in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"):
             paid += 1
     tie_1st, tie_2nd = _get_tie_counts()
@@ -3586,11 +3576,10 @@ def _sorteo_elegibles() -> list:
     # Jugadores pagados fuera del top
     _, rows, header_idx, headers = _read_jugadores_cached()
     elegibles = []
-    for row in rows[header_idx + 1:]:
-        if not any(c.strip() for c in row):
+    for row in rows:  # rows son dicts (SQLite via _jugador_db_to_cache)
+        if not row:
             continue
-        d = {headers[i]: (row[i].strip() if i < len(row) else "") for i in range(len(headers))}
-        d = _normalize_player(d)
+        d = _normalize_player(row)
         if d.get("PAGADO", "").upper() not in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"):
             continue
         nombre = d.get("NOMBRE", "?")
@@ -4619,8 +4608,7 @@ def _wa_get_phones() -> list:
     try:
         _, rows, header_idx, headers = _read_jugadores_cached()
         phones = []
-        for row in rows[header_idx + 1:]:
-            d = {headers[i]: row[i].strip() for i in range(min(len(headers), len(row)))}
+        for d in rows:  # rows son dicts (SQLite via _jugador_db_to_cache)
             phone = d.get("WHATSAPP", "") or d.get("TELEFONO", "")
             if phone:
                 phones.append(phone)
