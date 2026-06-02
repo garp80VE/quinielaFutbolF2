@@ -4245,12 +4245,17 @@ async def admin_backfill_eq_picks(ql_admin: str = Cookie(default="")):
 
 
 @app.get("/api/admin/test-espn")
-async def admin_test_espn(fecha: str = "", ql_admin: str = Cookie(default="")):
-    """Diagnóstico: consulta ESPN y devuelve los partidos encontrados para una fecha."""
-    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+async def admin_test_espn(fecha: str = "", liga: str = Query(""), key: str = Query(""),
+                          ql_admin: str = Cookie(default="")):
+    """Diagnostico: consulta ESPN y devuelve los partidos encontrados para una fecha.
+    Uso directo: /api/admin/test-espn?fecha=20260602&liga=fifa.friendly&key=TU_CLAVE
+    'liga' (opcional) sobreescribe ESPN_LEAGUE solo para esta consulta (no guarda nada)."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
     from datetime import date as _date
     cfg    = state.get("cfg", {})
-    league = cfg.get("ESPN_LEAGUE", "fifa.world")
+    league = liga.strip() or cfg.get("ESPN_LEAGUE", "fifa.world")
     leagues = [l.strip() for l in league.split(",") if l.strip()]
     if not fecha:
         fecha = _date.today().strftime("%Y%m%d")
