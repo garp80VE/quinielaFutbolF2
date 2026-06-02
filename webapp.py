@@ -4276,6 +4276,7 @@ async def admin_test_espn(fecha: str = "", liga: str = Query(""), key: str = Que
                 status = comp.get("status", {})
                 events.append({
                     "liga":   lg,
+                    "espn_id": ev.get("id", ""),   # <-- ID que va en el campo ESPN ID
                     "nombre": ev.get("name", ""),
                     "home":   home.get("team", {}).get("displayName", "?"),
                     "away":   away.get("team", {}).get("displayName", "?"),
