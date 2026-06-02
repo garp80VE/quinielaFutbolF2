@@ -2380,20 +2380,10 @@ function renderGames(games) {
   sorted.forEach(g => {
     const jgo    = g.jgo;
     const estado = g.estado || '';
-    // Lock logic F2:
-    // R32 → bloqueo individual (partido a partido)
-    // R16/QF/SF/3ER/FINAL → bloqueados todos cuando el último R32 arranca
-    let locked = false;
-    const rondaSuperiores = ['R16','QF','SF','3ER','FINAL'];
-    if (rondaSuperiores.includes(g.ronda)) {
-      const r32games = S.games.filter(x => x.ronda === 'R32');
-      if (r32games.length > 0) {
-        const lastR32 = r32games.reduce((a,b) => parseInt(a.jgo)>parseInt(b.jgo)?a:b);
-        locked = lastR32.estado && lastR32.estado !== 'PROG';
-      }
-    } else {
-      locked = isLockedEstado(estado);
-    }
+    // Lock logic F2: BLOQUEO TOTAL. El torneo se cierra en cuanto arranca el
+    // primer partido; a partir de ahí TODO el bracket queda bloqueado.
+    const torneoIniciado = S.games.some(x => x.estado && x.estado !== 'PROG');
+    let locked = torneoIniciado;
     const isFinal = estado === 'FINAL' || estado === 'FT';
     const isLive  = ['EN VIVO','MEDIO TIEMPO','PRORROGA','PENALES','1H','2H','HT','ET','PT'].includes(estado);
     const {fecha: fechaLocal, hora: horaLocal} = formatLocalDT(g);
@@ -2589,20 +2579,9 @@ function renderGames(games) {
 function updateSaveButton() {
   const btn = document.getElementById('save-group-btn');
   if (!btn || !curGroup) return;
-  const games = curGroup.games || [];
-  const rondaSuperiores = ['R16','QF','SF','3ER','FINAL'];
-  let allLocked = false;
-  if (games.length > 0) {
-    if (rondaSuperiores.includes(games[0].ronda)) {
-      const r32games = S.games.filter(x => x.ronda === 'R32');
-      if (r32games.length > 0) {
-        const lastR32 = r32games.reduce((a,b) => parseInt(a.jgo)>parseInt(b.jgo)?a:b);
-        allLocked = !!(lastR32.estado && lastR32.estado !== 'PROG');
-      }
-    } else {
-      allLocked = games.every(g => { const e = g.estado||''; return e && e !== 'PROG'; });
-    }
-  }
+  // Bloqueo TOTAL: si el torneo ya arrancó (algún partido inició), todo el
+  // bracket queda bloqueado y el botón pasa a "Regresar".
+  const allLocked = S.games.some(x => x.estado && x.estado !== 'PROG');
   if (allLocked) {
     btn.onclick = goBack;
     btn.style.background = 'linear-gradient(135deg,#64748b,#475569)';

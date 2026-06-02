@@ -1286,6 +1286,12 @@ def _updater_loop():
             _invalidate_games()
             games, _ = _get_games_cache()
 
+            # Polling acelerado SOLO cuando hay algún partido en vivo: consulta
+            # ESPN cada ~20s en vez de 60s para reducir el delay percibido.
+            _vivos = {"EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"}
+            if any(g.get("estado", "") in _vivos for g in games):
+                interval = min(interval, int(cfg.get("INTERVAL_LIVE_SEGS", 20) or 20))
+
             try:
                 _check_reminders(games, cfg)
             except Exception as e:
@@ -2411,11 +2417,10 @@ async def save_picks(body: SavePicksBody):
     games, _ = _get_games_cache()
     modo_prueba = state.get("cfg", {}).get("MODO_PRUEBA", "") in ("1", "true", "True")
 
-    r32_games = [g for g in games if g.get("ronda") == RONDA_BASE]
-    upper_locked = False
-    if r32_games and not modo_prueba:
-        last_r32 = max(r32_games, key=lambda g: int(g.get("jgo", 0) or 0))
-        upper_locked = bool(last_r32.get("estado", "") not in ("", "PROG"))
+    # Bloqueo TOTAL: el torneo se cierra en cuanto arranca el primer partido.
+    # A partir de ahí, NINGÚN pick (de ninguna ronda) se puede cambiar.
+    torneo_iniciado = not modo_prueba and any(
+        g.get("estado", "") not in ("", "PROG") for g in games)
 
     guardados = bloqueados = 0
 
@@ -2425,17 +2430,9 @@ async def save_picks(body: SavePicksBody):
             bloqueados += 1
             continue
 
-        ronda  = game.get("ronda", "")
-        estado = game.get("estado", "")
-
-        if not modo_prueba:
-            if ronda in RONDAS_SUPERIORES:
-                bloq = upper_locked
-            else:
-                bloq = bool(estado and estado != "PROG")
-            if bloq:
-                bloqueados += 1
-                continue
+        if torneo_iniciado:
+            bloqueados += 1
+            continue
 
         _db.db_save_pick(
             int(player_id), str(pick.jgo),
