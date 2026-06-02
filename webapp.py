@@ -4051,6 +4051,37 @@ async def admin_player_points(q: str = Query(""), key: str = Query(""),
     }
 
 
+@app.get("/api/admin/picks-summary")
+async def admin_picks_summary(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Diagnostico: por jugador, cuantos picks tiene completos y CUALES jgos le
+    faltan ganador o marcador. Lee directo de la tabla picks (misma fuente que
+    el contador de la vista SQLite). Uso: ?key=TU_CLAVE_ADMIN."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    grouped = _db.db_get_all_picks_grouped()
+    out = []
+    for pid, data in grouped.items():
+        pp = data["picks"]
+        def _ints(jgos):
+            return sorted(int(j) for j in jgos if str(j).isdigit())
+        sin_gan = _ints(j for j, pk in pp.items() if not (pk.get("gan") or "").strip())
+        sin_marc = _ints(j for j, pk in pp.items()
+                         if not (pk.get("g1") or "").strip() or not (pk.get("g2") or "").strip())
+        out.append({
+            "jugador":           data.get("nombre", ""),
+            "jugador_id":        pid,
+            "total_filas":       len(pp),
+            "con_ganador":       sum(1 for pk in pp.values() if (pk.get("gan") or "").strip()),
+            "con_marcador":      sum(1 for pk in pp.values()
+                                     if (pk.get("g1") or "").strip() and (pk.get("g2") or "").strip()),
+            "jgos_sin_ganador":  sin_gan,
+            "jgos_sin_marcador": sin_marc,
+        })
+    out.sort(key=lambda x: x["con_ganador"])  # los incompletos primero
+    return {"n_jugadores": len(out), "jugadores": out}
+
+
 @app.get("/api/admin/all-player-points")
 async def admin_all_player_points(key: str = Query(""), ql_admin: str = Cookie(default=""),
                                   solo_jugados: int = Query(1)):
