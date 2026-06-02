@@ -5483,6 +5483,12 @@ async function loadGameEditor() {
             onclick="this.select()" onfocus="this.select()"
             style="flex:1;border:1.5px solid #bae6fd;border-radius:7px;padding:6px 7px;font-size:12px;font-weight:600;outline:none;min-width:0">
         </div>
+        <div style="display:flex;gap:5px;align-items:center;margin-top:6px">
+          <span style="font-size:10px;color:#b45309;font-weight:800;flex-shrink:0;white-space:nowrap">ESPN ID</span>
+          <input id="ge-espn-${g.jgo}" value="${(g.espn_id||'').replace(/"/g,'&quot;')}" placeholder="ej. 401856361"
+            onclick="this.select()" onfocus="this.select()"
+            style="flex:1;border:1.5px solid #fde68a;border-radius:7px;padding:5px 7px;font-size:11px;font-weight:600;outline:none;min-width:0;background:#fffbeb">
+        </div>
       </div>`;
     }).join('');
     if (btnAll) btnAll.style.display = 'block';
@@ -5499,10 +5505,11 @@ async function saveAllGames() {
   if (msg)    msg.style.display = 'none';
   let ok=0, errors=[];
   for (const jgo of _gameEditorJgos) {
-    const eq1   = document.getElementById(`ge-eq1-${jgo}`)?.value.trim() ?? '';
-    const eq2   = document.getElementById(`ge-eq2-${jgo}`)?.value.trim() ?? '';
-    const grupo = document.getElementById(`ge-grp-${jgo}`)?.value ?? '';
-    const body  = { jgo, eq1, eq2 };
+    const eq1    = document.getElementById(`ge-eq1-${jgo}`)?.value.trim() ?? '';
+    const eq2    = document.getElementById(`ge-eq2-${jgo}`)?.value.trim() ?? '';
+    const grupo  = document.getElementById(`ge-grp-${jgo}`)?.value ?? '';
+    const espnId = document.getElementById(`ge-espn-${jgo}`)?.value.trim() ?? '';
+    const body   = { jgo, eq1, eq2, espn_id: espnId };
     if (grupo) body.grupo = grupo;
     try {
       await api('POST', '/api/admin/set-game-result', body);

@@ -4690,7 +4690,7 @@ async def admin_refresh_bracket_refs(ql_admin: str = Cookie(default="")):
 async def admin_set_game_result(body: dict, ql_admin: str = Cookie(default="")):
     """
     Escribe directamente en SQLite los campos de un partido.
-    Util en modo prueba: {jgo, eq1?, eq2?, estado?, gol1?, gol2?, ganador?}
+    Util en modo prueba: {jgo, eq1?, eq2?, espn_id?, estado?, gol1?, gol2?, ganador?}
     """
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
     jgo = str(body.get("jgo", "")).strip()
@@ -4705,6 +4705,8 @@ async def admin_set_game_result(body: dict, ql_admin: str = Cookie(default="")):
             conn.execute("UPDATE horarios SET eq2=? WHERE jgo=?", (str(body["eq2"]), jgo))
         if "grupo" in body:
             conn.execute("UPDATE horarios SET grupo=? WHERE jgo=?", (str(body["grupo"]), jgo))
+        if "espn_id" in body:
+            conn.execute("UPDATE horarios SET espn_id=? WHERE jgo=?", (str(body["espn_id"]).strip(), jgo))
     conn.close()
 
     if any(k in body for k in ("estado", "gol1", "gol2", "ganador")):
