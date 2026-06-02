@@ -4083,12 +4083,14 @@ async def admin_picks_summary(key: str = Query(""), ql_admin: str = Cookie(defau
 
 
 @app.get("/api/admin/all-player-points")
-async def admin_all_player_points(key: str = Query(""), ql_admin: str = Cookie(default=""),
+async def admin_all_player_points(key: str = Query(""), q: str = Query(""),
+                                  ql_admin: str = Cookie(default=""),
                                   solo_jugados: int = Query(1)):
-    """Diagnostico: desglose de puntos por juego de TODOS los jugadores (mismo
-    calculo que la tabla, con inferencia de bracket).
+    """Diagnostico: desglose de puntos/apuestas por juego de TODOS los jugadores
+    (mismo calculo que la tabla, con inferencia de bracket).
     Uso: /api/admin/all-player-points?key=TU_CLAVE_ADMIN
-         &solo_jugados=0  -> incluye tambien partidos no finalizados (pts=null)."""
+         &q=angibell       -> filtra solo ese jugador (nombre parcial)
+         &solo_jugados=0   -> incluye tambien partidos no finalizados (pts=null)."""
     _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
     if not _admin_check(ql_admin) and key != _admin_pass:
         raise HTTPException(403, "No autorizado")
@@ -4101,9 +4103,12 @@ async def admin_all_player_points(key: str = Query(""), ql_admin: str = Cookie(d
     by_jgo, by_ronda = _db.build_bracket_index(_db.db_get_horarios())
     grouped = _db.db_get_all_picks_grouped()
     jgo_orden = sorted(by_jgo, key=lambda x: int(x) if x.isdigit() else 0)
+    ql = q.strip().lower()
 
     jugadores_out = []
     for pid, data in grouped.items():
+        if ql and ql not in (data.get("nombre", "").lower()):
+            continue
         pp = data["picks"]
         juegos = []
         tot = {"logro": 0, "gan": 0, "gol1": 0, "gol2": 0, "campeon": 0, "total": 0}
