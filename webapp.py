@@ -13,6 +13,8 @@ Luego abrir: http://localhost:8000
 
 import argparse
 import asyncio
+import glob
+import json
 import os
 import re
 import sys
@@ -1289,6 +1291,11 @@ def _updater_loop():
             except Exception as e:
                 print(f"[updater-reminder] {e}")
 
+            try:
+                _write_daily_backup()
+            except Exception as e:
+                print(f"[updater-backup] {e}")
+
             if modo_prueba:
                 time.sleep(max(0, interval - (time.time() - t0)))
                 continue
@@ -1382,9 +1389,29 @@ def _updater_loop():
                     "gol2":   sc["gol2"],
                 }
 
+                # Con equipos congelados (FREEZE_EQUIPOS=1 o rondas superiores), el
+                # GANADOR debe derivarse del marcador aplicado a los equipos de la
+                # QUINIELA, NO copiarse de ESPN (que trae el equipo del partido real).
+                ganador_final = sc["ganador"]
+                if freeze and (eq1_sheet or eq2_sheet) and sc["estado"] not in ("", "PROG"):
+                    try:
+                        _g1 = int(sc["gol1"] or 0); _g2 = int(sc["gol2"] or 0)
+                    except (ValueError, TypeError):
+                        _g1 = _g2 = 0
+                    if _g1 > _g2:
+                        ganador_final = eq1_sheet or eq1
+                    elif _g2 > _g1:
+                        ganador_final = eq2_sheet or eq2
+                    elif sc["ganador"]:
+                        # Empate a 90 resuelto por penales/prórroga → mapear por lado
+                        ganador_final = (eq2_sheet or eq2) if sc["ganador"] == sc.get("eq2", "") \
+                                        else (eq1_sheet or eq1)
+                    else:
+                        ganador_final = ""
+
                 ult_act = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _db.db_update_game_result(
-                    jgo, sc["estado"], sc["gol1"], sc["gol2"], sc["ganador"], ult_act
+                    jgo, sc["estado"], sc["gol1"], sc["gol2"], ganador_final, ult_act
                 )
 
                 if teams_changed:
@@ -4151,6 +4178,108 @@ async def admin_all_player_points(key: str = Query(""), q: str = Query(""),
         "n_jugadores": len(jugadores_out),
         "jugadores": jugadores_out,
     }
+
+
+# ── Respaldos automáticos (JSON en disco persistente /data) ──────────────────
+BACKUP_DIR  = os.path.join(os.path.dirname(_db.DB_PATH) or ".", "backups")
+BACKUP_KEEP = 14  # cuántos backups diarios conservar
+
+def _write_daily_backup(force: bool = False) -> str | None:
+    """Escribe un dump JSON (jugadores+picks+horarios+config) una vez al día.
+    Rota conservando los últimos BACKUP_KEEP. Devuelve la ruta si escribió."""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    today = datetime.now().strftime("%Y%m%d")
+    fname = os.path.join(BACKUP_DIR, f"quiniela_{today}.json")
+    if os.path.exists(fname) and not force:
+        return None
+    dump = _db.db_dump_all()
+    dump["_ts"] = datetime.now().isoformat(timespec="seconds")
+    tmp = fname + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(dump, f, ensure_ascii=False)
+    os.replace(tmp, fname)  # escritura atómica
+    # Rotación
+    files = sorted(glob.glob(os.path.join(BACKUP_DIR, "quiniela_*.json")))
+    for old in files[:-BACKUP_KEEP]:
+        try: os.remove(old)
+        except Exception: pass
+    print(f"[backup] {os.path.basename(fname)} -> "
+          f"{len(dump.get('jugadores', []))} jug, {len(dump.get('picks', []))} picks")
+    return fname
+
+def _list_backups() -> list:
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    out = []
+    for p in sorted(glob.glob(os.path.join(BACKUP_DIR, "quiniela_*.json")), reverse=True):
+        try:
+            st = os.stat(p)
+            out.append({"archivo": os.path.basename(p), "bytes": st.st_size})
+        except Exception:
+            pass
+    return out
+
+
+@app.get("/api/admin/backups")
+async def admin_backups_list(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Lista los respaldos disponibles."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    return {"backups": _list_backups(), "dir": BACKUP_DIR}
+
+
+@app.post("/api/admin/backup-now")
+async def admin_backup_now(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Fuerza la creación de un respaldo inmediato (sobrescribe el de hoy)."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    path = _write_daily_backup(force=True)
+    return {"ok": True, "archivo": os.path.basename(path) if path else None,
+            "backups": _list_backups()}
+
+
+@app.get("/api/admin/backup-download")
+async def admin_backup_download(f: str = Query(...), key: str = Query(""),
+                                ql_admin: str = Cookie(default="")):
+    """Descarga el contenido de un respaldo (para guardarlo fuera de Railway)."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    fname = os.path.basename(f)  # evita path traversal
+    path = os.path.join(BACKUP_DIR, fname)
+    if not fname.startswith("quiniela_") or not os.path.exists(path):
+        raise HTTPException(404, "Backup no encontrado")
+    with open(path, encoding="utf-8") as fh:
+        contenido = fh.read()
+    return Response(content=contenido, media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@app.post("/api/admin/restore-backup")
+async def admin_restore_backup(body: dict, key: str = Query(""),
+                               ql_admin: str = Cookie(default="")):
+    """Restaura jugadores+picks desde un backup. Acepta:
+       { archivo: "quiniela_YYYYMMDD.json" }  -> usa uno guardado en /data
+       { data: {<dump>} }                     -> usa un JSON pegado a mano
+    No borra nada: recrea jugadores faltantes y repone picks (UPSERT)."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    dump = body.get("data")
+    if not dump:
+        archivo = os.path.basename(body.get("archivo", ""))
+        path = os.path.join(BACKUP_DIR, archivo)
+        if not archivo.startswith("quiniela_") or not os.path.exists(path):
+            raise HTTPException(404, "Backup no encontrado")
+        with open(path, encoding="utf-8") as fh:
+            dump = json.load(fh)
+    if not isinstance(dump, dict) or "jugadores" not in dump:
+        raise HTTPException(400, "Dump inválido (falta 'jugadores')")
+    res = _db.db_restore_all(dump)
+    _cache["players"].clear(); _cache["standings_rows"] = None
+    _invalidate_players(); _invalidate_games()
+    return {"ok": True, "resultado": res}
 
 
 @app.post("/api/admin/import-picks")

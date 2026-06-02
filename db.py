@@ -208,6 +208,73 @@ def db_delete_player(jugador_id: int):
             conn.execute("DELETE FROM jugadores WHERE id=?", (jugador_id,))
     conn.close()
 
+
+def db_dump_all() -> dict:
+    """Dump completo para respaldo: jugadores, picks, horarios y config."""
+    conn = get_conn()
+    try:
+        def rows(sql):
+            return [dict(r) for r in conn.execute(sql).fetchall()]
+        return {
+            "jugadores": rows("SELECT * FROM jugadores"),
+            "picks":     rows("SELECT * FROM picks"),
+            "horarios":  rows("SELECT * FROM horarios"),
+            "config":    rows("SELECT * FROM config"),
+        }
+    finally:
+        conn.close()
+
+
+def db_restore_all(dump: dict) -> dict:
+    """Restaura jugadores y picks desde un dump de db_dump_all().
+    - Recrea jugadores que no existan (match por whatsapp/email); no duplica.
+    - Repone TODOS los picks (UPSERT). No borra nada que ya exista.
+    Devuelve un resumen con conteos."""
+    res = {"jugadores_creados": 0, "jugadores_existentes": 0, "picks_restaurados": 0}
+    conn = get_conn()
+    with _db_lock:
+        with conn:
+            id_map = {}  # id_viejo -> id_actual
+            for j in dump.get("jugadores", []):
+                old_id = j.get("id")
+                wa = (j.get("whatsapp") or "").strip()
+                em = (j.get("email") or "").strip()
+                row = conn.execute(
+                    "SELECT id FROM jugadores WHERE (whatsapp=? AND whatsapp!='') "
+                    "OR (lower(email)=lower(?) AND email!='') LIMIT 1",
+                    (wa or "_x_", em or "_x_")
+                ).fetchone()
+                if row:
+                    id_map[old_id] = row[0]
+                    res["jugadores_existentes"] += 1
+                else:
+                    conn.execute(
+                        "INSERT INTO jugadores(num,email,nombre,whatsapp,fecha_reg,"
+                        "tab_nombre,pagado,reglas_ok) VALUES(?,?,?,?,?,?,?,?)",
+                        (j.get("num", 0), em, j.get("nombre", ""), wa,
+                         j.get("fecha_reg", ""), j.get("tab_nombre", ""),
+                         j.get("pagado", 0), j.get("reglas_ok", 0))
+                    )
+                    id_map[old_id] = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                    res["jugadores_creados"] += 1
+            for p in dump.get("picks", []):
+                nid = id_map.get(p.get("jugador_id"))
+                if not nid:
+                    continue
+                conn.execute("""
+                    INSERT INTO picks(jugador_id,jgo,g1_pick,g2_pick,gan_pick,eq1_pick,eq2_pick)
+                    VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(jugador_id,jgo) DO UPDATE SET
+                        g1_pick=excluded.g1_pick, g2_pick=excluded.g2_pick,
+                        gan_pick=excluded.gan_pick, eq1_pick=excluded.eq1_pick,
+                        eq2_pick=excluded.eq2_pick
+                """, (nid, str(p.get("jgo", "")), p.get("g1_pick", ""),
+                      p.get("g2_pick", ""), p.get("gan_pick", ""),
+                      p.get("eq1_pick", ""), p.get("eq2_pick", "")))
+                res["picks_restaurados"] += 1
+    conn.close()
+    return res
+
 # == Horarios ==================================================================
 
 def db_get_horarios() -> list:
