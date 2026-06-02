@@ -3411,44 +3411,34 @@ async def admin_player_paid(body: dict, ql_admin: str = Cookie(default="")):
 
 @app.post("/api/admin/player-delete")
 async def admin_player_delete(body: dict, ql_admin: str = Cookie(default="")):
-    """Elimina un jugador de la hoja JUGADORES y su pestaña de picks."""
+    """Elimina un jugador (SQLite) y todos sus picks, por telefono o email."""
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    if _torneo_activo().get("activo"):
-        raise HTTPException(403, "No se puede eliminar jugadores una vez iniciado el torneo")
-    email = (body.get("email") or "").strip().lower()
-    phone = _normalize_phone(body.get("phone") or "")
+    email = (body.get("email") or "").strip()
+    phone = (body.get("phone") or "").strip()
     if not email and not phone:
         raise HTTPException(400, "email o teléfono requerido")
-    ws, rows, header_idx, headers = _read_jugadores_cached()
-    email_col = headers.index("EMAIL") + 1 if "EMAIL" in headers else None
-    phone_col = None
-    for pk in ("WHATSAPP", "TELEFONO"):
-        if pk in headers:
-            phone_col = headers.index(pk) + 1
-            break
-    tab_col = headers.index("TAB_NOMBRE") + 1 if "TAB_NOMBRE" in headers else (
-              headers.index("TAB SHEET") + 1 if "TAB SHEET" in headers else None)
-    for i, row in enumerate(rows[header_idx + 1:], start=header_idx + 2):
-        row_email = (row[email_col - 1].strip().lower() if email_col and email_col - 1 < len(row) else "")
-        row_phone = _normalize_phone(row[phone_col - 1] if phone_col and phone_col - 1 < len(row) else "")
-        if (email and row_email == email) or (phone and row_phone == phone):
-            tab_nombre = row[tab_col - 1].strip() if tab_col and tab_col - 1 < len(row) else ""
-            with _sheets_lock:
-                _sheets_retry(lambda r=i: ws.delete_rows(r))
-            if tab_nombre:
-                try:
-                    reserved = RESERVED_TABS
-                    if tab_nombre not in reserved:
-                        tab_ws = _sheets_retry(lambda t=tab_nombre: state["sh"].worksheet(t))
-                        _sheets_retry(lambda t=tab_ws: state["sh"].del_worksheet(t))
-                        print(f"[admin] Pestaña '{tab_nombre}' eliminada")
-                except Exception as e:
-                    print(f"[admin] No se pudo borrar pestaña '{tab_nombre}': {e}")
-            if email: _cache["players"].pop(f"email:{email}", None)
-            if phone: _cache["players"].pop(f"phone:{phone}", None)
-            _invalidate_players()
-            return {"ok": True}
-    raise HTTPException(404, "Jugador no encontrado")
+    p = find_player_any(phone=phone, email=email)
+    if not p:
+        raise HTTPException(404, "Jugador no encontrado")
+    player_id = p.get("_id") or p.get("id")
+    if not player_id:
+        raise HTTPException(404, "Jugador sin ID")
+
+    # Cancelar suscripciones push del jugador (si las hay)
+    phone_norm  = p.get("WHATSAPP") or p.get("TELEFONO") or ""
+    email_clean = p.get("EMAIL") or ""
+    if _push_subs:
+        _push_subs[:] = [
+            s for s in _push_subs
+            if not (s.get("_phone") == phone_norm or s.get("_email") == email_clean)
+        ]
+        _subs_save()
+
+    _db.db_delete_player(int(player_id))
+    _invalidate_players()
+    _cache["players"].clear()
+    _cache["standings_rows"] = None
+    return {"ok": True, "deleted": player_id}
 
 
 @app.get("/api/prize-info")
