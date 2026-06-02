@@ -4153,6 +4153,74 @@ async def admin_all_player_points(key: str = Query(""), q: str = Query(""),
     }
 
 
+@app.post("/api/admin/import-picks")
+async def admin_import_picks(body: dict, key: str = Query(""),
+                            ql_admin: str = Cookie(default="")):
+    """Restaura los picks de jugadores desde un JSON de all-player-points.
+    Los jugadores deben EXISTIR ya (no los recrea, solo repone sus apuestas).
+    Body: { data: <json de all-player-points>, excluir: ["Angibell"], dry_run: false }
+    - Empareja por nombre exacto (case-insensitive).
+    - Salta picks vacios (sin marcador ni ganador).
+    - dry_run=true solo reporta que haria, sin escribir."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+
+    data    = body.get("data") or {}
+    excluir = {str(x).strip().lower() for x in (body.get("excluir") or [])}
+    dry_run = bool(body.get("dry_run", False))
+    jugadores = data.get("jugadores") or []
+    if not jugadores:
+        raise HTTPException(400, "JSON sin 'jugadores' (¿pegaste el de all-player-points?)")
+
+    # Indice nombre->id de los jugadores ACTUALES en BD
+    actuales = {}
+    for p in _db.db_get_jugadores():
+        nm = (p.get("nombre", "") or "").strip().lower()
+        if nm:
+            actuales[nm] = p.get("id")
+
+    resumen = []
+    for jug in jugadores:
+        nombre = (jug.get("jugador") or "").strip()
+        low    = nombre.lower()
+        if not nombre or low in excluir:
+            resumen.append({"jugador": nombre, "estado": "excluido"})
+            continue
+        pid = actuales.get(low)
+        if not pid:
+            resumen.append({"jugador": nombre, "estado": "NO existe en BD (saltado)"})
+            continue
+        n_ok = n_vacios = 0
+        for jg in (jug.get("juegos") or []):
+            jgo = str(jg.get("jgo", "")).strip()
+            if not jgo:
+                continue
+            marc = (jg.get("pick_marcador") or "").strip()
+            g1 = g2 = ""
+            if "-" in marc:
+                a, b = marc.split("-", 1)
+                g1, g2 = a.strip(), b.strip()
+            gan = (jg.get("pick_gan") or "").strip()
+            eq1 = (jg.get("eq1_pick_guardado") or "").strip()
+            eq2 = (jg.get("eq2_pick_guardado") or "").strip()
+            if not g1 and not g2 and not gan:
+                n_vacios += 1
+                continue
+            if not dry_run:
+                _db.db_save_pick(pid, jgo, g1, g2, gan, eq1, eq2)
+            n_ok += 1
+        resumen.append({
+            "jugador": nombre, "id": pid,
+            "picks_restaurados": n_ok, "picks_vacios_saltados": n_vacios,
+        })
+
+    if not dry_run:
+        _cache["standings_rows"] = None
+        _invalidate_games()
+    return {"ok": True, "dry_run": dry_run, "resumen": resumen}
+
+
 @app.post("/api/admin/fix-bracket")
 async def admin_fix_bracket(ql_admin: str = Cookie(default="")):
     """Fuerza re-propagacion del bracket completo. Util para corregir 3ER u otros slots
@@ -5139,7 +5207,9 @@ async def admin_reset_test(body: dict, ql_admin: str = Cookie(default="")):
     """
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
 
-    mantener_picks = bool(body.get("mantener_picks", False))
+    # Red de seguridad: si el frontend no manda el flag, CONSERVAR picks por
+    # defecto (antes era False y borraba apuestas de TODOS los jugadores).
+    mantener_picks = bool(body.get("mantener_picks", True))
     ronda_desde = str(body.get("ronda_desde", "R32")).strip().upper()
     RONDAS_ORDER = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
     ROF_MAP = {"R16": 32, "QF": 16, "SF": 8, "3ER": 4, "FINAL": 4}
