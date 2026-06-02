@@ -2551,7 +2551,7 @@ function renderGames(games) {
 
         <!-- Ganador OBLIGATORIO (no empate) -->
         <div>
-          <p class="text-xs text-center font-semibold text-purple-600 mb-1.5">⚡ Ganador obligatorio</p>
+          ${locked ? '' : `<p class="text-xs text-center font-semibold text-purple-600 mb-1.5">⚡ Ganador obligatorio</p>`}
           <div class="flex gap-2">
             ${ganBtn1}
             ${ganBtn2}
