@@ -2524,8 +2524,9 @@ function renderGames(games) {
       && !isPlaceholder(realEq1) && !isPlaceholder(realEq2)
       && !realEq1.startsWith('Gan. ') && !realEq2.startsWith('Gan. ')
       && !realEq1.startsWith('Perdedor ') && !realEq2.startsWith('Perdedor ');
-    const _predDifiere = (realEq1 !== pe1 || realEq2 !== pe2);
-    const showRealBanner = !!(_realDef && (isLive || isFinal) && _predDifiere);
+    // Estandar: el banner aparece SIEMPRE en R16+ con partido real ya definido,
+    // coincida o no con la prediccion (consistencia visual entre tarjetas).
+    const showRealBanner = !!(_realDef && (isLive || isFinal));
     // ¿El pick del jugador sigue vivo? (algún equipo predicho está en el real)
     const _predSet = new Set([pe1, pe2, (p.ganador||'')].filter(t => t && !t.startsWith('Gan. ')));
     const _realSet = new Set([realEq1, realEq2]);
