@@ -4385,6 +4385,69 @@ async def admin_import_picks(body: dict, key: str = Query(""),
     return {"ok": True, "dry_run": dry_run, "resumen": resumen}
 
 
+@app.get("/api/admin/bracket")
+async def admin_bracket(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Devuelve los cruces del bracket (R32 -> FINAL) para revisar/corregir.
+    Uso: /api/admin/bracket?key=TU_CLAVE
+    Cada cruce trae jgo, ronda, eq1 vs eq2, estado, marcador, ganador y espn_id.
+    Para corregir: edita los eq1/eq2 (o ganador) y mándalos a /bracket-fix."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    ORDEN = {"R32": 1, "R16": 2, "QF": 3, "SF": 4, "3ER": 5, "FINAL": 6}
+    def _k(h):
+        j = str(h.get("jgo", ""))
+        return (ORDEN.get(h.get("grupo", ""), 9), int(j) if j.isdigit() else 0)
+    cruces = []
+    for h in sorted(_db.db_get_horarios(), key=_k):
+        cruces.append({
+            "jgo":      str(h.get("jgo", "")),
+            "ronda":    h.get("grupo", ""),
+            "eq1":      h.get("eq1", ""),
+            "eq2":      h.get("eq2", ""),
+            "estado":   h.get("estado", ""),
+            "marcador": f'{h.get("gol1","")}-{h.get("gol2","")}',
+            "ganador":  h.get("ganador", ""),
+            "espn_id":  h.get("espn_id", ""),
+        })
+    return {"total": len(cruces), "cruces": cruces}
+
+
+@app.post("/api/admin/bracket-fix")
+async def admin_bracket_fix(body: dict, key: str = Query(""),
+                            ql_admin: str = Cookie(default="")):
+    """Corrige cruces por jgo. Solo toca los campos que mandes.
+    Body: { cruces: [{jgo, eq1?, eq2?, ganador?}, ...] }
+    Devuelve qué jgos se actualizaron."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    cruces = body.get("cruces") or []
+    if not cruces:
+        raise HTTPException(400, "Falta 'cruces' (lista)")
+    conn = _db.get_conn()
+    cambios = []
+    with conn:
+        for c in cruces:
+            jgo = str(c.get("jgo", "")).strip()
+            if not jgo:
+                continue
+            sets, params = [], []
+            for campo in ("eq1", "eq2", "ganador"):
+                if campo in c:
+                    sets.append(f"{campo}=?")
+                    params.append(str(c.get(campo, "")).strip())
+            if not sets:
+                continue
+            params.append(jgo)
+            conn.execute(f"UPDATE horarios SET {','.join(sets)} WHERE jgo=?", params)
+            cambios.append(jgo)
+    conn.close()
+    _invalidate_games()
+    _cache["standings_rows"] = None
+    return {"ok": True, "actualizados": cambios, "total": len(cambios)}
+
+
 @app.post("/api/admin/fix-bracket")
 async def admin_fix_bracket(ql_admin: str = Cookie(default="")):
     """Fuerza re-propagacion del bracket completo. Util para corregir 3ER u otros slots
