@@ -2515,18 +2515,44 @@ function renderGames(games) {
     const ganBtn1 = `<button id="bgan1-${jgo}" onclick="setGanF2('${jgo}','eq1')" ${ganDis1?'disabled':''} class="${ganCls1}">${shortName(pe1||'Eq1')}</button>`;
     const ganBtn2 = `<button id="bgan2-${jgo}" onclick="setGanF2('${jgo}','eq2')" ${ganDis2?'disabled':''} class="${ganCls2}">${shortName(pe2||'Eq2')}</button>`;
 
+    // ── Banner "Partido REAL" (R16+): cuando el cruce real ya se conoce y
+    //    difiere de lo que el jugador predijo, mostrar arriba el partido real.
+    const realEq1 = resolveTeamName(g.eq1) || g.eq1 || '';
+    const realEq2 = resolveTeamName(g.eq2) || g.eq2 || '';
+    const _realDef = g.ronda && g.ronda !== 'R32'
+      && realEq1 && realEq2
+      && !isPlaceholder(realEq1) && !isPlaceholder(realEq2)
+      && !realEq1.startsWith('Gan. ') && !realEq2.startsWith('Gan. ')
+      && !realEq1.startsWith('Perdedor ') && !realEq2.startsWith('Perdedor ');
+    const _predDifiere = (realEq1 !== pe1 || realEq2 !== pe2);
+    const showRealBanner = !!(_realDef && (isLive || isFinal) && _predDifiere);
+    // ¿El pick del jugador sigue vivo? (algún equipo predicho está en el real)
+    const _predSet = new Set([pe1, pe2, (p.ganador||'')].filter(t => t && !t.startsWith('Gan. ')));
+    const _realSet = new Set([realEq1, realEq2]);
+    const _pickVivo = [..._predSet].some(t => _realSet.has(t));
+    const realBanner = showRealBanner ? `
+      <div class="mx-4 mt-2 mb-1 px-3 py-2 rounded-xl ${isLive?'bg-red-50 border border-red-100':'bg-gray-50 border border-gray-200'}">
+        <div class="flex items-center justify-between mb-0.5">
+          <span class="text-[10px] font-bold ${isLive?'text-red-500':'text-gray-500'} uppercase tracking-wide">📍 Partido real${isLive&&g.minuto?` · ${g.minuto}'`:(isFinal?' · FT':'')}</span>
+          <span class="text-[10px] font-bold ${_pickVivo?'text-green-600':'text-gray-400'}">${_pickVivo?'✓ tu pick sigue':'✗ tu pick quedó fuera'}</span>
+        </div>
+        <p class="text-sm font-black text-center text-gray-800">${realEq1} <span class="text-gray-500">${g.gol1!==''?g.gol1:'–'}–${g.gol2!==''?g.gol2:'–'}</span> ${realEq2}${g.ganador?` · 🏆 ${g.ganador}`:''}</p>
+      </div>` : '';
+
     const card = document.createElement('div');
     card.className = cardCls;
     card.innerHTML = `
       <div class="flex justify-between items-center px-4 pt-3 pb-2 border-b border-gray-50">
         <div class="flex items-center gap-2">
           <span class="text-xs font-semibold text-gray-400">${g.ronda||'F2'} · JGO ${jgo}</span>
-          ${isFinal ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">FT: ${g.eq1||pe1} ${g.gol1}–${g.gol2} ${g.eq2||pe2}${g.ganador?' · 🏆 '+g.ganador:''}</span>` : ''}
-          ${isLive  ? `<span class="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold animate-pulse">🔴 ${g.minuto?g.minuto+"' ":''} ${pe1||g.eq1} ${g.gol1!==''?g.gol1:'–'}–${g.gol2!==''?g.gol2:'–'} ${pe2||g.eq2}</span>` : ''}
+          ${(isFinal && !showRealBanner) ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">FT: ${g.eq1||pe1} ${g.gol1}–${g.gol2} ${g.eq2||pe2}${g.ganador?' · 🏆 '+g.ganador:''}</span>` : ''}
+          ${(isLive && !showRealBanner)  ? `<span class="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold animate-pulse">🔴 ${g.minuto?g.minuto+"' ":''} ${pe1||g.eq1} ${g.gol1!==''?g.gol1:'–'}–${g.gol2!==''?g.gol2:'–'} ${pe2||g.eq2}</span>` : ''}
         </div>
         <span class="text-xs text-gray-400">${fechaLocal} ${horaLocal}</span>
       </div>
+      ${realBanner}
       <div class="px-4 py-4">
+        ${showRealBanner ? `<p class="text-[10px] font-bold text-blue-500 uppercase tracking-wide text-center mb-2">👇 Tu predicción</p>` : ''}
         <!-- Equipos + marcador a 90min -->
         <div class="flex items-stretch gap-3 mb-3">
           <div class="flex-1 flex flex-col items-center gap-1">
