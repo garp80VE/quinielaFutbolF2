@@ -2155,8 +2155,10 @@ async def player_self_delete(
     """El propio jugador se retira - solo permitido si el torneo NO esta activo.
     Identifica al jugador por la cookie de sesion (ql_session = telefono o email);
     phone/email en query se mantienen como fallback para compatibilidad."""
-    if _torneo_activo().get("activo"):
-        raise HTTPException(403, "No puedes retirarte mientras el torneo esta activo")
+    games, _ = _get_games_cache()
+    torneo_iniciado = any((g.get("estado") or "") not in ("", "PROG") for g in games)
+    if _torneo_activo().get("activo") or torneo_iniciado:
+        raise HTTPException(403, "No puedes retirarte: el torneo ya inició")
     p = (find_player_any(phone=ql_session, email=ql_session) if ql_session else None) \
         or find_player_any(phone=phone, email=email)
     if not p:

@@ -2978,8 +2978,10 @@ function _updateInfoProgress(torneoActivo) {
   if (pdfBtn)  { pdfBtn.style.display  = complete ? 'block' : 'none'; }
   if (pdfHint) { pdfHint.style.display = !complete && total > 0 ? 'block' : 'none'; }
 
-  // Botón Retirarme: solo si torneo NO activo
-  if (retCard) retCard.style.display = torneoActivo ? 'none' : 'block';
+  // Botón Retirarme: se oculta si el torneo esta activo (config) O si ya
+  // arranco el primer partido (algun juego con estado distinto de PROG).
+  const torneoIniciado = S.games.some(g => g.estado && g.estado !== 'PROG');
+  if (retCard) retCard.style.display = (torneoActivo || torneoIniciado) ? 'none' : 'block';
 }
 
 async function infoDownloadPDF() {
