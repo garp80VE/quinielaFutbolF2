@@ -3309,7 +3309,7 @@ async function loadTabla(force=false) {
       if (!p) return 'vivo';
       if (p.univ_1st === 0 && p.univ_2nd === 0) return 'eliminado';
       if (p.univ_1st === 0 && p.univ_2nd > 0) {
-        if (!has2ndPrize) return 'eliminado';          // Cat A: sin 2do premio → eliminado
+        // 🚑 = puede quedar 2do (por posición), haya o no 2do premio
         if (p.univ_2nd >= 99) return 'garantizado2do'; // 2do lugar ya asegurado → 🥈
         return 'solo2do';                              // peleando el 2do → 🚑
       }
@@ -3435,15 +3435,14 @@ async function loadProbabilidades(force=false) {
 
     function playerCard(p, idx) {
       const isLeader = p.rank === 1;
-      // Estado del jugador según probabilidades y categoría del premio
+      // Estado según POSICIÓN alcanzable (la 🚑 = puede quedar 2do, haya o no 2do premio).
       const eliminado      = hasData && p.univ_1st === 0 && p.univ_2nd === 0;
-      const garantizado2do = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd >= 99;
-      const soloSegundo    = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd > 0 && !garantizado2do;
-      // Cat A sin 2do premio: si no puede ganar → eliminado aunque tenga prob de 2do
+      const garantizado2do = hasData && p.univ_1st === 0 && p.univ_2nd >= 99;
+      const soloSegundo    = hasData && p.univ_1st === 0 && p.univ_2nd > 0 && !garantizado2do;
 
       // Ícono / medalla
       let iconEl;
-      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
+      if (eliminado) {
         iconEl = `<span style="font-size:20px">†</span>`;
       } else if (garantizado2do) {
         iconEl = `<span style="font-size:20px">🥈</span>`;
@@ -3458,7 +3457,7 @@ async function loadProbabilidades(force=false) {
 
       // Estilo de la tarjeta
       let cardBg, cardBorder, nameColor;
-      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
+      if (eliminado) {
         cardBg = '#fef2f2'; cardBorder = '2px solid #fca5a5'; nameColor = '#991b1b';
       } else if (garantizado2do) {
         cardBg = '#f0fdf4'; cardBorder = '2px solid #86efac'; nameColor = '#166534';
