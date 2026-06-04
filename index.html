@@ -1109,6 +1109,35 @@
   </div>
 </div>
 
+<!-- ═══ Modal de celebración final (fuegos artificiales) ═══ -->
+<style>
+@keyframes celebPop { 0%{transform:scale(.6);opacity:0} 100%{transform:scale(1);opacity:1} }
+@keyframes celebGlow { 0%,100%{text-shadow:0 2px 10px rgba(250,204,21,.5)} 50%{text-shadow:0 2px 22px rgba(250,204,21,.95)} }
+</style>
+<div id="celebration-modal" onclick="closeCelebration()"
+     style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(7,12,30,.93);align-items:center;justify-content:center;padding:20px;overflow:hidden">
+  <canvas id="fireworks-canvas" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
+  <div style="position:relative;z-index:2;text-align:center;width:100%;max-width:420px;animation:celebPop .6s cubic-bezier(.2,1.4,.4,1)">
+    <div style="font-size:44px;margin-bottom:4px">🎉🏆🎉</div>
+    <p style="color:#fde68a;font-weight:900;font-size:21px;margin:0 0 2px;text-shadow:0 2px 12px rgba(0,0,0,.6)">¡Quiniela finalizada!</p>
+    <p style="color:#fff;font-size:13px;margin:0 0 16px;opacity:.85">Felicidades a los ganadores 🎊</p>
+    <div style="background:rgba(255,255,255,.07);border:1px solid rgba(253,230,138,.4);border-radius:18px;padding:20px 18px;backdrop-filter:blur(2px)">
+      <div style="font-size:34px">🥇</div>
+      <p style="color:#cbd5e1;font-size:11px;font-weight:700;margin:2px 0 0;text-transform:uppercase;letter-spacing:1.5px">Campeón</p>
+      <p id="celeb-1st" style="color:#fde047;font-weight:900;font-size:26px;margin:3px 0 0;animation:celebGlow 1.6s ease-in-out infinite">—</p>
+      <div id="celeb-2nd-wrap" style="margin-top:14px;display:none">
+        <p style="color:#cbd5e1;font-size:11px;font-weight:700;margin:0;text-transform:uppercase;letter-spacing:1px">🥈 2do lugar</p>
+        <p id="celeb-2nd" style="color:#e2e8f0;font-weight:800;font-size:16px;margin:1px 0 0">—</p>
+      </div>
+      <div id="celeb-sorteo-wrap" style="margin-top:14px;padding-top:12px;border-top:1px dashed rgba(253,230,138,.35);display:none">
+        <p style="color:#cbd5e1;font-size:11px;font-weight:700;margin:0 0 3px;text-transform:uppercase;letter-spacing:1px">🥉 Ganadores del sorteo</p>
+        <p id="celeb-sorteo" style="color:#fcd34d;font-weight:700;font-size:13px;margin:0;line-height:1.6">—</p>
+      </div>
+    </div>
+    <p style="color:#94a3b8;font-size:11px;margin:14px 0 0">Toca para cerrar</p>
+  </div>
+</div>
+
 <!-- Banner Android: descarga APK -->
 <div id="banner-android" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:200;
   background:#002868;color:white;padding:14px 16px;
@@ -2153,6 +2182,88 @@ async function confirmReglas() {
   }
 }
 
+// ─── Celebración final: fuegos artificiales + ganadores ──────────────────────
+let _celebRaf = null, _celebTimer = null;
+function _fireworks(canvas) {
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  function resize(){ canvas.width = canvas.clientWidth*dpr; canvas.height = canvas.clientHeight*dpr; }
+  resize();
+  let parts = [];
+  function burst(){
+    const cx = Math.random()*canvas.width;
+    const cy = Math.random()*canvas.height*0.55 + canvas.height*0.05;
+    const hue = Math.floor(Math.random()*360);
+    const n = (40 + Math.floor(Math.random()*30));
+    for (let i=0;i<n;i++){
+      const a = (Math.PI*2)*i/n, sp = (1.5+Math.random()*4)*dpr;
+      parts.push({x:cx,y:cy,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:1,hue});
+    }
+  }
+  let frame = 0;
+  function tick(){
+    ctx.fillStyle = 'rgba(7,12,30,0.22)';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    if (frame % 16 === 0) burst();
+    frame++;
+    for (const p of parts){
+      p.x+=p.vx; p.y+=p.vy; p.vy+=0.05*dpr; p.vx*=0.99; p.life-=0.012;
+      if (p.life>0){
+        ctx.beginPath();
+        ctx.fillStyle = `hsla(${p.hue},100%,62%,${p.life})`;
+        ctx.arc(p.x,p.y,2.4*dpr,0,Math.PI*2);
+        ctx.fill();
+      }
+    }
+    parts = parts.filter(p=>p.life>0);
+    _celebRaf = requestAnimationFrame(tick);
+  }
+  burst(); burst(); tick();
+}
+function closeCelebration(){
+  const m = document.getElementById('celebration-modal');
+  if (m) m.style.display='none';
+  if (_celebRaf){ cancelAnimationFrame(_celebRaf); _celebRaf=null; }
+  clearTimeout(_celebTimer);
+}
+function showCelebration(first, second, sorteo){
+  const m = document.getElementById('celebration-modal');
+  if (!m) return;
+  document.getElementById('celeb-1st').textContent = first || '—';
+  const w2 = document.getElementById('celeb-2nd-wrap');
+  if (second){ document.getElementById('celeb-2nd').textContent = second; w2.style.display='block'; }
+  else w2.style.display='none';
+  const ws = document.getElementById('celeb-sorteo-wrap');
+  if (sorteo && sorteo.length){ document.getElementById('celeb-sorteo').textContent = sorteo.join(' · '); ws.style.display='block'; }
+  else ws.style.display='none';
+  m.style.display='flex';
+  try { _fireworks(document.getElementById('fireworks-canvas')); } catch(_){}
+  clearTimeout(_celebTimer);
+  _celebTimer = setTimeout(closeCelebration, 7000);  // ~5-7s y tap para cerrar antes
+}
+async function maybeShowCelebration(){
+  try {
+    // Torneo terminado = el partido de la FINAL esta FINAL
+    const finalG = (S.games||[]).find(g => (g.ronda||g.grupo||'').toUpperCase()==='FINAL');
+    if (!finalG || finalG.estado !== 'FINAL') return;
+    // Mostrar una sola vez por dispositivo (hasta que se limpie almacenamiento)
+    const key = 'celeb_done_' + (S.phone || 'anon');
+    if (localStorage.getItem(key) === '1') return;
+    const [st, pz] = await Promise.all([
+      api('GET','/api/standings').catch(()=>({})),
+      api('GET','/api/prize-info').catch(()=>({})),
+    ]);
+    const rows = (st.rows || []).slice(1);  // quitar header [POS,NOMBRE,Ptos,Dif]
+    if (!rows.length) return;
+    const first  = rows[0] && rows[0][1] ? rows[0][1] : '';
+    const second = rows[1] && rows[1][1] ? rows[1][1] : '';
+    const sorteo = (pz.sorteo_ganadores || []).filter(Boolean);
+    if (!first) return;
+    localStorage.setItem(key, '1');
+    showCelebration(first, second, sorteo);
+  } catch(_){}
+}
+
 async function loadDashboard() {
   try {
     const [gRes, pRes, tRes, cfgRes] = await Promise.all([
@@ -2196,6 +2307,7 @@ async function loadDashboard() {
 
     buildGroupsGrid();
     updateProgress();
+    maybeShowCelebration();   // popup de campeón si la quiniela ya terminó
 
     // Banner Push — se basa en el estado real del permiso, no en localStorage
     const pushBanner = document.getElementById('push-banner');

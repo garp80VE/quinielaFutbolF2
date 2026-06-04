@@ -3523,6 +3523,7 @@ async def prize_info():
                          fee_pct=fee_pct)
     result["costo"] = cost
     result["torneo_activo"] = _torneo_activo().get("activo", False)
+    result["sorteo_ganadores"] = [g for g in ganadores if g and g.strip()]
     return result
 
 
