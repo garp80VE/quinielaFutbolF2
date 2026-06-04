@@ -3833,7 +3833,12 @@ function _updateLiveIndicator() {
 async function _pollTick() {
   if (!S.phone) return;   // no logueado, no hacer nada
   try {
-    const gRes = await api('GET', '/api/games');
+    // Pedir partidos Y picks juntos: así los PUNTOS se actualizan en vivo junto
+    // al marcador (los pts los calcula el backend en /api/picks).
+    const [gRes, pRes] = await Promise.all([
+      api('GET', '/api/games'),
+      api('GET', `/api/picks?phone=${encodeURIComponent(S.phone||'')}`).catch(() => null),
+    ]);
     const newGames = gRes.games || [];
     if (!newGames.length) return;
 
@@ -3846,6 +3851,20 @@ async function _pollTick() {
     // Actualizar S.games preservando estructura de grupos
     S.games = newGames;
     S.hasFinals = gRes.has_finals || false;
+
+    // Actualizar picks + PUNTOS (recalculados por el backend con el marcador nuevo)
+    if (pRes && pRes.picks) {
+      const np = {};
+      Object.entries(pRes.picks).forEach(([k, v]) => {
+        np[k] = {
+          eq1: v.eq1||'', gol1: v.gol1||'', gol2: v.gol2||'',
+          eq2: v.eq2||'', ganador: v.ganador||'',
+          peq1: v.peq1||'', peq2: v.peq2||'',
+          pts: (v.pts === undefined ? null : v.pts)
+        };
+      });
+      S.picks = np;
+    }
 
     // Reconstruir mapa de grupos (F2: agrupar por ronda)
     S.groups = {};
