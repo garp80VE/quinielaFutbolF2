@@ -3395,12 +3395,13 @@ async function loadTabla(force=false) {
 // ─── Probabilidades ───────────────────────────────────────────────
 let _probLoaded = false;
 let _probFetching = false;
+let _probSig = '';   // firma del último render (evita re-dibujar si no cambió)
 
 async function loadProbabilidades(force=false) {
   if ((_probLoaded && !force) || _probFetching) return;
   _probFetching = true;
   const cont = document.getElementById('prob-content');
-  cont.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;padding:60px 16px;gap:12px"><div class="spinner"></div><p style="font-size:13px;color:#64748b">Calculando probabilidades...</p></div>`;
+  if (!_probLoaded) cont.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;padding:60px 16px;gap:12px"><div class="spinner"></div><p style="font-size:13px;color:#64748b">Calculando probabilidades...</p></div>`;
   try {
     const [data, prizeP] = await Promise.all([
       api('GET', '/api/probabilities'),
@@ -3511,13 +3512,14 @@ async function loadProbabilidades(force=false) {
         % basado en universos: los picks de cada jugador como resultado hipotético de los partidos pendientes
       </div>`;
 
-    cont.innerHTML = `
+    const _html = `
       <div style="display:flex;flex-direction:column;gap:10px">
         ${infoBar}
         ${players.map((p,i) => playerCard(p,i)).join('')}
         ${legend}
       </div>`;
-
+    // Solo re-dibujar si el contenido cambió (evita parpadeo y conserva el scroll)
+    if (!(_probLoaded && _html === _probSig)) { cont.innerHTML = _html; _probSig = _html; }
     _probLoaded = true;
   } catch(e) {
     cont.innerHTML = `<p style="color:#dc2626;text-align:center;font-size:13px;padding:16px">Error: ${e.message}</p>`;
@@ -3529,6 +3531,7 @@ async function loadProbabilidades(force=false) {
 // ─── Comparar picks ───────────────────────────────────────────────
 let _compLoaded = false;
 let _compFetching = false;
+let _compSig = '';   // firma del último render (evita re-dibujar si no cambió)
 
 async function loadComparacion(force=false) {
   if ((_compLoaded && !force) || _compFetching) return;
@@ -3611,7 +3614,9 @@ async function loadComparacion(force=false) {
     }).join('');
 
     const note = `<p style="text-align:center;font-size:11px;color:#94a3b8;margin-bottom:12px">Picks de los próximos partidos · Los resultados pasados están en <b>Apuestas</b></p>`;
-    cont.innerHTML = note + gameCards;
+    const _html = note + gameCards;
+    // Solo re-dibujar si cambió: evita parpadeo y conserva acordeones abiertos/scroll
+    if (!(_compLoaded && _html === _compSig)) { cont.innerHTML = _html; _compSig = _html; }
     _compLoaded = true;
   } catch(e) {
     cont.innerHTML = `<p style="color:#dc2626;text-align:center;font-size:13px;padding:16px">Error: ${e.message}</p>`;
@@ -3870,10 +3875,10 @@ async function _pollTick() {
       tablaLoaded = false;
       loadTabla(true);
     } else if (_currentScreen === 's-comp') {
-      _compLoaded = false;
+      // force: refresca datos del server, pero el guard de firma evita re-dibujar
+      // (y por tanto el parpadeo / pérdida de scroll y acordeones) si nada cambió.
       loadComparacion(true);
     } else if (_currentScreen === 's-prob') {
-      _probLoaded = false;
       loadProbabilidades(true);
     } else if (_currentScreen === 's-puntos') {
       puntosLoaded = false;
