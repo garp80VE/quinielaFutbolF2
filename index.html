@@ -3347,7 +3347,11 @@ async function loadProbabilidades(force=false) {
             <div style="flex:1">
               <div style="font-size:14px;font-weight:800;color:${nameColor}">${p.name}</div>
               <div style="font-size:11px;color:#64748b">${p.current_pts} pts actuales · máx ${p.max_possible}</div>
-              ${p.equipos_vivos !== undefined ? `<div style="font-size:11px;font-weight:700;color:${p.equipos_vivos>0?'#16a34a':'#94a3b8'};margin-top:1px" ${p.equipos_lista&&p.equipos_lista.length?`title="${p.equipos_lista.join(', ')}"`:''}>${p.equipos_vivos>0?'🟢':'⚪'} ${p.equipos_vivos} equipo${p.equipos_vivos===1?'':'s'} con vida</div>` : ''}
+              ${p.equipos_vivos !== undefined ? `<div style="font-size:11px;font-weight:700;margin-top:1px">
+                <span style="color:${p.equipos_vivos>0?'#16a34a':'#94a3b8'}" ${p.equipos_lista&&p.equipos_lista.length?`title="${p.equipos_lista.join(', ')}"`:''}>${p.equipos_vivos>0?'🟢':'⚪'} ${p.equipos_vivos} con vida</span>
+                <span style="color:#94a3b8"> · </span>
+                <span style="color:${p.por_cobrar>0?'#d97706':'#94a3b8'}" ${p.por_cobrar_lista&&p.por_cobrar_lista.length?`title="${p.por_cobrar_lista.join(', ')}"`:''}>⚡ ${p.por_cobrar||0} por cobrar</span>
+              </div>` : ''}
             </div>
           </div>
           ${univSection}

@@ -2935,6 +2935,8 @@ async def get_probabilities():
             "max_possible":  max_possible,
             "equipos_vivos": p["equipos_vivos"],
             "equipos_lista": p["equipos_lista"],
+            "por_cobrar":    p["por_cobrar"],
+            "por_cobrar_lista": p["por_cobrar_lista"],
             "prob_1st":      prob_1st,
             "univ_1st":      univ_1st,
             "univ_2nd":      univ_2nd,

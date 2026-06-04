@@ -824,14 +824,17 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                 if gr and not _is_placeholder(gr) and gr in vivos:
                     equipos_vivos_jug.add(gr)
 
-            # Max realista
+            # Max realista + equipos que aun le pueden dar puntos (por cobrar):
+            # equipos vivos que predijo ganadores en partidos PENDIENTES.
             max_add = 0
+            por_cobrar = set()
             for g in pendientes:
                 pk = _pp.get(str(g["jgo"])) or {}
                 max_add += vL  # no-empate siempre alcanzable
                 gr = _gan_real(pk, _pp)
                 if gr and not _is_placeholder(gr) and gr in vivos:
                     max_add += vG + v1 + v2
+                    por_cobrar.add(gr)
             if final_pend and vC:
                 pkf = _pp.get(str(final_pend[0]["jgo"])) or {}
                 camp = _gan_real(pkf, _pp)
@@ -839,12 +842,14 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                     max_add += vC
 
             out.append({
-                "jugador_id":     j["id"],
-                "nombre":         j["nombre"],
-                "pts":            pts,
-                "max_realista":   pts + max_add,
-                "equipos_vivos":  len(equipos_vivos_jug),
-                "equipos_lista":  sorted(equipos_vivos_jug),
+                "jugador_id":      j["id"],
+                "nombre":          j["nombre"],
+                "pts":             pts,
+                "max_realista":    pts + max_add,
+                "equipos_vivos":   len(equipos_vivos_jug),
+                "equipos_lista":   sorted(equipos_vivos_jug),
+                "por_cobrar":      len(por_cobrar),
+                "por_cobrar_lista": sorted(por_cobrar),
             })
 
         out.sort(key=lambda x: (-x["pts"], -x["max_realista"], x["nombre"]))
