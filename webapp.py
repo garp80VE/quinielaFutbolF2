@@ -2917,11 +2917,34 @@ async def get_probabilities():
     # quien va arriba Y a quien tiene mas potencial por cobrar).
     def _peso(pp): return pp["pts"] + pp["max_realista"]
 
-    # Probabilidades NORMALIZADAS para que sumen ~100% entre los candidatos reales:
-    #  - 1er lugar: candidatos cuyo max realista alcanza al lider.
-    #  - 2do lugar: candidatos cuyo max realista alcanza al 2do actual.
-    cand1_w = sum(_peso(pp) for pp in prob_data if pp["max_realista"] >= lider_pts) or 1
-    cand2_w = sum(_peso(pp) for pp in prob_data if pp["max_realista"] >= segundo_pts) or 1
+    # Candidatos por POSICIÓN alcanzable:
+    #  - cand_1ro: su max realista alcanza al lider (pueden ser 1ro).
+    #  - cand_pod: su max realista alcanza al 2do actual (pueden entrar al top-2).
+    cand_1ro = [pp for pp in prob_data if pp["max_realista"] >= lider_pts]
+    cand_pod = [pp for pp in prob_data if pp["max_realista"] >= segundo_pts]
+    _ids_1ro = {pp["jugador_id"] for pp in cand_1ro}
+    _ids_pod = {pp["jugador_id"] for pp in cand_pod}
+    W1 = sum(_peso(pp) for pp in cand_1ro) or 1
+    Wp = sum(_peso(pp) for pp in cand_pod) or 1
+
+    def _p1(pp):
+        # Prob de quedar 1ro: peso normalizado entre candidatos a 1ro.
+        return (_peso(pp) / W1) if pp["jugador_id"] in _ids_1ro else 0.0
+
+    def _p2(pp):
+        # Prob de quedar 2do (modelo de ranking Plackett-Luce): el 1ro lo gana
+        # alguien de cand_1ro y pp queda 2do si es el mejor de los restantes del
+        # podio. Asi P(1ro) y P(2do) son complementarias (no se duplican).
+        if pp["jugador_id"] not in _ids_pod:
+            return 0.0
+        wi = _peso(pp); s = 0.0
+        for j in cand_1ro:
+            if j["jugador_id"] == pp["jugador_id"]:
+                continue
+            denom = Wp - _peso(j)
+            if denom > 0:
+                s += (_peso(j) / W1) * (wi / denom)
+        return s
 
     players_out = []
     for rank_i, p in enumerate(prob_data):
@@ -2932,11 +2955,9 @@ async def get_probabilities():
             univ_1st = 100 if rank_i == 0 else 0
             univ_2nd = 100 if rank_i == 1 else 0
         else:
-            # 1er lugar: normalizado entre candidatos (suma ~100%)
-            prob_1st = round(_peso(p) / cand1_w * 100, 1) if max_possible >= lider_pts else 0.0
+            prob_1st = round(_p1(p) * 100, 1)
             univ_1st = round(prob_1st)
-            # 2do lugar: normalizado entre candidatos a 2do (suma ~100%)
-            univ_2nd = round(_peso(p) / cand2_w * 100) if max_possible >= segundo_pts else 0
+            univ_2nd = round(_p2(p) * 100)
         players_out.append({
             "name":          p["nombre"],
             "rank":          rank_i + 1,
