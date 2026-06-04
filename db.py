@@ -742,21 +742,19 @@ def db_compute_standings(cfg: dict = None) -> list:
 
 
 def _equipos_vivos(games) -> set:
-    """Equipos reales que NO han sido eliminados (no perdieron ningun FINAL)."""
-    eliminados, todos = set(), set()
+    """Equipos que AÚN tienen partido por jugar: los que aparecen en los partidos
+    PENDIENTES (no finalizados). Son los únicos que todavía pueden dar puntos.
+    (Si quedan 2 partidos, esto devuelve a lo sumo 4 equipos.)"""
+    vivos = set()
     for g in games:
-        e1 = (g.get("eq1") or "").strip()
-        e2 = (g.get("eq2") or "").strip()
-        for e in (e1, e2):
+        estado = (g.get("estado") or "").strip()
+        if estado and estado != "PROG":
+            continue  # partido ya jugado -> sus equipos no suman más por aquí
+        for slot in ("eq1", "eq2"):
+            e = (g.get(slot) or "").strip()
             if e and not _is_placeholder(e):
-                todos.add(e)
-        if (g.get("estado") or "") == "FINAL":
-            gan = (g.get("ganador") or "").strip()
-            if gan:
-                for e in (e1, e2):
-                    if e and e != gan and not _is_placeholder(e):
-                        eliminados.add(e)
-    return todos - eliminados
+                vivos.add(e)
+    return vivos
 
 
 def db_compute_probabilities(cfg: dict = None) -> list:
