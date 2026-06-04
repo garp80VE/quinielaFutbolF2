@@ -2911,7 +2911,17 @@ async def get_probabilities():
 
     pending_count = len(prog_games)
     lider_pts     = prob_data[0]["pts"] if prob_data else 0
-    total_pts_all = sum(p["pts"] for p in prob_data) or 1
+    segundo_pts   = prob_data[1]["pts"] if len(prob_data) > 1 else lider_pts
+
+    # Peso de cada jugador: combina puntos actuales y techo realista (favorece a
+    # quien va arriba Y a quien tiene mas potencial por cobrar).
+    def _peso(pp): return pp["pts"] + pp["max_realista"]
+
+    # Probabilidades NORMALIZADAS para que sumen ~100% entre los candidatos reales:
+    #  - 1er lugar: candidatos cuyo max realista alcanza al lider.
+    #  - 2do lugar: candidatos cuyo max realista alcanza al 2do actual.
+    cand1_w = sum(_peso(pp) for pp in prob_data if pp["max_realista"] >= lider_pts) or 1
+    cand2_w = sum(_peso(pp) for pp in prob_data if pp["max_realista"] >= segundo_pts) or 1
 
     players_out = []
     for rank_i, p in enumerate(prob_data):
@@ -2922,12 +2932,11 @@ async def get_probabilities():
             univ_1st = 100 if rank_i == 0 else 0
             univ_2nd = 100 if rank_i == 1 else 0
         else:
-            # Solo puede ser 1ro si su MAX REALISTA alcanza al lider
-            can_catch = max_possible >= lider_pts
-            raw_prob  = cur_pts / total_pts_all * 100 if total_pts_all else 0
-            prob_1st  = round(raw_prob, 1) if can_catch else 0.0
-            univ_1st  = round(prob_1st) if can_catch else 0
-            univ_2nd  = round(raw_prob * 0.8, 0) if can_catch else 0
+            # 1er lugar: normalizado entre candidatos (suma ~100%)
+            prob_1st = round(_peso(p) / cand1_w * 100, 1) if max_possible >= lider_pts else 0.0
+            univ_1st = round(prob_1st)
+            # 2do lugar: normalizado entre candidatos a 2do (suma ~100%)
+            univ_2nd = round(_peso(p) / cand2_w * 100) if max_possible >= segundo_pts else 0
         players_out.append({
             "name":          p["nombre"],
             "rank":          rank_i + 1,
