@@ -2903,53 +2903,41 @@ async def get_probabilities():
             "pct_eq2": round(c2/total*100) if total else 0,
         })
 
-    # Standings actuales para construir lista de jugadores
-    standings = _db.db_compute_standings(cfg)
-    if not standings:
+    # Probabilidades por jugador con MAX REALISTA + equipos con vida
+    prob_data = _db.db_compute_probabilities(cfg)
+    if not prob_data:
         return {"players": [], "fixed_games": len(fixed_games),
                 "pending_games": len(prog_games), "games": game_dist}
 
-    pts_logro_val   = int(cfg.get("PTS_LOGRO",   1) or 1)
-    pts_gan_val     = int(cfg.get("PTS_GAN",     2) or 2)
-    pts_gol1_val    = int(cfg.get("PTS_GOL1",    1) or 1)
-    pts_gol2_val    = int(cfg.get("PTS_GOL2",    1) or 1)
-    pts_campeon_val = int(cfg.get("PTS_CAMPEON", 0) or 0)
-    max_per_game    = pts_logro_val + pts_gan_val + pts_gol1_val + pts_gol2_val
-    pending_count   = len(prog_games)
+    pending_count = len(prog_games)
+    lider_pts     = prob_data[0]["pts"] if prob_data else 0
+    total_pts_all = sum(p["pts"] for p in prob_data) or 1
 
-    lider_pts = standings[0]["pts"] if standings else 0
     players_out = []
-    for rank_i, s in enumerate(standings):
-        cur_pts  = s["pts"]
-        max_add  = pending_count * max_per_game
-        # +PTS_CAMPEON si hay FINAL pendiente
-        has_final_pending = any(g.get("ronda","").upper()=="FINAL" for g in prog_games)
-        if has_final_pending:
-            max_add += pts_campeon_val
-        max_possible = cur_pts + max_add
-        # Probabilidad simplificada: basada en ranking relativo al lider
-        # (se actualiza a medida que avanza el torneo)
+    for rank_i, p in enumerate(prob_data):
+        cur_pts      = p["pts"]
+        max_possible = p["max_realista"]
         if pending_count == 0:
             prob_1st = 100.0 if rank_i == 0 else 0.0
             univ_1st = 100 if rank_i == 0 else 0
             univ_2nd = 100 if rank_i == 1 else 0
         else:
-            gap_to_leader = lider_pts - cur_pts
+            # Solo puede ser 1ro si su MAX REALISTA alcanza al lider
             can_catch = max_possible >= lider_pts
-            # Probabilidad estimada: proporcional a pts relativos
-            total_pts_all = sum(ss["pts"] for ss in standings) or 1
-            raw_prob = cur_pts / total_pts_all * 100 if total_pts_all else 0
-            prob_1st = round(raw_prob, 1) if can_catch else 0.0
-            univ_1st = round(prob_1st) if can_catch else 0
-            univ_2nd = round(raw_prob * 0.8, 0) if can_catch else 0
+            raw_prob  = cur_pts / total_pts_all * 100 if total_pts_all else 0
+            prob_1st  = round(raw_prob, 1) if can_catch else 0.0
+            univ_1st  = round(prob_1st) if can_catch else 0
+            univ_2nd  = round(raw_prob * 0.8, 0) if can_catch else 0
         players_out.append({
-            "name":         s["nombre"],
-            "rank":         rank_i + 1,
-            "current_pts":  cur_pts,
-            "max_possible": max_possible,
-            "prob_1st":     prob_1st,
-            "univ_1st":     univ_1st,
-            "univ_2nd":     univ_2nd,
+            "name":          p["nombre"],
+            "rank":          rank_i + 1,
+            "current_pts":   cur_pts,
+            "max_possible":  max_possible,
+            "equipos_vivos": p["equipos_vivos"],
+            "equipos_lista": p["equipos_lista"],
+            "prob_1st":      prob_1st,
+            "univ_1st":      univ_1st,
+            "univ_2nd":      univ_2nd,
         })
 
     return {

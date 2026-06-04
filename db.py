@@ -740,6 +740,118 @@ def db_compute_standings(cfg: dict = None) -> list:
     finally:
         conn.close()
 
+
+def _equipos_vivos(games) -> set:
+    """Equipos reales que NO han sido eliminados (no perdieron ningun FINAL)."""
+    eliminados, todos = set(), set()
+    for g in games:
+        e1 = (g.get("eq1") or "").strip()
+        e2 = (g.get("eq2") or "").strip()
+        for e in (e1, e2):
+            if e and not _is_placeholder(e):
+                todos.add(e)
+        if (g.get("estado") or "") == "FINAL":
+            gan = (g.get("ganador") or "").strip()
+            if gan:
+                for e in (e1, e2):
+                    if e and e != gan and not _is_placeholder(e):
+                        eliminados.add(e)
+    return todos - eliminados
+
+
+def db_compute_probabilities(cfg: dict = None) -> list:
+    """Por jugador: pts actuales, MAX REALISTA (solo equipos aun con vida) y
+    cuantos de sus equipos predichos siguen vivos.
+
+    El max realista por cada partido PENDIENTE suma:
+      - el punto de no-empate SIEMPRE (no depende del equipo),
+      - ganador + goles SOLO si el equipo que predijo ganador sigue vivo,
+      - bono campeon SOLO si su campeon predicho sigue vivo (final pendiente).
+    """
+    cfg = cfg or {}
+    vL = int(cfg.get("PTS_LOGRO",   1) or 1)
+    vG = int(cfg.get("PTS_GAN",     2) or 2)
+    v1 = int(cfg.get("PTS_GOL1",    1) or 1)
+    v2 = int(cfg.get("PTS_GOL2",    1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
+
+    conn = get_conn()
+    try:
+        games_list = [dict(r) for r in conn.execute(
+            "SELECT jgo,grupo,eq1,eq2,gol1,gol2,ganador,estado FROM horarios").fetchall()]
+        by_jgo, by_ronda = build_bracket_index(games_list)
+        vivos = _equipos_vivos(games_list)
+
+        pendientes = [g for g in games_list
+                      if not g.get("estado") or g["estado"] == "PROG"]
+        final_pend = [g for g in pendientes
+                      if (g.get("ronda") or g.get("grupo") or "").upper() == "FINAL"]
+
+        jugadores = conn.execute(
+            "SELECT id, nombre FROM jugadores ORDER BY num, id").fetchall()
+
+        def _gan_real(pk, picks):
+            """Nombre real del ganador que predijo el jugador (resuelto)."""
+            raw = (pk.get("gan") or "").strip()
+            return _resolve_team_name(raw, by_jgo, by_ronda, picks) or raw
+
+        out = []
+        for j in jugadores:
+            pk_rows = conn.execute(
+                "SELECT jgo,g1_pick,g2_pick,gan_pick,eq1_pick,eq2_pick "
+                "FROM picks WHERE jugador_id=?", (j["id"],)).fetchall()
+            _pp = {str(r["jgo"]): {"g1": r["g1_pick"], "g2": r["g2_pick"],
+                                   "gan": r["gan_pick"], "eq1": r["eq1_pick"] or "",
+                                   "eq2": r["eq2_pick"] or ""} for r in pk_rows}
+
+            # Puntos actuales (partidos ya jugados)
+            pts = 0
+            for jgo_str, pk in _pp.items():
+                game = by_jgo.get(jgo_str)
+                if not game:
+                    continue
+                est = game.get("estado", "")
+                if not est or est == "PROG":
+                    continue
+                _, _, _, _, ptot = calc_pts_inferred(
+                    game, pk, by_jgo, by_ronda, _pp, vL, vG, v1, v2, vC)
+                pts += ptot
+
+            # Equipos que predijo (ganador) y siguen vivos
+            equipos_vivos_jug = set()
+            for pk in _pp.values():
+                gr = _gan_real(pk, _pp)
+                if gr and not _is_placeholder(gr) and gr in vivos:
+                    equipos_vivos_jug.add(gr)
+
+            # Max realista
+            max_add = 0
+            for g in pendientes:
+                pk = _pp.get(str(g["jgo"])) or {}
+                max_add += vL  # no-empate siempre alcanzable
+                gr = _gan_real(pk, _pp)
+                if gr and not _is_placeholder(gr) and gr in vivos:
+                    max_add += vG + v1 + v2
+            if final_pend and vC:
+                pkf = _pp.get(str(final_pend[0]["jgo"])) or {}
+                camp = _gan_real(pkf, _pp)
+                if camp and not _is_placeholder(camp) and camp in vivos:
+                    max_add += vC
+
+            out.append({
+                "jugador_id":     j["id"],
+                "nombre":         j["nombre"],
+                "pts":            pts,
+                "max_realista":   pts + max_add,
+                "equipos_vivos":  len(equipos_vivos_jug),
+                "equipos_lista":  sorted(equipos_vivos_jug),
+            })
+
+        out.sort(key=lambda x: (-x["pts"], -x["max_realista"], x["nombre"]))
+        return out
+    finally:
+        conn.close()
+
 # == Ligas =====================================================================
 
 def db_get_ligas() -> list:
