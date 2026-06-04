@@ -3132,8 +3132,9 @@ async function loadTabla(force=false) {
       const ganSorteo = prize.sorteo_ganadores || [];
       ganSorteo.forEach((gan, idx) => {
         if (gan && gan.trim()) {
+          // Ganadores del sorteo = "terceros" → medalla de bronce 🥉
           prizeBadge[`sorteo:${gan.trim().toLowerCase()}`] = {
-            emoji: '🎖️', label: `Sorteo #${idx + 1}`, color: '#6d28d9', bg: '#f5f3ff'
+            emoji: '🥉', label: `Sorteo #${idx + 1}`, color: '#92400e', bg: '#fef3c7'
           };
         }
       });
@@ -3183,7 +3184,10 @@ async function loadTabla(force=false) {
     function renderRow(row, i) {
       const pos    = posIdx >= 0 ? parseInt(row[posIdx]) : i + 1;
       const nombre = nombreIdx >= 0 ? (row[nombreIdx] || '') : '';
-      const elim   = getElimStatus(nombre);
+      // Ganador de sorteo = "tercero" → bronce (no eliminado, aunque por puntos
+      // no pueda 1ro/2do). Tiene prioridad sobre el estado de eliminacion.
+      const _esSorteo = !!prizeBadge[`sorteo:${nombre.trim().toLowerCase()}`];
+      const elim   = _esSorteo ? 'bronce' : getElimStatus(nombre);
 
       // Badge de premio: solo mostrar cuando está matemáticamente garantizado
       // (univ_1st>=99 para 1ro, univ_2nd>=99 para 2do, sorteo siempre)
@@ -3204,13 +3208,14 @@ async function loadTabla(force=false) {
         eliminado:      { rowBg: '#fef2f2', nameBg: '#fee2e2', nameColor: '#991b1b', icon: '†'  },
         solo2do:        { rowBg: '#fff7ed', nameBg: '#fed7aa', nameColor: '#92400e', icon: '🚑' },
         garantizado2do: { rowBg: '#f0fdf4', nameBg: '#bbf7d0', nameColor: '#166534', icon: '🥈' },
+        bronce:         { rowBg: '#fffbeb', nameBg: '#fde68a', nameColor: '#92400e', icon: null  },
         vivo:           { rowBg: null,      nameBg: null,       nameColor: null,      icon: null  },
       };
       const es = elimStyles[elim];
 
       const cells = row.map((c, ci) => {
         if (ci !== nombreIdx) {
-          const borderColor = elim === 'eliminado' ? '#fecaca' : elim === 'solo2do' ? '#fed7aa' : '#f0fdf4';
+          const borderColor = elim === 'eliminado' ? '#fecaca' : elim === 'solo2do' ? '#fed7aa' : elim === 'bronce' ? '#fcd34d' : '#f0fdf4';
           return `<td style="padding:10px 12px;white-space:nowrap;border-bottom:1px solid ${borderColor};text-align:${ci===0?'center':'left'};${elim!=='vivo'?`color:${es.nameColor};font-weight:700`:''}">${c}</td>`;
         }
         // Celda NOMBRE
@@ -3221,7 +3226,7 @@ async function loadTabla(force=false) {
           ? `<span style="margin-left:6px;font-size:13px" title="${elim==='eliminado'?'Sin posibilidades':elim==='garantizado2do'?'2do lugar asegurado ':'Solo puede quedar 2do'}">${es.icon}</span>`
           : '';
         const nameBg = es.nameBg ? `background:${es.nameBg};border-radius:6px;padding:1px 6px` : '';
-        return `<td style="padding:10px 12px;border-bottom:1px solid ${elim==='eliminado'?'#fecaca':elim==='solo2do'?'#fed7aa':'#f0fdf4'}">
+        return `<td style="padding:10px 12px;border-bottom:1px solid ${elim==='eliminado'?'#fecaca':elim==='solo2do'?'#fed7aa':elim==='bronce'?'#fcd34d':'#f0fdf4'}">
                   <span style="font-weight:${badge||elim!=='vivo'?'800':'600'};${es.nameColor?`color:${es.nameColor}`:''}"><span style="${nameBg}">${c}</span></span>${badgeHtml}${elimBadge}
                 </td>`;
       }).join('');
