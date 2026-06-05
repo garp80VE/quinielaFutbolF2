@@ -3309,7 +3309,9 @@ async function loadTabla(force=false) {
       if (!p) return 'vivo';
       if (p.univ_1st === 0 && p.univ_2nd === 0) return 'eliminado';
       if (p.univ_1st === 0 && p.univ_2nd > 0) {
-        // 🚑 = puede quedar 2do (por posición), haya o no 2do premio
+        // Solo destacar el 2do si la categoría reparte 2do premio (B/C).
+        // En Cat A (1 solo ganador) solo importa el 1ro → quien no puede ser 1ro queda †.
+        if (!has2ndPrize) return 'eliminado';
         if (p.univ_2nd >= 99) return 'garantizado2do'; // 2do lugar ya asegurado → 🥈
         return 'solo2do';                              // peleando el 2do → 🚑
       }
@@ -3323,7 +3325,9 @@ async function loadTabla(force=false) {
       // Ganador de sorteo = "tercero" → bronce (no eliminado, aunque por puntos
       // no pueda 1ro/2do). Tiene prioridad sobre el estado de eliminacion.
       const _esSorteo = !!prizeBadge[`sorteo:${nombre.trim().toLowerCase()}`];
-      const elim   = _esSorteo ? 'bronce' : getElimStatus(nombre);
+      let elim   = _esSorteo ? 'bronce' : getElimStatus(nombre);
+      // El 1er lugar actual lleva medalla de oro 🥇 (indicador de posición).
+      if (!_esSorteo && pos === 1 && probHasData && elim === 'vivo') elim = 'lider';
 
       // Badge de premio: solo mostrar cuando está matemáticamente garantizado
       // (univ_1st>=99 para 1ro, univ_2nd>=99 para 2do, sorteo siempre)
@@ -3341,6 +3345,7 @@ async function loadTabla(force=false) {
 
       // Colores según estado
       const elimStyles = {
+        lider:          { rowBg: '#fffbeb', nameBg: '#fde68a', nameColor: '#92400e', icon: '🥇' },
         eliminado:      { rowBg: '#fef2f2', nameBg: '#fee2e2', nameColor: '#991b1b', icon: '†'  },
         solo2do:        { rowBg: '#fff7ed', nameBg: '#fed7aa', nameColor: '#92400e', icon: '🚑' },
         garantizado2do: { rowBg: '#f0fdf4', nameBg: '#bbf7d0', nameColor: '#166534', icon: '🥈' },
@@ -3351,7 +3356,7 @@ async function loadTabla(force=false) {
 
       const cells = row.map((c, ci) => {
         if (ci !== nombreIdx) {
-          const borderColor = elim === 'eliminado' ? '#fecaca' : elim === 'solo2do' ? '#fed7aa' : elim === 'bronce' ? '#fcd34d' : '#f0fdf4';
+          const borderColor = elim === 'eliminado' ? '#fecaca' : elim === 'solo2do' ? '#fed7aa' : (elim === 'bronce' || elim === 'lider') ? '#fcd34d' : '#f0fdf4';
           return `<td style="padding:10px 12px;white-space:nowrap;border-bottom:1px solid ${borderColor};text-align:${ci===0?'center':'left'};${elim!=='vivo'?`color:${es.nameColor};font-weight:700`:''}">${c}</td>`;
         }
         // Celda NOMBRE
@@ -3359,10 +3364,10 @@ async function loadTabla(force=false) {
           ? `<span style="margin-left:6px;font-size:11px;font-weight:700;background:${badge.bg};color:${badge.color};border-radius:6px;padding:2px 7px;white-space:nowrap">${badge.emoji} ${badge.label}</span>`
           : '';
         const elimBadge = es.icon
-          ? `<span style="margin-left:6px;font-size:13px" title="${elim==='eliminado'?'Sin posibilidades':elim==='garantizado2do'?'2do lugar asegurado ':'Solo puede quedar 2do'}">${es.icon}</span>`
+          ? `<span style="margin-left:6px;font-size:13px" title="${elim==='eliminado'?'Sin posibilidades':elim==='lider'?'Va 1er lugar':elim==='garantizado2do'?'2do lugar asegurado':'Solo puede quedar 2do'}">${es.icon}</span>`
           : '';
         const nameBg = es.nameBg ? `background:${es.nameBg};border-radius:6px;padding:1px 6px` : '';
-        return `<td style="padding:10px 12px;border-bottom:1px solid ${elim==='eliminado'?'#fecaca':elim==='solo2do'?'#fed7aa':elim==='bronce'?'#fcd34d':'#f0fdf4'}">
+        return `<td style="padding:10px 12px;border-bottom:1px solid ${elim==='eliminado'?'#fecaca':elim==='solo2do'?'#fed7aa':(elim==='bronce'||elim==='lider')?'#fcd34d':'#f0fdf4'}">
                   <span style="font-weight:${badge||elim!=='vivo'?'800':'600'};${es.nameColor?`color:${es.nameColor}`:''}"><span style="${nameBg}">${c}</span></span>${badgeHtml}${elimBadge}
                 </td>`;
       }).join('');
@@ -3435,14 +3440,15 @@ async function loadProbabilidades(force=false) {
 
     function playerCard(p, idx) {
       const isLeader = p.rank === 1;
-      // Estado según POSICIÓN alcanzable (la 🚑 = puede quedar 2do, haya o no 2do premio).
+      // La 🚑/🥈 de 2do solo aplica si la categoría reparte 2do premio (B/C).
+      // En Cat A (1 solo ganador) quien no puede ser 1ro queda eliminado (†).
       const eliminado      = hasData && p.univ_1st === 0 && p.univ_2nd === 0;
-      const garantizado2do = hasData && p.univ_1st === 0 && p.univ_2nd >= 99;
-      const soloSegundo    = hasData && p.univ_1st === 0 && p.univ_2nd > 0 && !garantizado2do;
+      const garantizado2do = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd >= 99;
+      const soloSegundo    = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd > 0 && !garantizado2do;
 
       // Ícono / medalla
       let iconEl;
-      if (eliminado) {
+      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
         iconEl = `<span style="font-size:20px">†</span>`;
       } else if (garantizado2do) {
         iconEl = `<span style="font-size:20px">🥈</span>`;
@@ -3457,7 +3463,7 @@ async function loadProbabilidades(force=false) {
 
       // Estilo de la tarjeta
       let cardBg, cardBorder, nameColor;
-      if (eliminado) {
+      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
         cardBg = '#fef2f2'; cardBorder = '2px solid #fca5a5'; nameColor = '#991b1b';
       } else if (garantizado2do) {
         cardBg = '#f0fdf4'; cardBorder = '2px solid #86efac'; nameColor = '#166534';
