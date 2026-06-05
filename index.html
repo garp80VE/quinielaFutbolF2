@@ -2249,7 +2249,7 @@ function showCelebration(first, second, sorteo){
   m.style.display='flex';
   try { _fireworks(document.getElementById('fireworks-canvas')); } catch(_){}
   clearTimeout(_celebTimer);
-  _celebTimer = setTimeout(closeCelebration, 7000);  // ~5-7s y tap para cerrar antes
+  _celebTimer = setTimeout(closeCelebration, 30000);  // 30s (o tap para cerrar antes)
 }
 async function maybeShowCelebration(){
   try {
