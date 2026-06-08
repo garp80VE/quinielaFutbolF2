@@ -2267,8 +2267,9 @@ async function maybeShowCelebration(){
     ]);
     const rows = (st.rows || []).slice(1);  // quitar header [POS,NOMBRE,Ptos,Dif]
     if (!rows.length) return;
+    const premia2do = ((pz.dist)||[]).some(d => /^\s*2[°º]/.test(d.lugar||''));
     const first  = rows[0] && rows[0][1] ? rows[0][1] : '';
-    const second = rows[1] && rows[1][1] ? rows[1][1] : '';
+    const second = (premia2do && rows[1] && rows[1][1]) ? rows[1][1] : '';  // 2do solo si la categoría lo premia
     const sorteo = (pz.sorteo_ganadores || []).filter(Boolean);
     if (!first) return;
     window._celebShown = true;
@@ -2292,8 +2293,9 @@ async function adminTestCelebration(){
       api('GET','/api/prize-info').catch(()=>({})),
     ]);
     const rows = (st.rows || []).slice(1);
+    const premia2do = ((pz.dist)||[]).some(d => /^\s*2[°º]/.test(d.lugar||''));
     const first  = rows[0] && rows[0][1] ? rows[0][1] : '(sin líder aún)';
-    const second = rows[1] && rows[1][1] ? rows[1][1] : '';
+    const second = (premia2do && rows[1] && rows[1][1]) ? rows[1][1] : '';  // 2do solo si la categoría lo premia
     const sorteo = (pz.sorteo_ganadores || []).filter(Boolean);
     showCelebration(first, second, sorteo);
   } catch(e){ showToast('Error: ' + (e.message||e)); }
