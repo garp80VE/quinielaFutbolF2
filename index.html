@@ -2256,9 +2256,11 @@ async function maybeShowCelebration(){
     // Torneo terminado = el partido de la FINAL esta FINAL
     const finalG = (S.games||[]).find(g => (g.ronda||g.grupo||'').toUpperCase()==='FINAL');
     if (!finalG || finalG.estado !== 'FINAL') return;
-    // Mostrar una sola vez por dispositivo (hasta que se limpie almacenamiento)
-    const key = 'celeb_done_' + (S.phone || 'anon');
-    if (localStorage.getItem(key) === '1') return;
+    // Guard EN MEMORIA (no localStorage): así en una PWA vuelve a salir al reabrir/
+    // reanudar la app. No reabrir si el modal ya está visible (evita parpadeo).
+    const _cm = document.getElementById('celebration-modal');
+    if (_cm && _cm.style.display === 'flex') return;   // ya visible
+    if (window._celebShown) return;                    // ya mostrada en esta vista
     const [st, pz] = await Promise.all([
       api('GET','/api/standings').catch(()=>({})),
       api('GET','/api/prize-info').catch(()=>({})),
@@ -2269,10 +2271,19 @@ async function maybeShowCelebration(){
     const second = rows[1] && rows[1][1] ? rows[1][1] : '';
     const sorteo = (pz.sorteo_ganadores || []).filter(Boolean);
     if (!first) return;
-    localStorage.setItem(key, '1');
+    window._celebShown = true;
     showCelebration(first, second, sorteo);
   } catch(_){}
 }
+// PWA: al volver al primer plano (cambiar de app y volver, reabrir la PWA), si la
+// quiniela ya terminó, la celebración vuelve a salir.
+function _celebOnVisible(){
+  if (document.visibilityState !== 'visible' || !S.phone) return;
+  window._celebShown = false;   // resetea el guard de memoria
+  maybeShowCelebration();
+}
+document.addEventListener('visibilitychange', _celebOnVisible);
+window.addEventListener('pageshow', _celebOnVisible);
 async function adminTestCelebration(){
   // Igual que maybeShowCelebration pero forzado (ignora el "una vez" y el fin de torneo)
   try {
