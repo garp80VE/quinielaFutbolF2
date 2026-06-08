@@ -954,9 +954,16 @@
       </div><!-- /adm-body-sistema -->
     </div>
 
-    <!-- Sección: Mensajes (oculto durante pruebas) -->
-    <div class="card-open rounded-3xl overflow-hidden" style="display:none">
-      <div id="adm-body-msgs" class="adm-section-body">
+    <!-- Sección: Mensajes de prueba -->
+    <div class="card-open rounded-3xl overflow-hidden">
+      <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-msgs','chev-msgs')">
+        <div style="flex:1">
+          <p style="font-weight:800;font-size:14px;color:#1e293b;margin:0">📨 Mensajes de prueba</p>
+          <p style="font-size:12px;color:#94a3b8;margin:2px 0 0">WhatsApp y notificaciones push</p>
+        </div>
+        <svg id="chev-msgs" class="adm-sec-chev" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+      </div>
+      <div id="adm-body-msgs" class="adm-section-body" style="display:none">
       <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
         <button onclick="adminPushSetup()" id="btn-push-setup"
           style="width:100%;background:linear-gradient(135deg,#059669,#047857);color:white;border:none;border-radius:12px;padding:13px;font-weight:800;font-size:14px;cursor:pointer">
