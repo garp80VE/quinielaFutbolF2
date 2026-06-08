@@ -2387,8 +2387,18 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
     nom_clean = _re.sub(r"[^\w]", "_", nombre)[:20]
     filename  = f"{nom_clean}_{tel_clean}_{ts_str}.pdf"
 
+    pdf_bytes = pdf.output()
+    # Archivar copia para auditoria/respaldo en /data/picks_pdf/.
+    # Nombre: {jugador_id}_{nombre_limpio}_{timestamp}.pdf (el parser separa por el ULTIMO "_").
+    try:
+        _pdf_dir = DATA_DIR / "picks_pdf"
+        _pdf_dir.mkdir(parents=True, exist_ok=True)
+        (_pdf_dir / f"{player_id}_{nom_clean}_{ts_str}.pdf").write_bytes(bytes(pdf_bytes))
+    except Exception as _e:
+        print(f"[pdf] Error guardando copia: {_e}")
+
     buf = BytesIO()
-    buf.write(pdf.output())
+    buf.write(pdf_bytes)
     buf.seek(0)
 
     from fastapi.responses import StreamingResponse
@@ -2397,6 +2407,59 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/api/admin/picks-pdfs")
+async def admin_list_picks_pdfs(ql_admin: str = Cookie(default="")):
+    """Lista los PDFs de picks archivados, agrupados por jugador (auditoria)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    import datetime as _dt
+    _pdf_dir = DATA_DIR / "picks_pdf"
+    if not _pdf_dir.exists():
+        return {"pdfs": [], "total": 0}
+    jugadores = {str(j.get("id", "")): j for j in _db.db_get_jugadores()}
+    archivos = sorted(_pdf_dir.glob("*.pdf"),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+    result = []
+    for f in archivos:
+        stem = f.stem  # "15_Gio_Ramirez_202206081530" o legacy "15_202206081530"
+        stem_parts = stem.rsplit("_", 1)           # separar por el ULTIMO "_"
+        ts_str = stem_parts[1] if len(stem_parts) > 1 else ""
+        rest   = stem_parts[0] if stem_parts else stem
+        rest_parts = rest.split("_", 1)            # "{id}_{nom}" o "{id}"
+        jug_id = rest_parts[0]
+        nom_from_file = rest_parts[1].replace("_", " ") if len(rest_parts) > 1 else ""
+        jug = jugadores.get(jug_id, {})
+        try:
+            fecha = _dt.datetime.strptime(ts_str, "%Y%m%d%H%M").strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            fecha = ts_str
+        result.append({
+            "filename":   f.name,
+            "jugador_id": jug_id,
+            "nombre":     jug.get("nombre") or nom_from_file or f"Jugador {jug_id}",
+            "telefono":   jug.get("whatsapp") or "",
+            "fecha":      fecha,
+            "size_kb":    round(f.stat().st_size / 1024, 1),
+        })
+    return {"pdfs": result, "total": len(result)}
+
+
+@app.get("/api/admin/picks-pdf/{filename}")
+async def admin_download_picks_pdf(filename: str, ql_admin: str = Cookie(default="")):
+    """Descarga un PDF archivado especifico (con proteccion anti path-traversal)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    from fastapi.responses import FileResponse
+    if ("/" in filename or "\\" in filename or ".." in filename
+            or not filename.lower().endswith(".pdf")):
+        raise HTTPException(400, "Nombre de archivo no válido")
+    _pdf_dir = DATA_DIR / "picks_pdf"
+    filepath = (_pdf_dir / filename).resolve()
+    if _pdf_dir.resolve() not in filepath.parents:
+        raise HTTPException(400, "Ruta no permitida")
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(404, "PDF no encontrado")
+    return FileResponse(path=str(filepath), media_type="application/pdf", filename=filename)
 
 
 
