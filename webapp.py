@@ -1183,18 +1183,29 @@ def _check_reminders(games, cfg):
             _reminded_1.add(espn_id)
 
 
+def _pick_completo(p):
+    """Criterio ÚNICO de 'pick completo' en F2: requiere AMBOS goles Y el ganador.
+    Un marcador a medias (un solo gol) o sin ganador NO es un resultado válido.
+    Debe coincidir EXACTO con el criterio del frontend (hasPick)."""
+    return (str(p.get("g1", "")).strip() != "" and
+            str(p.get("g2", "")).strip() != "" and
+            str(p.get("gan", "")).strip() != "")
+
+
+def _juego_pickable(g):
+    """Un juego cuenta para la completitud solo si tiene ambos equipos definidos
+    (mismo criterio que el frontend: g.eq1 && g.eq2)."""
+    return bool((g.get("eq1") or "").strip()) and bool((g.get("eq2") or "").strip())
+
+
 def _picks_faltantes(jugador_id, games):
-    """Cuenta picks completos vs total. En F2 un pick está 'completo' cuando tiene
-    los goles de ambos equipos y el ganador (g1, g2 y gan). Retorna (faltan, total, llenos)."""
+    """Cuenta picks completos vs total (solo juegos pickables). Usa _pick_completo
+    como criterio único. Retorna (faltan, total, llenos)."""
     picks = _db.db_get_picks(jugador_id)
-    total = len(games)
-    llenos = 0
-    for g in games:
-        p = picks.get(str(g.get("jgo", "")), {})
-        if (str(p.get("g1", "")).strip() != "" and
-                str(p.get("g2", "")).strip() != "" and
-                str(p.get("gan", "")).strip() != ""):
-            llenos += 1
+    pickables = [g for g in games if _juego_pickable(g)]
+    total = len(pickables)
+    llenos = sum(1 for g in pickables
+                 if _pick_completo(picks.get(str(g.get("jgo", "")), {})))
     return (total - llenos), total, llenos
 
 
@@ -1311,6 +1322,78 @@ def _check_exclusiones(games_db, cfg):
     _db.db_save_config({"EXCL_DONE": "1"})
     state.setdefault("cfg", {})["EXCL_DONE"] = "1"
     print(f"[exclusiones] {excluidos} jugador(es) excluido(s) al cierre")
+
+
+def _tg_send_document(chat_id_user: str, filename: str, content: bytes, caption: str = ""):
+    """Envía un archivo (bytes) por Telegram a un chat (sendDocument)."""
+    cfg   = state.get("cfg", {})
+    token = cfg.get("TELEGRAM_BOT_TOKEN", "")
+    if not token or not chat_id_user:
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendDocument",
+            data={"chat_id": chat_id_user, "caption": caption[:1024], "parse_mode": "HTML"},
+            files={"document": (filename, content, "application/json")},
+            timeout=15,
+        )
+    except Exception as e:
+        print(f"[telegram-doc] {e}")
+
+
+def _jugador_picks_payload(player_id, nombre, telefono, email, games):
+    """Dict con los picks de un jugador (sobre los juegos pickables).
+    Retorna (data, llenos)."""
+    picks = _db.db_get_picks(player_id)
+    lista = []; llenos = 0
+    for g in games:
+        if not _juego_pickable(g):
+            continue
+        p = picks.get(str(g.get("jgo", "")), {})
+        g1, g2, gan = p.get("g1", ""), p.get("g2", ""), p.get("gan", "")
+        if _pick_completo(p):
+            llenos += 1
+        lista.append({
+            "jgo": str(g.get("jgo", "")), "ronda": g.get("grupo", "") or g.get("ronda", ""),
+            "eq1": g.get("eq1", ""), "eq2": g.get("eq2", ""),
+            "g1": g1, "g2": g2, "ganador": gan,
+        })
+    total = sum(1 for g in games if _juego_pickable(g))
+    return {"id": player_id, "nombre": nombre or "", "telefono": telefono or "",
+            "email": email or "", "completados": llenos, "total": total,
+            "picks": lista}, llenos
+
+
+def _todos_los_picks_json(games):
+    """JSON con TODOS los jugadores y sus picks. Retorna (data, bytes)."""
+    jugadores = []
+    for j in _db.db_get_jugadores():
+        d, _ = _jugador_picks_payload(j["id"], j.get("nombre", ""),
+                                      j.get("whatsapp", ""), j.get("email", ""), games)
+        d["excluido"] = bool(j.get("excluido"))
+        jugadores.append(d)
+    out = {"n_jugadores": len(jugadores), "total_juegos": sum(1 for g in games if _juego_pickable(g)),
+           "jugadores": jugadores}
+    return out, json.dumps(out, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def _backup_picks_telegram(player_id, nombre, telefono, email, games, motivo):
+    """Envía a Telegram (chat privado admin) el JSON con TODOS los jugadores y sus
+    picks, como respaldo ante reclamos. Solo si TELEGRAM_ADMIN_CHAT_ID está configurado."""
+    from datetime import datetime as _dt
+    cfg = state.get("cfg", {})
+    tg_admin = (cfg.get("TELEGRAM_ADMIN_CHAT_ID", "") or "").strip()
+    if not tg_admin:
+        return
+    data, payload = _todos_los_picks_json(games)
+    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+    fname = f"picks_todos_{ts}.json"
+    caption = (f"{motivo}\n\U0001f464 Disparado por: {nombre} ({telefono})\n"
+               f"\U0001f4cb {data['n_jugadores']} jugadores · {_dt.now().strftime('%d/%m/%Y %H:%M')}")
+    try:
+        _tg_send_document(tg_admin, fname, payload, caption)
+    except Exception as e:
+        print(f"[backup-picks] TG: {e}")
 
 
 def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
@@ -2384,6 +2467,14 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         if not g.get("ronda"):
             g["ronda"] = g.get("grupo", "") or ""
 
+    # No permitir PDF con picks incompletos: el comprobante debe reflejar TODOS los
+    # picks válidos (ambos marcadores + ganador). Evita PDFs "a medias".
+    _faltan = sum(1 for g in games
+                  if _juego_pickable(g) and not _pick_completo(raw_picks.get(str(g["jgo"]), {}) or {}))
+    if _faltan > 0:
+        raise HTTPException(400, f"Completa todos tus picks (marcador y ganador) antes de "
+                                 f"descargar el PDF. Te faltan {_faltan}.")
+
     RONDA_ORDER   = ["R32", "R16", "QF", "SF", "3ER", "FINAL"]
     RONDA_LABEL   = {
         "R32": "Dieciseisavos",
@@ -2462,7 +2553,7 @@ async def picks_pdf(phone: str = Query(""), email: str = Query(""),
         disp_eq2 = _disp_team_pdf(g, "eq2", by_jgo, by_ronda, raw_picks)
 
         total_count += 1
-        if ganador:
+        if gol1 != "" and gol2 != "" and ganador:   # criterio único de pick completo
             filled_count += 1
 
         if ronda != current_ronda:
@@ -2651,6 +2742,36 @@ async def admin_reactivar_jugador(jugador_id: int, ql_admin: str = Cookie(defaul
     return {"ok": True, "msg": "Jugador reactivado"}
 
 
+@app.get("/api/admin/player-picks")
+async def admin_player_picks(key: str = Query(""), phone: str = Query(""),
+                             id: int = Query(0), ql_admin: str = Cookie(default="")):
+    """Picks de UN jugador (auditoría). Acceso: ?key=CLAVE_ADMIN o sesión admin.
+    Identifícalo con ?phone= (con o sin +) o ?id=N."""
+    cfg = state.get("cfg", {})
+    admin_pass = cfg.get("ADMIN_PASS", "quiniela2026")
+    if not (_admin_check(ql_admin) or (key and key == admin_pass)):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN o inicia sesión como admin.")
+    import re as _re
+    jug = None
+    if id:
+        jug = next((j for j in _db.db_get_jugadores() if j.get("id") == id), None)
+    elif phone:
+        # El '+' en la URL llega como espacio; comparamos solo por dígitos (tolerante al código de país)
+        target = _re.sub(r"\D", "", phone)
+        if target:
+            for j in _db.db_get_jugadores():
+                jph = _re.sub(r"\D", "", j.get("whatsapp", "") or "")
+                if jph and (jph == target or jph.endswith(target) or target.endswith(jph)):
+                    jug = j; break
+    if not jug:
+        raise HTTPException(404, "Jugador no encontrado. Usa ?phone=NUMERO (con o sin +) o ?id=N.")
+    games = _db.db_get_horarios()
+    data, _ = _jugador_picks_payload(jug["id"], jug.get("nombre", ""),
+                                     jug.get("whatsapp", ""), jug.get("email", ""), games)
+    data["excluido"] = bool(jug.get("excluido"))
+    return data
+
+
 
 # ââ Partidos ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
@@ -2725,7 +2846,17 @@ async def save_picks(body: SavePicksBody):
     torneo_iniciado = not modo_prueba and any(
         g.get("estado", "") not in ("", "PROG") for g in games)
 
-    guardados = bloqueados = 0
+    guardados = bloqueados = medias = protegidos = 0
+
+    # Estado previo: para proteger picks ya llenos de un guardado vacío (anti-borrado)
+    # y para detectar pérdidas de completitud (alerta de respaldo).
+    picks_antes  = _db.db_get_picks(int(player_id))
+    total_games  = sum(1 for g in games if _juego_pickable(g))
+    llenos_antes = sum(1 for g in games
+                       if _juego_pickable(g) and _pick_completo(picks_antes.get(str(g["jgo"]), {})))
+
+    def _tiene_datos(d):
+        return bool(d.get("g1") or d.get("g2") or d.get("gan"))
 
     for pick in body.picks:
         game = next((g for g in games if g["jgo"] == str(pick.jgo)), None)
@@ -2735,6 +2866,21 @@ async def save_picks(body: SavePicksBody):
 
         if torneo_iniciado:
             bloqueados += 1
+            continue
+
+        g1v = (str(pick.gol1) if pick.gol1 is not None else "") != ""
+        g2v = (str(pick.gol2) if pick.gol2 is not None else "") != ""
+
+        # REGLA: un pick a medias (un solo marcador) NO es válido → no se guarda.
+        if g1v != g2v:
+            medias += 1
+            continue
+
+        # ANTI-BORRADO: un pick entrante vacío nunca pisa uno que ya tiene datos.
+        # (Para cambiar un pick se editan los números; vaciar ya no borra.)
+        entrante_vacio = not (str(pick.gol1 or "") or str(pick.gol2 or "") or str(pick.ganador or ""))
+        if entrante_vacio and _tiene_datos(picks_antes.get(str(pick.jgo), {})):
+            protegidos += 1
             continue
 
         _db.db_save_pick(
@@ -2747,7 +2893,30 @@ async def save_picks(body: SavePicksBody):
     if guardados:
         _cache["standings_rows"] = None  # invalidar standings al guardar picks
 
-    return {"guardados": guardados, "bloqueados": bloqueados}
+    # Respaldo automático a Telegram (chat privado admin) con TODOS los jugadores,
+    # en hilo aparte para no demorar al jugador. Solo si hubo cambios relevantes.
+    if (guardados or protegidos) and total_games > 0:
+        try:
+            _, _, llenos_now = _picks_faltantes(int(player_id), games)
+            nombre   = p.get("NOMBRE") or p.get("nombre") or ""
+            telefono = p.get("WHATSAPP") or p.get("TELEFONO") or p.get("whatsapp") or ""
+            email    = p.get("EMAIL") or p.get("email") or ""
+            motivo = None
+            if protegidos > 0:
+                motivo = f"\U0001f6e1️ Se evitó borrar {protegidos} pick(s) ya llenos (intento de guardado vacío)"
+            elif llenos_now == total_games:
+                motivo = "✅ Picks COMPLETOS (respaldo)"
+            elif llenos_antes == total_games and llenos_now < total_games:
+                motivo = f"⚠️ ALERTA: bajó de {total_games} a {llenos_now} picks (posible pérdida)"
+            if motivo:
+                threading.Thread(target=_backup_picks_telegram,
+                    args=(int(player_id), nombre, telefono, email, games, motivo),
+                    daemon=True).start()
+        except Exception as e:
+            print(f"[save-picks] backup: {e}")
+
+    return {"guardados": guardados, "bloqueados": bloqueados,
+            "medias": medias, "protegidos": protegidos}
 
 
 # ââ Posiciones ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ

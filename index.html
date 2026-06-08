@@ -2652,7 +2652,9 @@ function updateProgress() {
 
 const hasPick = jgo => {
   const p = S.picks[String(jgo)];
-  return !!(p && p.ganador);  // F2: se requiere ganador obligatorio
+  // Criterio ÚNICO (idéntico al backend _pick_completo): AMBOS goles + ganador.
+  // Un marcador a medias o sin ganador NO cuenta como pick completo.
+  return !!(p && String(p.gol1 ?? '') !== '' && String(p.gol2 ?? '') !== '' && p.ganador);
 };
 
 // ─── Pantalla de Grupo ────────────────────────────────────────────
@@ -3176,7 +3178,10 @@ async function saveGroupAndBack() {
 
   try {
     const r = await api('POST', '/api/picks', {phone: S.phone||'', picks});
-    showToast(`✅ ${r.guardados} pick(s) guardados`);
+    let _msg = `✅ ${r.guardados} pick(s) guardados`;
+    if (r.protegidos) _msg += ` · 🛡️ ${r.protegidos} protegido(s)`;
+    if (r.medias)     _msg += ` · ⚠️ ${r.medias} a medias (ignorado)`;
+    showToast(_msg);
     updateProgress();
     buildGroupsGrid();
     goBack();  // volver inmediatamente, sin timeout
