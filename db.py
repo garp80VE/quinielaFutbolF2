@@ -83,6 +83,9 @@ def init_db():
         "ALTER TABLE picks ADD COLUMN eq1_pick TEXT DEFAULT ''",
         "ALTER TABLE picks ADD COLUMN eq2_pick TEXT DEFAULT ''",
         "ALTER TABLE jugadores ADD COLUMN reglas_ok INTEGER DEFAULT 0",
+        "ALTER TABLE jugadores ADD COLUMN excluido INTEGER DEFAULT 0",
+        "ALTER TABLE jugadores ADD COLUMN excluido_fecha TEXT DEFAULT ''",
+        "ALTER TABLE jugadores ADD COLUMN excluido_motivo TEXT DEFAULT ''",
     ]:
         try:
             conn.execute(col_sql)
@@ -119,7 +122,8 @@ def db_get_jugadores() -> list:
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT id, num, email, nombre, whatsapp, fecha_reg, tab_nombre, pagado, reglas_ok "
+            "SELECT id, num, email, nombre, whatsapp, fecha_reg, tab_nombre, pagado, reglas_ok, "
+            "excluido, excluido_fecha, excluido_motivo "
             "FROM jugadores ORDER BY num, id"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -196,6 +200,35 @@ def db_set_reglas_ok(jugador_id: int, ok: bool = True) -> bool:
                     (1 if ok else 0, int(jugador_id))
                 )
         return r.rowcount > 0
+    finally:
+        conn.close()
+
+def db_set_excluido(jugador_id: int, excluido: bool = True, motivo: str = "", fecha: str = "") -> bool:
+    """Excluye (o reactiva) a un jugador. Reversible: NO borra sus picks."""
+    conn = get_conn()
+    try:
+        with _db_lock:
+            with conn:
+                if excluido:
+                    r = conn.execute(
+                        "UPDATE jugadores SET excluido=1, excluido_motivo=?, excluido_fecha=? WHERE id=?",
+                        (motivo, fecha, int(jugador_id)))
+                else:
+                    r = conn.execute(
+                        "UPDATE jugadores SET excluido=0, excluido_motivo='', excluido_fecha='' WHERE id=?",
+                        (int(jugador_id),))
+        return r.rowcount > 0
+    finally:
+        conn.close()
+
+def db_get_excluidos() -> list:
+    """Lista de jugadores actualmente excluidos."""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, num, nombre, whatsapp, excluido_fecha, excluido_motivo "
+            "FROM jugadores WHERE COALESCE(excluido,0)=1 ORDER BY num, id").fetchall()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -695,7 +728,9 @@ def db_compute_standings(cfg: dict = None) -> list:
         games_list = [dict(r) for r in games_rows]
         by_jgo, by_ronda = build_bracket_index(games_list)
 
-        jugadores = conn.execute("SELECT id, nombre FROM jugadores ORDER BY num, id").fetchall()
+        jugadores = conn.execute(
+            "SELECT id, nombre FROM jugadores WHERE COALESCE(excluido,0)=0 ORDER BY num, id"
+        ).fetchall()
 
         standings = []
         for j in jugadores:
@@ -786,7 +821,8 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                       if (g.get("ronda") or g.get("grupo") or "").upper() == "FINAL"]
 
         jugadores = conn.execute(
-            "SELECT id, nombre FROM jugadores ORDER BY num, id").fetchall()
+            "SELECT id, nombre FROM jugadores WHERE COALESCE(excluido,0)=0 ORDER BY num, id"
+        ).fetchall()
 
         def _gan_real(pk, picks):
             """Nombre real del ganador que predijo el jugador (resuelto)."""

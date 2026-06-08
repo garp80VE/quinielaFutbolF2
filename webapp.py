@@ -1183,6 +1183,136 @@ def _check_reminders(games, cfg):
             _reminded_1.add(espn_id)
 
 
+def _picks_faltantes(jugador_id, games):
+    """Cuenta picks completos vs total. En F2 un pick está 'completo' cuando tiene
+    los goles de ambos equipos y el ganador (g1, g2 y gan). Retorna (faltan, total, llenos)."""
+    picks = _db.db_get_picks(jugador_id)
+    total = len(games)
+    llenos = 0
+    for g in games:
+        p = picks.get(str(g.get("jgo", "")), {})
+        if (str(p.get("g1", "")).strip() != "" and
+                str(p.get("g2", "")).strip() != "" and
+                str(p.get("gan", "")).strip() != ""):
+            llenos += 1
+    return (total - llenos), total, llenos
+
+
+def _primer_partido_dt(games):
+    """Datetime UTC del primer partido programado (menor fecha+hora). None si no hay."""
+    from datetime import datetime as _dt
+    mejor = None
+    for g in games:
+        f = (g.get("fecha") or "").strip()
+        h = (g.get("hora") or "").strip()
+        if not f or not h:
+            continue
+        try:
+            dt = _dt.fromisoformat(f"{f}T{h}:00+00:00")
+        except Exception:
+            continue
+        if mejor is None or dt < mejor:
+            mejor = dt
+    return mejor
+
+
+def _avisar_picks_faltantes(games_db, cfg):
+    """~6h antes del primer partido: push DIRIGIDO a cada jugador con pendientes +
+    un resumen SIN nombres al grupo (Telegram/WhatsApp). NO se usan DMs individuales de
+    WhatsApp (disparan bloqueos). Dedup por config ligado al primer partido."""
+    from datetime import datetime as _dt, timezone as _tz
+    if not games_db:
+        return
+    dt0 = _primer_partido_dt(games_db)
+    if not dt0:
+        return
+    horas = (dt0 - _dt.now(_tz.utc)).total_seconds() / 3600.0
+    if not (5.5 <= horas <= 6.5):
+        return  # fuera de la ventana de ~6h
+    target_iso = dt0.isoformat()
+    if cfg.get("AVISO_6H_DONE", "") == target_iso:
+        return  # ya enviado para este primer partido
+    pendientes = 0
+    for j in _db.db_get_jugadores():
+        if j.get("excluido"):
+            continue
+        faltan, total, _ = _picks_faltantes(j["id"], games_db)
+        if faltan <= 0:
+            continue
+        pendientes += 1
+        try:
+            _send_push_players(
+                [j.get("whatsapp") or ""], [j.get("email") or ""],
+                "⏳ Te faltan picks por llenar",
+                f"Tienes {faltan} de {total} picks sin completar. Complétalos antes de que "
+                f"empiece la quiniela (en ~6 h) o quedarás FUERA automáticamente.",
+                {"tipo": "picks_faltantes", "faltan": faltan, "total": total})
+        except Exception as e:
+            print(f"[avisar-picks] push {j.get('nombre')}: {e}")
+    if pendientes > 0:
+        plural = "es" if pendientes != 1 else ""
+        verbo  = "tienen" if pendientes != 1 else "tiene"
+        msg = (f"⚠️ {pendientes} jugador{plural} aún {verbo} picks pendientes. "
+               f"¡Complétalos antes del cierre (~6 h) o quedarás fuera de la quiniela!")
+        try: _tg_send(msg)
+        except Exception as e: print(f"[avisar-picks] TG: {e}")
+        try: _wa("POST", "/send", json={"message": msg})
+        except Exception as e: print(f"[avisar-picks] WA: {e}")
+    _db.db_save_config({"AVISO_6H_DONE": target_iso})
+    state.setdefault("cfg", {})["AVISO_6H_DONE"] = target_iso
+    print(f"[avisar-picks] aviso 6h enviado: {pendientes} pendiente(s)")
+
+
+def _check_exclusiones(games_db, cfg):
+    """Al cerrar (primer partido ya arrancó: algún estado != PROG), excluye a quien no
+    completó sus picks. Reversible (marca flag, NO borra picks). Dedup con EXCL_DONE
+    ligado al primer partido (se resetea si cambia el partido 1)."""
+    from datetime import datetime as _dt
+    if not games_db:
+        return
+    iniciado = any((g.get("estado") or "") not in ("", "PROG") for g in games_db)
+    if not iniciado:
+        return  # aún no cierra
+    dt0 = _primer_partido_dt(games_db)
+    target_iso = dt0.isoformat() if dt0 else "iniciado"
+    if cfg.get("EXCL_TARGET", "") != target_iso:
+        _db.db_save_config({"EXCL_TARGET": target_iso, "EXCL_DONE": ""})
+        state.setdefault("cfg", {}).update({"EXCL_TARGET": target_iso, "EXCL_DONE": ""})
+        cfg = state.get("cfg", {})
+    if cfg.get("EXCL_DONE", ""):
+        return
+    fecha = _dt.now().strftime("%d/%m/%Y %H:%M")
+    excluidos = 0
+    for j in _db.db_get_jugadores():
+        if j.get("excluido"):
+            continue
+        faltan, total, llenos = _picks_faltantes(j["id"], games_db)
+        if faltan <= 0:
+            continue
+        if _db.db_set_excluido(j["id"], True,
+                f"No completó picks ({llenos}/{total}) al cierre", fecha):
+            excluidos += 1
+            try:
+                _send_push_players(
+                    [j.get("whatsapp") or ""], [j.get("email") or ""],
+                    "\U0001f6ab Quedaste fuera de la quiniela",
+                    f"No completaste tus picks ({llenos}/{total}) antes del cierre. "
+                    f"Si crees que es un error, contacta al administrador para reactivarte.",
+                    {"tipo": "excluido"})
+            except Exception as e:
+                print(f"[exclusiones] push: {e}")
+    if excluidos > 0:
+        try:
+            _tg_send(f"\U0001f6ab <b>Exclusión automática al cierre:</b> {excluidos} jugador(es) "
+                     f"sin picks completos fueron sacados (reversible en el admin).")
+        except Exception as e:
+            print(f"[exclusiones] TG: {e}")
+    _invalidate_games()
+    _db.db_save_config({"EXCL_DONE": "1"})
+    state.setdefault("cfg", {})["EXCL_DONE"] = "1"
+    print(f"[exclusiones] {excluidos} jugador(es) excluido(s) al cierre")
+
+
 def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
     """
     Lee los tabs de TODOS los jugadores en llamadas batch (50 rangos por request).
@@ -1339,6 +1469,16 @@ def _updater_loop():
                 _check_reminders(games, cfg)
             except Exception as e:
                 print(f"[updater-reminder] {e}")
+
+            if not modo_prueba:
+                try:
+                    _avisar_picks_faltantes(games, cfg)
+                except Exception as e:
+                    print(f"[updater-avisar-picks] {e}")
+                try:
+                    _check_exclusiones(games, cfg)
+                except Exception as e:
+                    print(f"[updater-exclusiones] {e}")
 
             try:
                 _write_daily_backup()
@@ -2460,6 +2600,55 @@ async def admin_download_picks_pdf(filename: str, ql_admin: str = Cookie(default
     if not filepath.exists() or not filepath.is_file():
         raise HTTPException(404, "PDF no encontrado")
     return FileResponse(path=str(filepath), media_type="application/pdf", filename=filename)
+
+
+@app.get("/api/admin/picks-status")
+async def admin_picks_status(ql_admin: str = Cookie(default="")):
+    """Estado de picks por jugador: completos / pendientes / excluidos."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    games = _db.db_get_horarios()
+    total = len(games)
+    jugadores = []; n_c = n_p = n_e = 0
+    for j in _db.db_get_jugadores():
+        faltan, _t, llenos = _picks_faltantes(j["id"], games)
+        excl = bool(j.get("excluido"))
+        if excl: n_e += 1
+        elif faltan > 0: n_p += 1
+        else: n_c += 1
+        jugadores.append({
+            "id": j["id"], "nombre": j.get("nombre") or f"Jugador {j['id']}",
+            "telefono": j.get("whatsapp") or "", "llenos": llenos, "total": total,
+            "faltan": faltan, "excluido": excl,
+            "excluido_fecha": j.get("excluido_fecha") or "",
+            "excluido_motivo": j.get("excluido_motivo") or "",
+        })
+    jugadores.sort(key=lambda x: (not x["excluido"], x["faltan"] == 0, x["nombre"].lower()))
+    return {"jugadores": jugadores, "total_juegos": total,
+            "completos": n_c, "pendientes": n_p, "excluidos": n_e}
+
+
+@app.post("/api/admin/excluir/{jugador_id}")
+async def admin_excluir_jugador(jugador_id: int, ql_admin: str = Cookie(default="")):
+    """Excluye manualmente a un jugador (reversible, no borra picks)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    import datetime as _dt
+    ok = _db.db_set_excluido(jugador_id, True, "Excluido manualmente por el admin",
+                             _dt.datetime.now().strftime("%d/%m/%Y %H:%M"))
+    if not ok: raise HTTPException(404, "Jugador no encontrado")
+    _invalidate_games()
+    _cache["standings_rows"] = None
+    return {"ok": True, "msg": "Jugador excluido"}
+
+
+@app.post("/api/admin/reactivar/{jugador_id}")
+async def admin_reactivar_jugador(jugador_id: int, ql_admin: str = Cookie(default="")):
+    """Reactiva a un jugador excluido (vuelve a la quiniela con sus picks intactos)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    ok = _db.db_set_excluido(jugador_id, False)
+    if not ok: raise HTTPException(404, "Jugador no encontrado")
+    _invalidate_games()
+    _cache["standings_rows"] = None
+    return {"ok": True, "msg": "Jugador reactivado"}
 
 
 

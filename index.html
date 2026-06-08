@@ -1076,6 +1076,24 @@
       </div>
     </div>
 
+    <!-- Sección: Picks incompletos / Exclusiones -->
+    <div class="card-open rounded-3xl overflow-hidden" style="border-color:#fed7aa">
+      <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-picks-status','chev-picks-status')" style="background:#fff7ed">
+        <div style="flex:1">
+          <p style="font-weight:800;font-size:14px;color:#9a3412;margin:0">🚫 Picks incompletos / Exclusiones</p>
+          <p id="adm-picks-status-count" style="font-size:12px;color:#94a3b8;margin:2px 0 0">Cargando...</p>
+        </div>
+        <svg id="chev-picks-status" class="adm-sec-chev" xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#f97316"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/></svg>
+      </div>
+      <div id="adm-body-picks-status" class="adm-section-body" style="display:none">
+        <div style="padding:16px">
+          <p style="font-size:12px;color:#94a3b8;margin:0 0 10px">Quien no complete sus picks antes del primer partido queda fuera automáticamente. Aquí puedes excluir o reactivar a mano (es reversible, los picks no se borran).</p>
+          <button onclick="loadPicksStatus()" style="width:100%;padding:11px;background:#f97316;color:white;border:none;border-radius:12px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:12px">🔄 Actualizar estado</button>
+          <div id="picks-status-list" style="font-size:13px;color:#64748b;text-align:center">Haz clic en Actualizar para cargar</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Sección: Sorteo en Vivo -->
     <div id="adm-sorteo-section" style="background:#faf5ff;border:1.5px solid #ddd6fe;border-radius:24px;overflow:hidden">
       <div class="adm-sec-btn" onclick="toggleAdmSection('adm-body-sorteo-live','chev-sorteo-live')" style="background:#faf5ff;border-bottom-color:#ddd6fe">
@@ -2395,6 +2413,57 @@ async function loadPicksPdfs() {
     });
     container.innerHTML = html;
   } catch(e) { if (container) container.innerHTML = `<p style="color:#ef4444">Error: ${e.message}</p>`; }
+}
+
+// ─── Picks incompletos / Exclusiones ───────────────────────────────
+async function loadPicksStatus() {
+  const container = document.getElementById('picks-status-list');
+  const counter   = document.getElementById('adm-picks-status-count');
+  if (container) container.innerHTML = '<p style="text-align:center;color:#94a3b8">Cargando...</p>';
+  try {
+    const r = await api('GET', '/api/admin/picks-status');
+    const js = r.jugadores || [];
+    if (counter) counter.textContent = `✅ ${r.completos} completos · ⚠️ ${r.pendientes} pendientes · 🚫 ${r.excluidos} excluidos`;
+    if (!js.length) { container.innerHTML = '<p style="text-align:center;color:#94a3b8">Sin jugadores</p>'; return; }
+    let html = '';
+    js.forEach(j => {
+      let estado, accion;
+      if (j.excluido) {
+        estado = `<span style="color:#dc2626;font-weight:700">🚫 Excluido</span>` +
+                 (j.excluido_fecha ? `<span style="color:#94a3b8;font-size:11px"> · ${j.excluido_fecha}</span>` : '');
+        accion = `<button onclick="reactivarJugador(${j.id},this)" style="background:#16a34a;color:white;border:none;padding:5px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">♻ Reactivar</button>`;
+      } else if (j.faltan > 0) {
+        estado = `<span style="color:#ea580c;font-weight:700">⚠️ Faltan ${j.faltan}</span><span style="color:#94a3b8;font-size:11px"> (${j.llenos}/${j.total})</span>`;
+        accion = `<button onclick="excluirJugador(${j.id},this)" style="background:#ef4444;color:white;border:none;padding:5px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">🚫 Excluir</button>`;
+      } else {
+        estado = `<span style="color:#16a34a;font-weight:700">✅ Completo</span><span style="color:#94a3b8;font-size:11px"> (${j.llenos}/${j.total})</span>`;
+        accion = `<button onclick="excluirJugador(${j.id},this)" style="background:#f1f5f9;color:#64748b;border:none;padding:5px 11px;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">Excluir</button>`;
+      }
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border:1px solid #f1f5f9;border-radius:10px;margin-bottom:6px">
+        <div style="min-width:0">
+          <div style="font-weight:700;font-size:13px;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">👤 ${j.nombre}</div>
+          <div style="font-size:12px">${estado}</div>
+        </div>${accion}</div>`;
+    });
+    container.innerHTML = html;
+  } catch(e) { if (container) container.innerHTML = `<p style="color:#ef4444">Error: ${e.message}</p>`; }
+}
+
+async function excluirJugador(id, btn) {
+  if (!confirm('¿Excluir a este jugador de la quiniela? Es reversible (sus picks se conservan).')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const r = await api('POST', `/api/admin/excluir/${id}`, {});
+    showToast(r.msg || 'Jugador excluido'); loadPicksStatus();
+  } catch(e) { showToast('Error: ' + (e.message || 'No se pudo excluir')); if (btn) btn.disabled = false; }
+}
+
+async function reactivarJugador(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const r = await api('POST', `/api/admin/reactivar/${id}`, {});
+    showToast(r.msg || 'Jugador reactivado'); loadPicksStatus();
+  } catch(e) { showToast('Error: ' + (e.message || 'No se pudo reactivar')); if (btn) btn.disabled = false; }
 }
 
 async function loadDashboard() {
@@ -4470,6 +4539,7 @@ async function loadAdminDashboard() {
   _initAppUrl();    // mostrar URL de la app
   waStartPolling(); // actualizar estado WhatsApp al cargar el panel
   _initModoPruebaToggle(); // sincronizar toggle modo prueba
+  try { loadPicksStatus(); } catch(_) {} // resumen de picks incompletos / exclusiones
   // Cargar valores actuales del sistema de puntos
   try {
     const cfgR = await api('GET', '/api/admin/config');
