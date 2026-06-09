@@ -3750,6 +3750,17 @@ async def admin_logout(response: Response):
 async def admin_get_ligas(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
+    # Fuente primaria: SQLite (igual que el resto de F2). Antes leía de Google
+    # Sheets, que en F2 está vacío → por eso el frontend caía al input de texto
+    # en vez de mostrar el listado de ligas con checkboxes.
+    try:
+        ligas_db = _db.db_get_ligas()
+        if ligas_db:
+            return {"ligas": [{"nombre": l.get("nombre", ""), "codigo": l.get("codigo", ""),
+                               "espn_id": l.get("espn_id", "")} for l in ligas_db]}
+    except Exception as e:
+        print(f"[ligas] SQLite: {e}")
+    # Fallback a Google Sheets (compatibilidad con instalaciones antiguas)
     try:
         ws   = state["sh"].worksheet("Ligas")
         rows = ws.get_all_values()
