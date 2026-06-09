@@ -93,6 +93,13 @@ def init_db():
         except Exception:
             pass  # columna ya existe
     conn.close()
+    # Sembrar catálogo de ligas si faltan (no toca las existentes ni su espn_id).
+    try:
+        n = db_seed_ligas_default()
+        if n:
+            print(f"[db] Ligas sembradas (catálogo): {n} nuevas")
+    except Exception as e:
+        print(f"[db] seed ligas: {e}")
 
 # == Config ====================================================================
 
@@ -911,6 +918,36 @@ def db_set_ligas(ligas: list):
             [(l.get("nombre",""), l.get("codigo",""), l.get("espn_id","")) for l in ligas]
         )
     conn.close()
+
+# Catálogo estándar de ligas con su league-id real de ESPN (uid s:600~l:<id>).
+# El Mundial (fifa.world=606) es el que usa F2; las demás quedan disponibles para
+# seleccionar en el admin. Verificados contra el API de ESPN (oct-2025).
+_LIGAS_DEFAULT = [
+    ("La Liga",          "spa.1",          "740"),
+    ("Premier League",   "eng.1",          "700"),
+    ("Champions League", "uefa.champions",  "775"),
+    ("Serie A",          "ita.1",          "730"),
+    ("Bundesliga",       "ger.1",          "720"),
+    ("Ligue 1",          "fra.1",          "710"),
+    ("MLS",              "usa.1",          "770"),
+    ("Liga MX",          "mex.1",          "760"),
+    ("Mundial",          "fifa.world",     "606"),
+]
+
+def db_seed_ligas_default() -> int:
+    """Inserta las ligas del catálogo que falten (por código), SIN tocar las que ya
+    existan (preserva su espn_id). Idempotente. Retorna cuántas insertó."""
+    conn = get_conn()
+    try:
+        existentes = {r["codigo"] for r in conn.execute("SELECT codigo FROM ligas").fetchall()}
+        faltan = [(n, c, e) for (n, c, e) in _LIGAS_DEFAULT if c not in existentes]
+        if faltan:
+            with conn:
+                conn.executemany(
+                    "INSERT INTO ligas(nombre,codigo,espn_id) VALUES(?,?,?)", faltan)
+        return len(faltan)
+    finally:
+        conn.close()
 
 # == Chat ======================================================================
 

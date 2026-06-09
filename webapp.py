@@ -3777,6 +3777,18 @@ async def admin_get_ligas(ql_admin: str = Cookie(default="")):
         return {"ligas": []}
 
 
+@app.post("/api/admin/seed-ligas")
+async def admin_seed_ligas(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Siembra el catálogo de ligas que falte (no toca las existentes). Acceso:
+    ?key=CLAVE_ADMIN o sesión admin. Útil para llenar la tabla sin redeploy."""
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN.")
+    insertadas = _db.db_seed_ligas_default()
+    ligas = _db.db_get_ligas()
+    return {"ok": True, "insertadas": insertadas, "total": len(ligas), "ligas": ligas}
+
+
 @app.get("/api/admin/config")
 async def admin_get_config(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
