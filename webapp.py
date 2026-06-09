@@ -1324,6 +1324,113 @@ def _check_exclusiones(games_db, cfg):
     print(f"[exclusiones] {excluidos} jugador(es) excluido(s) al cierre")
 
 
+def _stats_picks(games_db):
+    """Avance (solo jugadores NO excluidos): total, con >=1 pick completo, sin nada,
+    completos. Usa _picks_faltantes (criterio único _pick_completo)."""
+    total = con_alguno = sin_ninguno = completos = 0
+    for j in _db.db_get_jugadores():
+        if j.get("excluido"):
+            continue
+        total += 1
+        faltan, tot, llenos = _picks_faltantes(j["id"], games_db)
+        if llenos >= 1:
+            con_alguno += 1
+        else:
+            sin_ninguno += 1
+        if faltan == 0 and tot > 0:
+            completos += 1
+    return {"total": total, "con_alguno": con_alguno,
+            "sin_ninguno": sin_ninguno, "completos": completos}
+
+
+def _texto_avance(games_db):
+    """Bloque de texto con el avance de la quiniela (para grupo WA/TG)."""
+    st = _stats_picks(games_db)
+    return (f"\U0001f4ca Avance ({st['total']} jugadores):"
+            f"\n\U0001f7e2 Ya llenaron al menos 1 pick: {st['con_alguno']}"
+            f"\n\U0001f534 Aún no han llenado nada: {st['sin_ninguno']}"
+            f"\n✅ Completaron TODOS sus picks: {st['completos']}")
+
+
+def _health_snapshot() -> dict:
+    """Snapshot de salud de los componentes (DB, juegos, updater, ESPN, WA, TG, push)."""
+    import datetime as _dt
+    cfg = state.get("cfg", {}); comps = {}
+    try:
+        comps["db"] = {"ok": True, "detalle": f"{len(_db.db_get_jugadores())} jugadores"}
+    except Exception as e:
+        comps["db"] = {"ok": False, "detalle": f"Error: {e}"}
+    try:
+        games = _db.db_get_horarios()
+        sin_id = sum(1 for g in games if not g.get("espn_id"))
+        comps["juegos"] = {"ok": len(games) > 0 and sin_id == 0,
+                           "detalle": f"{len(games)} juegos, {sin_id} sin espn_id"}
+    except Exception as e:
+        comps["juegos"] = {"ok": False, "detalle": f"Error: {e}"}
+    last = state.get("updater_last_tick", 0)
+    comps["updater"] = {"ok": bool(last) and (time.time() - last) < 180,
+                        "detalle": (f"último tick hace {int(time.time()-last)}s" if last else "sin latido aún")}
+    try:
+        league = (cfg.get("ESPN_LEAGUE", "fifa.world") or "fifa.world").split(",")[0].strip()
+        r = requests.get(f"{ESPN_BASE}/{league}/scoreboard", timeout=8)
+        comps["espn"] = {"ok": r.ok, "detalle": f"HTTP {r.status_code} (liga {league})"}
+    except Exception as e:
+        comps["espn"] = {"ok": False, "detalle": f"Error: {e}"}
+    if str(os.environ.get("WA_ENABLED", "true")).lower() == "false":
+        comps["whatsapp"] = {"ok": True, "detalle": "deshabilitado"}
+    else:
+        try:
+            st = _wa("GET", "/status", timeout=8); conn = bool(st.get("connected"))
+            comps["whatsapp"] = {"ok": conn,
+                                 "detalle": ("conectado " + (st.get("phone") or "")) if conn else "no vinculado"}
+        except Exception as e:
+            comps["whatsapp"] = {"ok": False, "detalle": str(getattr(e, "detail", e))[:90]}
+    token = (cfg.get("TELEGRAM_BOT_TOKEN", "") or "").strip()
+    if not token:
+        comps["telegram"] = {"ok": False, "detalle": "sin token"}
+    else:
+        try:
+            j = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=8).json()
+            comps["telegram"] = {"ok": bool(j.get("ok")),
+                                 "detalle": ("@" + (j.get("result", {}) or {}).get("username", "")) if j.get("ok") else "getMe falló"}
+        except Exception as e:
+            comps["telegram"] = {"ok": False, "detalle": f"Error: {e}"}
+    comps["push"] = {"ok": bool(_vapid_keys), "detalle": f"{len(_push_subs)} suscriptores"}
+    return {"ok": all(c["ok"] for c in comps.values()),
+            "fecha": _dt.datetime.now().strftime("%d/%m/%Y %H:%M:%S"), "componentes": comps}
+
+
+def _health_alert(snap):
+    """Avisa por Telegram SOLO las transiciones (caída/recuperación), no spamea."""
+    prev = state.get("_health_prev", {}); comps = snap["componentes"]; cambios = []
+    for nombre, c in comps.items():
+        antes, ahora = prev.get(nombre), c["ok"]
+        if antes is None:
+            if not ahora:
+                cambios.append(f"\U0001f534 {nombre.upper()} con problema — {c['detalle']}")
+        elif antes and not ahora:
+            cambios.append(f"\U0001f534 ALERTA: {nombre.upper()} CAÍDO — {c['detalle']}")
+        elif (not antes) and ahora:
+            cambios.append(f"\U0001f7e2 {nombre.upper()} recuperado — {c['detalle']}")
+    state["_health_prev"] = {k: v["ok"] for k, v in comps.items()}
+    if cambios:
+        tg_admin = (state.get("cfg", {}).get("TELEGRAM_ADMIN_CHAT_ID", "") or "").strip()
+        msg = "\U0001fa7a <b>Salud F2</b> — " + snap["fecha"] + "\n" + "\n".join(cambios)
+        try:
+            (_tg_send_personal(tg_admin, msg) if tg_admin else _tg_send(msg))
+        except Exception as e:
+            print(f"[health] TG: {e}")
+
+
+def _check_health_monitor(cfg):
+    """Corre el snapshot de salud cada ~5 min y avisa transiciones."""
+    now = time.time()
+    if now - state.get("_health_last_run", 0) < 300:
+        return
+    state["_health_last_run"] = now
+    _health_alert(_health_snapshot())
+
+
 def _tg_send_document(chat_id_user: str, filename: str, content: bytes, caption: str = ""):
     """Envía un archivo (bytes) por Telegram a un chat (sendDocument)."""
     cfg   = state.get("cfg", {})
@@ -1535,6 +1642,7 @@ def _updater_loop():
     while True:
         try:
             t0          = time.time()
+            state["updater_last_tick"] = t0   # latido para el monitor de salud
             cfg         = state.get("cfg", {})
             interval    = int(cfg.get("INTERVAL_SEGS", 60))
             modo_prueba = cfg.get("MODO_PRUEBA", "0").strip() not in ("", "0", "false", "no")
@@ -1810,6 +1918,11 @@ def _updater_loop():
             _check_sorteo_notif()
         except Exception as e:
             print(f"[updater] sorteo-notif ERROR: {e}")
+
+        try:
+            _check_health_monitor(state.get("cfg", {}))
+        except Exception as e:
+            print(f"[updater] health-monitor ERROR: {e}")
 
         time.sleep(max(0, interval - (time.time() - t0)))
 
@@ -2740,6 +2853,41 @@ async def admin_reactivar_jugador(jugador_id: int, ql_admin: str = Cookie(defaul
     _invalidate_games()
     _cache["standings_rows"] = None
     return {"ok": True, "msg": "Jugador reactivado"}
+
+
+@app.post("/api/admin/test-avance")
+async def admin_test_avance(ql_admin: str = Cookie(default="")):
+    """Envía AHORA al grupo (WhatsApp + Telegram) el resumen de avance de picks."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    games = _db.db_get_horarios()
+    txt = "\U0001f4cb Recordatorio de la quiniela\n\n" + _texto_avance(games)
+    res = {"wa": False, "tg": False}
+    try:
+        _wa("POST", "/send", json={"message": txt}); res["wa"] = True
+    except Exception as e:
+        print(f"[test-avance] WA: {e}")
+    try:
+        _tg_send(txt); res["tg"] = True
+    except Exception as e:
+        print(f"[test-avance] TG: {e}")
+    canales = [c.upper() for c, ok in res.items() if ok]
+    return {"ok": bool(canales), "enviado_a": canales,
+            "msg": ("Enviado a " + ", ".join(canales)) if canales
+                   else "No se pudo enviar (revisa WhatsApp/Telegram)"}
+
+
+@app.get("/api/admin/health")
+async def admin_health(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Estado de salud de los componentes. Acceso: ?key=CLAVE_ADMIN o sesión admin."""
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN.")
+    snap = _health_snapshot()
+    try:
+        _health_alert(snap)
+    except Exception as e:
+        print(f"[health-endpoint] alert: {e}")
+    return snap
 
 
 @app.get("/api/admin/player-picks")

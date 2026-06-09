@@ -227,6 +227,10 @@
         style="display:none;width:100%;margin-top:12px;background:rgba(255,255,255,.18);color:white;border:1px solid rgba(255,255,255,.28);border-radius:11px;padding:10px;font-weight:800;font-size:13px;cursor:pointer" class="no-scale">
         📄 Descargar mis picks (PDF)
       </button>
+      <div id="pending-picks-bar" style="display:none;margin-top:10px;background:rgba(239,51,64,.22);border:1px solid rgba(255,255,255,.35);border-radius:10px;padding:8px 12px;text-align:center">
+        <span style="color:#fff;font-size:12px;font-weight:800">⚠️ Te faltan <span id="pending-picks-n">0</span> picks por llenar</span>
+        <div style="color:#fde68a;font-size:11px;margin-top:2px">Complétalos antes del cierre o quedarás fuera de la quiniela.</div>
+      </div>
     </div>
   </div>
 
@@ -1088,7 +1092,8 @@
       <div id="adm-body-picks-status" class="adm-section-body" style="display:none">
         <div style="padding:16px">
           <p style="font-size:12px;color:#94a3b8;margin:0 0 10px">Quien no complete sus picks antes del primer partido queda fuera automáticamente. Aquí puedes excluir o reactivar a mano (es reversible, los picks no se borran).</p>
-          <button onclick="loadPicksStatus()" style="width:100%;padding:11px;background:#f97316;color:white;border:none;border-radius:12px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:12px">🔄 Actualizar estado</button>
+          <button onclick="loadPicksStatus()" style="width:100%;padding:11px;background:#f97316;color:white;border:none;border-radius:12px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:8px">🔄 Actualizar estado</button>
+          <button onclick="enviarAvanceGrupo(this)" style="width:100%;padding:11px;background:#0ea5e9;color:white;border:none;border-radius:12px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:12px">📊 Enviar avance al grupo ahora</button>
           <div id="picks-status-list" style="font-size:13px;color:#64748b;text-align:center">Haz clic en Actualizar para cargar</div>
         </div>
       </div>
@@ -2206,7 +2211,7 @@ function _maybeShowRulesModal() {
   const hint  = document.getElementById('rules-scroll-hint');
   if (!modal || !body) return;
   // Reset de estado
-  body.textContent = texto;
+  body.innerHTML = mdToHtml(texto);
   chk.checked = false; chk.disabled = true;
   lbl.style.opacity = '.5'; lbl.style.cursor = 'not-allowed';
   _rulesUpdateBtn();
@@ -2466,6 +2471,16 @@ async function reactivarJugador(id, btn) {
   } catch(e) { showToast('Error: ' + (e.message || 'No se pudo reactivar')); if (btn) btn.disabled = false; }
 }
 
+async function enviarAvanceGrupo(btn) {
+  if (!confirm('¿Enviar el resumen de avance (cuántos llenaron sus picks) al grupo de WhatsApp y Telegram ahora?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '📊 Enviando...'; }
+  try {
+    const r = await api('POST', '/api/admin/test-avance', {});
+    showToast(r.msg || 'Avance enviado');
+  } catch(e) { showToast('Error: ' + (e.message || 'No se pudo enviar')); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = '📊 Enviar avance al grupo ahora'; } }
+}
+
 async function loadDashboard() {
   try {
     const [gRes, pRes, tRes, cfgRes] = await Promise.all([
@@ -2640,6 +2655,29 @@ function buildGroupsGrid() {
 }
 
 
+// Mini-formateador de texto: **negrita**, ---, listas "- ", enlaces [txt](url). Seguro (escapa HTML).
+function mdToHtml(text) {
+  if (!text) return '';
+  const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const inline = s => esc(s)
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g,
+             '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline">$1</a>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  let html = '', inList = false;
+  const closeList = () => { if (inList) { html += '</ul>'; inList = false; } };
+  for (const raw of String(text).split('\n')) {
+    const line = raw.trim();
+    if (/^-{3,}$/.test(line)) { closeList(); html += '<hr style="border:none;border-top:1px solid #e2e8f0;margin:10px 0">'; continue; }
+    const m = line.match(/^[-*]\s+(.+)$/);
+    if (m) { if (!inList) { html += '<ul style="margin:4px 0;padding-left:20px">'; inList = true; } html += `<li>${inline(m[1])}</li>`; continue; }
+    closeList();
+    if (line === '') { html += '<div style="height:8px"></div>'; continue; }
+    html += `<div>${inline(line)}</div>`;
+  }
+  closeList();
+  return html;
+}
+
 function updateProgress() {
   const total  = S.games.filter(g => g.eq1 && g.eq2).length;
   const filled = S.games.filter(g => g.eq1 && g.eq2 && hasPick(g.jgo)).length;
@@ -2648,6 +2686,20 @@ function updateProgress() {
   document.getElementById('prog-bar').style.width  = pct + '%';
   const dashPdf = document.getElementById('dash-pdf-btn');
   if (dashPdf) dashPdf.style.display = (total > 0 && filled === total) ? 'block' : 'none';
+
+  // Banner de picks pendientes (refuerzo visual del aviso por push).
+  // Usa el MISMO filled/total que la barra, para no contradecir el contador.
+  const pend = document.getElementById('pending-picks-bar');
+  if (pend) {
+    const faltan = total - filled;
+    if (total > 0 && faltan > 0) {
+      const n = document.getElementById('pending-picks-n');
+      if (n) n.textContent = faltan;
+      pend.style.display = 'block';
+    } else {
+      pend.style.display = 'none';
+    }
+  }
 }
 
 const hasPick = jgo => {
@@ -3222,10 +3274,9 @@ async function loadInfo(force=false) {
     // Premios y Reglas
     const premiosEl = document.getElementById('info-premios');
     if (premiosEl) {
-      premiosEl.textContent = cfg.premios_reglas?.trim() || '';
-      if (!cfg.premios_reglas?.trim()) {
-        premiosEl.innerHTML = '<p style="color:#94a3b8;text-align:center;padding:16px 0">Sin información configurada aún.</p>';
-      }
+      premiosEl.innerHTML = cfg.premios_reglas?.trim()
+        ? mdToHtml(cfg.premios_reglas)
+        : '<p style="color:#94a3b8;text-align:center;padding:16px 0">Sin información configurada aún.</p>';
     }
 
     // Telegram — solo mostrar si hay link configurado
