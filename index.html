@@ -1074,6 +1074,8 @@
       </div>
       <div id="adm-body-picks-pdfs" class="adm-section-body" style="display:none">
         <div style="padding:16px">
+          <a href="/api/admin/picks-pdf-todos" target="_blank" rel="noopener"
+             style="display:block;width:100%;box-sizing:border-box;padding:11px;background:#7c3aed;color:white;border-radius:12px;font-weight:800;font-size:13px;text-align:center;text-decoration:none;margin-bottom:8px">📄 Descargar PDF de TODAS las apuestas</a>
           <button onclick="loadPicksPdfs()" style="width:100%;padding:11px;background:#10b981;color:white;border:none;border-radius:12px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:12px">🔄 Actualizar lista</button>
           <div id="picks-pdfs-list" style="font-size:13px;color:#64748b;text-align:center">Haz clic en Actualizar para cargar</div>
         </div>
@@ -3689,8 +3691,11 @@ async function loadProbabilidades(force=false) {
       } else if (soloSegundo) {
         iconEl = `<span style="font-size:20px">🚑</span>`;
       } else {
-        const medalEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${p.rank}.`;
-        iconEl = isLeader
+        // Medalla por POSICIÓN real (rank), con empates: 🥇 a TODOS los 1°, 🥈 a
+        // TODOS los 2°, sin bronce. (Antes usaba el índice del array → solo 3.)
+        const tieneMedalla = p.rank === 1 || p.rank === 2;
+        const medalEmoji   = p.rank === 1 ? '🥇' : p.rank === 2 ? '🥈' : `${p.rank}.`;
+        iconEl = tieneMedalla
           ? `<span style="font-size:18px">${medalEmoji}</span>`
           : `<span style="font-size:14px;color:#64748b;font-weight:700">${medalEmoji}</span>`;
       }
@@ -4623,12 +4628,15 @@ async function loadAdminDashboard() {
       // Deshabilitar todos los inputs y botones de acción
       document.querySelectorAll('#s-admin input, #s-admin select, #s-admin textarea').forEach(el => {
         if (el.closest('#reset-modal')) return; // reset siempre disponible
+        // Cobro a jugadores e instrucciones de pago: siempre editables (se cobra en vivo)
+        if (el.id === 'adm-stripe-activo' || el.id === 'cfg-PAGO_INSTRUCCIONES') return;
         el.disabled = true;
         el.style.opacity = '0.5';
         el.style.cursor = 'not-allowed';
       });
-      document.querySelectorAll('#s-admin button[onclick]:not([onclick*="Logout"]):not([onclick*="logout"]):not([onclick*="adminReset"]):not([onclick*="adminTestPush"]):not([onclick*="adminTestTelegram"]):not([onclick*="waTest"]):not([onclick*="waConnect"]):not([onclick*="waCreateGroup"]):not([onclick*="waUpdateGroup"]):not([onclick*="waDisconnect"])').forEach(el => {
+      document.querySelectorAll('#s-admin button[onclick]:not([onclick*="Logout"]):not([onclick*="logout"]):not([onclick*="adminReset"]):not([onclick*="adminTestPush"]):not([onclick*="adminTestTelegram"]):not([onclick*="waTest"]):not([onclick*="waConnect"]):not([onclick*="waCreateGroup"]):not([onclick*="waUpdateGroup"]):not([onclick*="waDisconnect"]):not([onclick*="loadPicksStatus"]):not([onclick*="excluirJugador"]):not([onclick*="reactivarJugador"]):not([onclick*="enviarAvanceGrupo"]):not([onclick*="adminEliminarJugador"]):not([onclick*="savePrizeConfig"])').forEach(el => {
         if (el.closest('#reset-modal')) return; // reset siempre disponible
+        if (el.closest('#adm-body-picks-status')) return; // exclusiones siempre disponibles
         el.disabled = true;
         el.style.opacity = '0.5';
         el.style.cursor = 'not-allowed';
@@ -5066,13 +5074,13 @@ async function _loadAdminPrizeNow() {
             style="flex-shrink:0;border:${pl.pagado?'none':'1.5px solid #e2e8f0'};border-radius:8px;padding:6px 12px;font-size:11px;font-weight:800;cursor:pointer;transition:all .15s;background:${pl.pagado?'#dcfce7':'#f8fafc'};color:${pl.pagado?'#15803d':'#64748b'}">
             ${pl.pagado ? '✓ Pagado' : 'Marcar'}
           </button>
-          ${!p.torneo_activo ? `<button onclick="adminEliminarJugador(this)"
+          <button onclick="adminEliminarJugador(this)"
             data-phone="${pl.phone||''}"
             data-nombre="${(pl.nombre||'?').replace(/"/g,'&quot;')}"
             title="Eliminar jugador"
             style="flex-shrink:0;border:none;border-radius:8px;padding:6px 8px;font-size:14px;cursor:pointer;background:#fff0f0;color:#ef4444;transition:background .15s">
             🗑
-          </button>` : ''}
+          </button>
         </div>`).join('');
     }
   } catch(e) {

@@ -1040,6 +1040,28 @@ def _top5_text() -> str:
     except Exception:
         return ""
 
+def _top12_text(inline=False) -> str:
+    """Lista a TODOS los de 1° y 2° lugar (respetando empates), desde SQLite.
+    inline=False → multilínea (Telegram); inline=True → ' · ' (push/WA)."""
+    try:
+        standings = _db.db_compute_standings(state.get("cfg", {}))
+        if not standings:
+            return ""
+        parts = []; pos = 1
+        for i, s in enumerate(standings):
+            if i > 0:
+                prev = standings[i - 1]
+                if not (s["pts"] == prev["pts"] and s["gan"] == prev["gan"]
+                        and (s["g1"] + s["g2"]) == (prev["g1"] + prev["g2"])):
+                    pos = i + 1
+            if pos > 2:
+                break
+            parts.append(f"{pos}. {s['nombre']} ({s['pts']}pts)" if inline
+                         else f"  {pos}. {s['nombre']} ({s['pts']}pts)")
+        return (" · " if inline else "\n").join(parts)
+    except Exception:
+        return ""
+
 def _send_push_players(phones: list, emails: list, title: str, body: str, data: dict = None):
     """Envía push solo a los jugadores con esos teléfonos/emails (para recordatorios personalizados)."""
     if not _vapid_keys or not _push_subs:
@@ -1085,6 +1107,10 @@ def _top3_push() -> str:
 def _check_reminders(games, cfg):
     """Envía recordatorio 15/10/5/3/1 min antes a jugadores que no apostaron."""
     from datetime import datetime as _dt, timezone as _tz, timedelta as _tdt
+    # 15.2: tras el cierre las apuestas están bloqueadas → no recordar partidos
+    # siguientes. Se mantienen inicio/gol/medio tiempo/final por otras vías.
+    if _torneo_activo().get("activo"):
+        return
     now_utc = _dt.now(_tz.utc)
 
     for game in games:
@@ -1319,6 +1345,18 @@ def _check_exclusiones(games_db, cfg):
         except Exception as e:
             print(f"[exclusiones] TG: {e}")
     _invalidate_games()
+    # PDF con TODAS las apuestas al Telegram del admin (snapshot definitivo del cierre).
+    tg_admin = (cfg.get("TELEGRAM_ADMIN_CHAT_ID", "") or "").strip()
+    if tg_admin:
+        try:
+            from datetime import datetime as _dtp
+            torneo = cfg.get("TORNEO", "Quiniela")
+            pdf_bytes = _pdf_todos_jugadores(games_db, cfg)
+            pdf_name = f"picks_todos_{torneo}_{_dtp.now().strftime('%Y%m%d_%H%M')}.pdf".replace(" ", "_")
+            _tg_send_document(tg_admin, pdf_name, pdf_bytes,
+                f"\U0001f4c4 Picks de TODOS los jugadores — {torneo}\nReenvíalo al grupo de WhatsApp 👍")
+        except Exception as e:
+            print(f"[exclusiones] PDF todos: {e}")
     _db.db_save_config({"EXCL_DONE": "1"})
     state.setdefault("cfg", {})["EXCL_DONE"] = "1"
     print(f"[exclusiones] {excluidos} jugador(es) excluido(s) al cierre")
@@ -1744,8 +1782,9 @@ def _updater_loop():
                     except Exception as e:
                         print(f"[WA] Error inicio: {e}")
                 elif sc["estado"] in ("EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"):
-                    if prev and (sc["gol1"] != prev.get("gol1", "") or
-                                 sc["gol2"] != prev.get("gol2", "")):
+                    # 12.1: comparar el marcador contra la BD (game), no contra el estado
+                    # en memoria (_prev_states) — así sobrevive a reinicios del server.
+                    if sc["gol1"] != game.get("gol1", "") or sc["gol2"] != game.get("gol2", ""):
                         minuto  = _live_clocks.get(espn_id, "")
                         min_txt = (f" ({minuto}')" if minuto and minuto != "MT"
                                    else (" (MT)" if sc["estado"] == "MEDIO TIEMPO" else ""))
@@ -1754,9 +1793,14 @@ def _updater_loop():
                             "gol1": sc["gol1"], "gol2": sc["gol2"],
                             "min_txt": min_txt, "minuto": minuto,
                         })
+                    # 12.2: aviso de MEDIO TIEMPO (una sola vez, al entrar a esa fase)
+                    if sc["estado"] == "MEDIO TIEMPO" and estado_prev != "MEDIO TIEMPO":
+                        _pending_notifs.append({
+                            "tipo": "medio_tiempo", "eq1": eq1, "eq2": eq2,
+                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                        })
                 elif sc["estado"] == "FINAL" and estado_prev != "FINAL":
-                    if prev and (sc["gol1"] != prev.get("gol1", "") or
-                                 sc["gol2"] != prev.get("gol2", "")):
+                    if sc["gol1"] != game.get("gol1", "") or sc["gol2"] != game.get("gol2", ""):
                         _pending_notifs.append({
                             "tipo": "gol", "eq1": eq1, "eq2": eq2,
                             "gol1": sc["gol1"], "gol2": sc["gol2"],
@@ -1825,8 +1869,8 @@ def _updater_loop():
                     print(f"[updater] propagate-bracket error: {_pe}")
 
             if _pending_notifs:
-                top  = _top5_text()
-                top3 = _top3_push()
+                top  = _top12_text()             # 1° y 2° lugar (con empates), multilínea
+                top3 = _top12_text(inline=True)   # versión inline para push/WA
                 for notif in _pending_notifs:
                     try:
                         if notif["tipo"] == "gol":
@@ -1836,7 +1880,7 @@ def _updater_loop():
                             minuto_n   = notif["minuto"]
                             _tg_send(
                                 f"\u26bd <b>MARCADOR:</b> {eq1n} {g1} \u2013 {g2} {eq2n}{mt}\n"
-                                + (f"\n\U0001f3c6 <b>Top 5:</b>\n{top}" if top else "")
+                                + (f"\n\U0001f3c6 <b>1\u00b0 y 2\u00b0 lugar:</b>\n{top}" if top else "")
                             )
                             push_body = f"{eq1n} {g1} \u2013 {g2} {eq2n}{mt}"
                             if top3: push_body += f"\n\U0001f3c6 {top3}"
@@ -1849,6 +1893,22 @@ def _updater_loop():
                                 _wa("POST", "/send", json={"message": wa_msg})
                             except Exception as e:
                                 print(f"[WA] Error gol: {e}")
+                        elif notif["tipo"] == "medio_tiempo":
+                            eq1n, eq2n = notif["eq1"], notif["eq2"]
+                            g1, g2     = notif["gol1"], notif["gol2"]
+                            _tg_send(
+                                f"\u23f8\ufe0f <b>MEDIO TIEMPO:</b> {eq1n} {g1} \u2013 {g2} {eq2n}\n"
+                                + (f"\n\U0001f3c6 <b>1\u00b0 y 2\u00b0 lugar:</b>\n{top}" if top else "")
+                            )
+                            _send_push_all("\u23f8\ufe0f Medio tiempo",
+                                f"{eq1n} {g1} \u2013 {g2} {eq2n}",
+                                {"tipo": "medio_tiempo", "eq1": eq1n, "eq2": eq2n,
+                                 "gol1": g1, "gol2": g2})
+                            try:
+                                _wa("POST", "/send", json={"message":
+                                    f"\u23f8\ufe0f MEDIO TIEMPO: {eq1n} {g1} \u2013 {g2} {eq2n}"})
+                            except Exception as e:
+                                print(f"[WA] Error MT: {e}")
                         elif notif["tipo"] == "final":
                             eq1n, eq2n = notif["eq1"], notif["eq2"]
                             g1, g2     = notif["gol1"], notif["gol2"]
@@ -1860,7 +1920,7 @@ def _updater_loop():
                             _tg_send(
                                 f"\U0001f3c1 <b>FINAL:</b> {eq1n} {g1} \u2013 {g2} {eq2n}\n"
                                 f"{gan_txt}\n"
-                                + (f"\n\U0001f3c6 <b>Top 5:</b>\n{top}" if top else "")
+                                + (f"\n\U0001f3c6 <b>1\u00b0 y 2\u00b0 lugar:</b>\n{top}" if top else "")
                             )
                             push_body = f"{eq1n} {g1} \u2013 {g2} {eq2n} \u00b7 {gan_eq_n}"
                             if top3: push_body += f"\n\U0001f3c6 {top3}"
@@ -1870,7 +1930,7 @@ def _updater_loop():
                             try:
                                 gan_wa = f"\U0001f3c5 Gana {gan_eq_n}" if gan else "\U0001f91d Empate"
                                 wa_msg = f"\U0001f3c1 FINAL: {eq1n} {g1} \u2013 {g2} {eq2n}\n{gan_wa}"
-                                if top3: wa_msg += f"\n\n\U0001f3c6 Top 3:\n{top3}"
+                                if top3: wa_msg += f"\n\n\U0001f3c6 1° y 2°:\n{top3}"
                                 _wa("POST", "/send", json={"message": wa_msg})
                             except Exception as e:
                                 print(f"[WA] Error final: {e}")
@@ -2406,6 +2466,11 @@ async def auth_check(body: AuthCheck, response: Response):
 
 @app.post("/api/auth/register")
 async def auth_register(body: RegisterBody, response: Response):
+    # 15.1: una vez iniciado el torneo no se admiten registros nuevos (un jugador
+    # nuevo no podría llenar los picks de partidos ya jugados). El admin sí puede
+    # seguir agregando jugadores a mano (su flujo no pasa por este endpoint).
+    if _torneo_activo().get("activo"):
+        raise HTTPException(403, "La quiniela ya comenzó. Los registros están cerrados.")
     phone_norm = _normalize_phone(body.phone)
     if not phone_norm:
         raise HTTPException(400, "Número de teléfono requerido")
@@ -2547,6 +2612,61 @@ _is_placeholder     = _db._is_placeholder
 _resolve_team_name  = _db._resolve_team_name
 _infer_bracket_slot = _db._infer_bracket_slot
 _disp_team_pdf      = _db._disp_team
+
+
+def _pdf_todos_jugadores(games, cfg):
+    """Genera UN PDF con TODOS los jugadores y sus picks (uno por página).
+    F2: g1/g2 = goles, gan = nombre del equipo ganador."""
+    from fpdf import FPDF
+    import datetime as _dt
+    _lat = lambda s: str(s or "").encode("latin-1", "replace").decode("latin-1")
+    torneo = _lat(cfg.get("TORNEO", "Quiniela"))
+    now = _dt.datetime.now()
+    # Normalizar 'ronda' (HORARIOS guarda la ronda en 'grupo')
+    for g in games:
+        if not g.get("ronda"):
+            g["ronda"] = g.get("grupo", "") or ""
+    col_w   = [12, 42, 42, 18, 18, 24]
+    headers = ["#", "Local", "Visitante", "G.Loc", "G.Vis", "Ganador"]
+    pdf = FPDF(); pdf.set_margins(15, 15, 15); pdf.set_auto_page_break(auto=True, margin=15)
+    for jug in _db.db_get_jugadores():
+        try:
+            picks = _db.db_get_picks(jug["id"]); pdf.add_page()
+            pdf.set_font("Helvetica", "B", 16); pdf.cell(0, 10, torneo, ln=True, align="C")
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 7, f"Jugador: {_lat(jug.get('nombre','Jugador'))}", ln=True, align="C")
+            if jug.get("whatsapp"):
+                pdf.cell(0, 6, f"Telefono: {_lat(jug.get('whatsapp'))}", ln=True, align="C")
+            if jug.get("excluido"):
+                pdf.set_text_color(200, 0, 0); pdf.cell(0, 6, "** EXCLUIDO **", ln=True, align="C")
+                pdf.set_text_color(0, 0, 0)
+            pdf.cell(0, 6, f"Generado: {now.strftime('%d/%m/%Y %H:%M')}", ln=True, align="C"); pdf.ln(6)
+            pdf.set_fill_color(30, 64, 175); pdf.set_text_color(255, 255, 255); pdf.set_font("Helvetica", "B", 9)
+            for i, h in enumerate(headers):
+                pdf.cell(col_w[i], 8, h, border=1, align="C", fill=True)
+            pdf.ln(); pdf.set_text_color(0, 0, 0); fill = False
+            total = len(games); llenos = 0
+            for g in games:
+                p = picks.get(str(g["jgo"]), {})
+                g1, g2, gan = p.get("g1", ""), p.get("g2", ""), p.get("gan", "")
+                completo = _pick_completo(p)
+                if completo:
+                    llenos += 1
+                pdf.set_fill_color(240, 244, 255) if fill else pdf.set_fill_color(255, 255, 255)
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(0, 0, 0) if completo else pdf.set_text_color(180, 180, 180)
+                pdf.cell(col_w[0], 7, str(g["jgo"]), border=1, align="C", fill=True)
+                pdf.cell(col_w[1], 7, _lat(g.get("eq1", ""))[:20], border=1, align="L", fill=True)
+                pdf.cell(col_w[2], 7, _lat(g.get("eq2", ""))[:20], border=1, align="L", fill=True)
+                pdf.cell(col_w[3], 7, g1 if g1 else "-", border=1, align="C", fill=True)
+                pdf.cell(col_w[4], 7, g2 if g2 else "-", border=1, align="C", fill=True)
+                pdf.cell(col_w[5], 7, (_lat(gan)[:12] if gan else "-"), border=1, align="C", fill=True)
+                pdf.ln(); fill = not fill
+            pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "I", 9); pdf.ln(3)
+            pdf.cell(0, 6, f"Picks completados: {llenos} / {total}", ln=True, align="R")
+        except Exception as e:
+            print(f"[pdf-todos] jugador {jug.get('id')}: {e}")
+    return bytes(pdf.output())
 
 
 @app.get("/api/picks/pdf")
@@ -2804,6 +2924,24 @@ async def admin_download_picks_pdf(filename: str, ql_admin: str = Cookie(default
     if not filepath.exists() or not filepath.is_file():
         raise HTTPException(404, "PDF no encontrado")
     return FileResponse(path=str(filepath), media_type="application/pdf", filename=filename)
+
+
+@app.get("/api/admin/picks-pdf-todos")
+async def admin_picks_pdf_todos(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Genera y descarga UN PDF con las apuestas de TODOS los jugadores.
+    Acceso: ?key=CLAVE_ADMIN o sesión admin (cookie)."""
+    from fastapi.responses import Response as _Resp
+    import datetime as _dt
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN.")
+    games = _db.db_get_horarios()
+    pdf_bytes = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _pdf_todos_jugadores(games, cfg))
+    torneo = (cfg.get("TORNEO", "Quiniela") or "Quiniela").replace(" ", "_")
+    fname  = f"apuestas_todos_{torneo}_{_dt.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    return _Resp(content=pdf_bytes, media_type="application/pdf",
+                 headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @app.get("/api/admin/picks-status")
@@ -3516,7 +3654,13 @@ async def get_probabilities():
         return s
 
     players_out = []
+    _prev_pts = None; _rank = 0
     for rank_i, p in enumerate(prob_data):
+        # rank con empates: mismos puntos → misma posición (1,1,3,...), para que la
+        # medalla 🥇/🥈 (Bloque 13) cubra a TODOS los empatados en 1° y 2°.
+        if p["pts"] != _prev_pts:
+            _rank = rank_i + 1
+            _prev_pts = p["pts"]
         cur_pts      = p["pts"]
         max_possible = p["max_realista"]
         if pending_count == 0:
@@ -3529,7 +3673,7 @@ async def get_probabilities():
             univ_2nd = round(_p2(p) * 100)
         players_out.append({
             "name":          p["nombre"],
-            "rank":          rank_i + 1,
+            "rank":          _rank,
             "current_pts":   cur_pts,
             "max_possible":  max_possible,
             "equipos_vivos": p["equipos_vivos"],
