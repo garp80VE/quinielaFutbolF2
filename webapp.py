@@ -978,6 +978,8 @@ _reminded_5:  set  = set()  # espn_ids que ya recibieron el recordatorio 5-min
 _reminded_3:  set  = set()  # espn_ids que ya recibieron el recordatorio 3-min
 _reminded_1:  set  = set()  # espn_ids que ya recibieron el recordatorio 1-min
 _reminded_15: set  = set()  # espn_ids que ya recibieron el recordatorio 15-min
+_aviso15:     set  = set()  # 16.4: aviso "~15 min" de inicio de partido (tras el cierre)
+_aviso5:      set  = set()  # 16.4: aviso "~5 min" de inicio de partido (tras el cierre)
 _live_clocks: dict = {}   # {espn_id: "45'"} — minuto actual de partidos en vivo
 _pending_notifs: list = []   # notificaciones de gol/final pendientes hasta tener standings frescos
 _day_end_notified:     set  = set()  # fechas "YYYY-MM-DD" que ya recibieron notif de fin de día
@@ -1103,6 +1105,78 @@ def _top3_push() -> str:
         )
     except Exception:
         return ""
+
+_BANDERAS = {
+    # CONMEBOL
+    "argentina": "🇦🇷", "brasil": "🇧🇷", "uruguay": "🇺🇾", "colombia": "🇨🇴",
+    "chile": "🇨🇱", "perú": "🇵🇪", "peru": "🇵🇪", "ecuador": "🇪🇨",
+    "paraguay": "🇵🇾", "bolivia": "🇧🇴", "venezuela": "🇻🇪",
+    # CONCACAF
+    "méxico": "🇲🇽", "mexico": "🇲🇽", "estados unidos": "🇺🇸", "ee.uu.": "🇺🇸",
+    "canadá": "🇨🇦", "canada": "🇨🇦", "costa rica": "🇨🇷", "panamá": "🇵🇦",
+    "panama": "🇵🇦", "honduras": "🇭🇳", "jamaica": "🇯🇲", "curazao": "🇨🇼",
+    "curacao": "🇨🇼", "haití": "🇭🇹", "haiti": "🇭🇹",
+    # UEFA
+    "españa": "🇪🇸", "espana": "🇪🇸", "francia": "🇫🇷", "alemania": "🇩🇪",
+    "italia": "🇮🇹", "portugal": "🇵🇹", "países bajos": "🇳🇱", "paises bajos": "🇳🇱",
+    "holanda": "🇳🇱", "bélgica": "🇧🇪", "belgica": "🇧🇪", "croacia": "🇭🇷",
+    "suiza": "🇨🇭", "polonia": "🇵🇱", "dinamarca": "🇩🇰", "serbia": "🇷🇸",
+    "austria": "🇦🇹", "ucrania": "🇺🇦", "suecia": "🇸🇪", "noruega": "🇳🇴",
+    "chequia": "🇨🇿", "república checa": "🇨🇿", "republica checa": "🇨🇿",
+    "turquía": "🇹🇷", "turquia": "🇹🇷", "hungría": "🇭🇺", "hungria": "🇭🇺",
+    "grecia": "🇬🇷", "rumanía": "🇷🇴", "rumania": "🇷🇴", "eslovenia": "🇸🇮",
+    "eslovaquia": "🇸🇰", "bosnia y herzegovina": "🇧🇦", "irlanda": "🇮🇪",
+    "inglaterra": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "escocia": "🏴󠁧󠁢󠁳󠁣󠁴󠁿", "gales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿", "rusia": "🇷🇺",
+    # CAF
+    "marruecos": "🇲🇦", "senegal": "🇸🇳", "túnez": "🇹🇳", "tunez": "🇹🇳",
+    "argelia": "🇩🇿", "egipto": "🇪🇬", "nigeria": "🇳🇬", "ghana": "🇬🇭",
+    "camerún": "🇨🇲", "camerun": "🇨🇲", "costa de marfil": "🇨🇮",
+    "sudáfrica": "🇿🇦", "sudafrica": "🇿🇦", "malí": "🇲🇱", "mali": "🇲🇱",
+    # AFC + OFC
+    "japón": "🇯🇵", "japon": "🇯🇵", "corea del sur": "🇰🇷", "irán": "🇮🇷",
+    "iran": "🇮🇷", "arabia saudita": "🇸🇦", "arabia saudí": "🇸🇦", "australia": "🇦🇺",
+    "catar": "🇶🇦", "qatar": "🇶🇦", "irak": "🇮🇶", "emiratos árabes unidos": "🇦🇪",
+    "uzbekistán": "🇺🇿", "uzbekistan": "🇺🇿", "nueva zelanda": "🇳🇿", "jordania": "🇯🇴",
+}
+
+def _eq(nombre):
+    """Devuelve 'bandera nombre' si conocemos la selección; si no, el nombre tal cual."""
+    b = _BANDERAS.get((nombre or "").strip().lower(), "")
+    return f"{b} {nombre}".strip() if b else (nombre or "")
+
+
+def _check_aviso_partidos(games_db, cfg):
+    """16.4: tras el cierre, avisa ~15 y ~5 min antes de cada partido que va a empezar.
+    Sin mención de apostar (las apuestas ya están cerradas)."""
+    if not _torneo_activo().get("activo"):
+        return  # solo tras el cierre
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc)
+    for h in games_db:
+        if h.get("estado", "PROG") not in ("PROG", ""):
+            continue
+        if not h.get("fecha") or not h.get("hora"):
+            continue
+        key = h.get("espn_id", "") or str(h.get("jgo", ""))
+        try:
+            mins = (_dt.fromisoformat(f"{h['fecha']}T{h['hora']}:00+00:00") - now).total_seconds() / 60
+        except Exception:
+            continue
+        lbl = None
+        if 13 <= mins <= 17 and key not in _aviso15:
+            lbl = "15"; _aviso15.add(key)
+        elif 4 <= mins <= 6 and key not in _aviso5:
+            lbl = "5"; _aviso5.add(key)
+        if not lbl:
+            continue
+        b1, b2 = _eq(h.get("eq1", "")), _eq(h.get("eq2", ""))
+        try: _wa("POST", "/send", json={"message": f"⏰ En ~{lbl} min comienza: {b1} vs {b2}"})
+        except Exception: pass
+        try: _tg_send(f"⏰ <b>En ~{lbl} min:</b> {b1} vs {b2}")
+        except Exception: pass
+        try: _send_push_all(f"⏰ En ~{lbl} min", f"{b1} vs {b2}", {"tipo": "aviso_partido"})
+        except Exception: pass
+
 
 def _check_reminders(games, cfg):
     """Envía recordatorio 15/10/5/3/1 min antes a jugadores que no apostaron."""
@@ -1699,6 +1773,11 @@ def _updater_loop():
             except Exception as e:
                 print(f"[updater-reminder] {e}")
 
+            try:
+                _check_aviso_partidos(games, cfg)
+            except Exception as e:
+                print(f"[updater-aviso-partido] {e}")
+
             if not modo_prueba:
                 try:
                     _avisar_picks_faltantes(games, cfg)
@@ -1774,11 +1853,12 @@ def _updater_loop():
                 prev = _prev_states.get(espn_id, {})
 
                 if sc["estado"] != "PROG" and estado_prev == "PROG":
-                    _tg_send(f"\U0001f7e1 <b>INICIO:</b> {eq1} vs {eq2}\nJornada")
-                    _send_push_all("\u26bd Partido iniciado", f"{eq1} vs {eq2}",
+                    _b1, _b2 = _eq(eq1), _eq(eq2)
+                    _tg_send(f"\U0001f7e1 <b>INICIO:</b> {_b1} vs {_b2}\nJornada")
+                    _send_push_all("\u26bd Partido iniciado", f"{_b1} vs {_b2}",
                                    {"tipo": "inicio", "eq1": eq1, "eq2": eq2})
                     try:
-                        _wa("POST", "/send", json={"message": f"\U0001f7e1 INICIO: {eq1} vs {eq2}\n"})
+                        _wa("POST", "/send", json={"message": f"\U0001f7e1 INICIO: {_b1} vs {_b2}\n"})
                     except Exception as e:
                         print(f"[WA] Error inicio: {e}")
                 elif sc["estado"] in ("EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"):
@@ -1875,61 +1955,64 @@ def _updater_loop():
                     try:
                         if notif["tipo"] == "gol":
                             eq1n, eq2n = notif["eq1"], notif["eq2"]
+                            b1n, b2n   = _eq(eq1n), _eq(eq2n)
                             g1, g2     = notif["gol1"], notif["gol2"]
                             mt         = notif["min_txt"]
                             minuto_n   = notif["minuto"]
                             _tg_send(
-                                f"\u26bd <b>MARCADOR:</b> {eq1n} {g1} \u2013 {g2} {eq2n}{mt}\n"
+                                f"\u26bd <b>MARCADOR:</b> {b1n} {g1} \u2013 {g2} {b2n}{mt}\n"
                                 + (f"\n\U0001f3c6 <b>1\u00b0 y 2\u00b0 lugar:</b>\n{top}" if top else "")
                             )
-                            push_body = f"{eq1n} {g1} \u2013 {g2} {eq2n}{mt}"
+                            push_body = f"{b1n} {g1} \u2013 {g2} {b2n}{mt}"
                             if top3: push_body += f"\n\U0001f3c6 {top3}"
                             _send_push_all("\u26bd Gol!", push_body,
                                 {"tipo": "gol", "eq1": eq1n, "eq2": eq2n,
                                  "gol1": g1, "gol2": g2, "minuto": minuto_n})
                             try:
-                                wa_msg = f"\u26bd GOL: {eq1n} {g1} \u2013 {g2} {eq2n}{mt}"
+                                wa_msg = f"\u26bd GOL: {b1n} {g1} \u2013 {g2} {b2n}{mt}"
                                 if top3: wa_msg += f"\n\U0001f3c6 {top3}"
                                 _wa("POST", "/send", json={"message": wa_msg})
                             except Exception as e:
                                 print(f"[WA] Error gol: {e}")
                         elif notif["tipo"] == "medio_tiempo":
                             eq1n, eq2n = notif["eq1"], notif["eq2"]
+                            b1n, b2n   = _eq(eq1n), _eq(eq2n)
                             g1, g2     = notif["gol1"], notif["gol2"]
                             _tg_send(
-                                f"\u23f8\ufe0f <b>MEDIO TIEMPO:</b> {eq1n} {g1} \u2013 {g2} {eq2n}\n"
+                                f"\u23f8\ufe0f <b>MEDIO TIEMPO:</b> {b1n} {g1} \u2013 {g2} {b2n}\n"
                                 + (f"\n\U0001f3c6 <b>1\u00b0 y 2\u00b0 lugar:</b>\n{top}" if top else "")
                             )
                             _send_push_all("\u23f8\ufe0f Medio tiempo",
-                                f"{eq1n} {g1} \u2013 {g2} {eq2n}",
+                                f"{b1n} {g1} \u2013 {g2} {b2n}",
                                 {"tipo": "medio_tiempo", "eq1": eq1n, "eq2": eq2n,
                                  "gol1": g1, "gol2": g2})
                             try:
                                 _wa("POST", "/send", json={"message":
-                                    f"\u23f8\ufe0f MEDIO TIEMPO: {eq1n} {g1} \u2013 {g2} {eq2n}"})
+                                    f"\u23f8\ufe0f MEDIO TIEMPO: {b1n} {g1} \u2013 {g2} {b2n}"})
                             except Exception as e:
                                 print(f"[WA] Error MT: {e}")
                         elif notif["tipo"] == "final":
                             eq1n, eq2n = notif["eq1"], notif["eq2"]
+                            b1n, b2n   = _eq(eq1n), _eq(eq2n)
                             g1, g2     = notif["gol1"], notif["gol2"]
                             gan        = notif["ganador"]
                             gan_eq_n   = notif["gan_eq"]
                             # F2: ganador es nombre real del equipo (no "1"/"2")
-                            gan_txt    = (f"\U0001f3c5 Gana <b>{gan_eq_n}</b>"
+                            gan_txt    = (f"\U0001f3c5 Gana <b>{_eq(gan_eq_n)}</b>"
                                           if gan else "\U0001f91d <b>Empate</b>")
                             _tg_send(
-                                f"\U0001f3c1 <b>FINAL:</b> {eq1n} {g1} \u2013 {g2} {eq2n}\n"
+                                f"\U0001f3c1 <b>FINAL:</b> {b1n} {g1} \u2013 {g2} {b2n}\n"
                                 f"{gan_txt}\n"
                                 + (f"\n\U0001f3c6 <b>1\u00b0 y 2\u00b0 lugar:</b>\n{top}" if top else "")
                             )
-                            push_body = f"{eq1n} {g1} \u2013 {g2} {eq2n} \u00b7 {gan_eq_n}"
+                            push_body = f"{b1n} {g1} \u2013 {g2} {b2n} \u00b7 {gan_eq_n}"
                             if top3: push_body += f"\n\U0001f3c6 {top3}"
                             _send_push_all("\U0001f3c1 Partido finalizado", push_body,
                                 {"tipo": "final", "eq1": eq1n, "eq2": eq2n,
                                  "gol1": g1, "gol2": g2, "ganador": gan})
                             try:
-                                gan_wa = f"\U0001f3c5 Gana {gan_eq_n}" if gan else "\U0001f91d Empate"
-                                wa_msg = f"\U0001f3c1 FINAL: {eq1n} {g1} \u2013 {g2} {eq2n}\n{gan_wa}"
+                                gan_wa = f"\U0001f3c5 Gana {_eq(gan_eq_n)}" if gan else "\U0001f91d Empate"
+                                wa_msg = f"\U0001f3c1 FINAL: {b1n} {g1} \u2013 {g2} {b2n}\n{gan_wa}"
                                 if top3: wa_msg += f"\n\n\U0001f3c6 1° y 2°:\n{top3}"
                                 _wa("POST", "/send", json={"message": wa_msg})
                             except Exception as e:
