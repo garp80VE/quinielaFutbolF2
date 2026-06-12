@@ -3334,6 +3334,24 @@ async def get_standings():
         return {"rows": []}
 
 
+@app.get("/api/recorrido")
+async def get_recorrido(phone: str = Query(""), email: str = Query("")):
+    """Evolución de la posición de cada jugador partido a partido (gráfica Recorrido)."""
+    try:
+        data = _db.db_compute_recorrido(state.get("cfg", {}))
+        me = None
+        if phone or email:
+            p = find_player_any(phone=phone, email=email)
+            if p:
+                me = p.get("_id") or p.get("id")
+        for j in data.get("jugadores", []):
+            j["yo"] = (j["id"] == me)
+        return data
+    except Exception as e:
+        print(f"[recorrido] {e}")
+        return {"labels": [], "total": 0, "jugadores": []}
+
+
 # ââ Mis Puntos ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @app.get("/api/my-points")

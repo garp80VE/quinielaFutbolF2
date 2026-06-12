@@ -783,6 +783,68 @@ def db_compute_standings(cfg: dict = None) -> list:
         conn.close()
 
 
+def db_compute_recorrido(cfg: dict = None) -> dict:
+    """Evolución de la posición de cada jugador tras cada partido finalizado
+    (orden cronológico). Usa la MISMA inferencia de bracket y desempate que la tabla.
+    Retorna {labels:[jgo...], total, jugadores:[{id,nombre,rank_final,posiciones:[..]}]}."""
+    cfg = cfg or {}
+    vL = int(cfg.get("PTS_LOGRO",   1) or 1)
+    vG = int(cfg.get("PTS_GAN",     2) or 2)
+    v1 = int(cfg.get("PTS_GOL1",    1) or 1)
+    v2 = int(cfg.get("PTS_GOL2",    1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
+    conn = get_conn()
+    try:
+        all_games = [dict(r) for r in conn.execute(
+            "SELECT jgo,grupo,eq1,eq2,gol1,gol2,ganador,estado,fecha,hora FROM horarios").fetchall()]
+        by_jgo, by_ronda = build_bracket_index(all_games)
+        fin = [g for g in all_games if g.get("estado") and g["estado"] != "PROG"]
+        fin.sort(key=lambda g: (f"{g.get('fecha','')} {g.get('hora','')}",
+                                int(str(g["jgo"])) if str(g["jgo"]).isdigit() else 0))
+        if not fin:
+            return {"labels": [], "total": 0, "jugadores": []}
+        jugs = [dict(j) for j in conn.execute(
+            "SELECT id, nombre FROM jugadores WHERE COALESCE(excluido,0)=0 ORDER BY num, id").fetchall()]
+        picks_by: dict = {}
+        for r in conn.execute(
+                "SELECT jugador_id,jgo,g1_pick,g2_pick,gan_pick,eq1_pick,eq2_pick FROM picks").fetchall():
+            picks_by.setdefault(r["jugador_id"], {})[str(r["jgo"])] = {
+                "g1": r["g1_pick"], "g2": r["g2_pick"], "gan": r["gan_pick"],
+                "eq1": r["eq1_pick"] or "", "eq2": r["eq2_pick"] or ""}
+        acc    = {j["id"]: {"pts": 0, "gan": 0, "g1": 0, "g2": 0} for j in jugs}
+        series = {j["id"]: [] for j in jugs}
+        labels = []
+        for g in fin:
+            jgo  = str(g["jgo"]); labels.append(jgo)
+            game = by_jgo.get(jgo)
+            for j in jugs:
+                pp = picks_by.get(j["id"], {})
+                pk = pp.get(jgo)
+                if pk and game:
+                    _pl, pg, pg1, pg2, ptot = calc_pts_inferred(
+                        game, pk, by_jgo, by_ronda, pp, vL, vG, v1, v2, vC)
+                    a = acc[j["id"]]; a["pts"] += ptot
+                    if pg  > 0: a["gan"] += 1
+                    if pg1 > 0: a["g1"]  += 1
+                    if pg2 > 0: a["g2"]  += 1
+            def _keyf(j):
+                a = acc[j["id"]]; return (a["pts"], a["gan"], a["g1"] + a["g2"])
+            orden = sorted(jugs, key=lambda j: (-_keyf(j)[0], -_keyf(j)[1],
+                                                -_keyf(j)[2], (j["nombre"] or "").lower()))
+            prev, prk = None, 0
+            for i, j in enumerate(orden):
+                k = _keyf(j)
+                if k != prev:
+                    prk = i + 1; prev = k
+                series[j["id"]].append(prk)
+        return {"labels": labels, "total": len(jugs),
+                "jugadores": [{"id": j["id"], "nombre": j["nombre"],
+                               "rank_final": series[j["id"]][-1] if series[j["id"]] else 0,
+                               "posiciones": series[j["id"]]} for j in jugs]}
+    finally:
+        conn.close()
+
+
 def _equipos_vivos(games) -> set:
     """Equipos que AÚN tienen partido por jugar: los que aparecen en los partidos
     PENDIENTES (no finalizados). Son los únicos que todavía pueden dar puntos.
