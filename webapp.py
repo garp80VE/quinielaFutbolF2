@@ -3877,6 +3877,8 @@ ADMIN_CONFIG_FIELDS = [
     ("TELEGRAM_ENABLED",     "Notificaciones Telegram activas (1=sí, 0=no)"),
     ("TELEGRAM_INVITE_LINK", "Enlace de invitación al grupo (https://t.me/+...)"),
     ("RESET_KEY",           "Clave para resetear el torneo"),
+    ("ADMIN_USER",          "Usuario del panel admin (para iniciar sesión)"),
+    ("ADMIN_PASS",          "Contraseña del panel admin (para iniciar sesión)"),
     ("DIA_INICIO_JORNADA",  "Día inicio de jornada (0=Lun, 1=Mar, 2=Mié, 3=Jue, 4=Vie, 5=Sáb, 6=Dom)"),
     ("COLOR_SCHEME",        "Esquema de colores de la app"),
     ("PREMIOS_REGLAS",      "Premios y reglas (texto libre, saltos de línea permitidos)"),
@@ -4036,7 +4038,12 @@ async def admin_get_config(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
     cfg = state.get("cfg", {})
-    return {"fields":   {k: cfg.get(k, "") for k, _ in ADMIN_CONFIG_FIELDS},
+    fields = {k: cfg.get(k, "") for k, _ in ADMIN_CONFIG_FIELDS}
+    # Mostrar las credenciales reales del admin (con su default) aunque aún no se
+    # hayan guardado en config, para que el campo no aparezca vacío.
+    if not fields.get("ADMIN_USER"): fields["ADMIN_USER"] = "admin"
+    if not fields.get("ADMIN_PASS"): fields["ADMIN_PASS"] = "quiniela2026"
+    return {"fields":   fields,
             "labels":   {k: label for k, label in ADMIN_CONFIG_FIELDS},
             "bloqueo_opciones": BLOQUEO_OPCIONES}
 
