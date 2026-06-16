@@ -831,11 +831,13 @@ def db_compute_recorrido(cfg: dict = None) -> dict:
                 a = acc[j["id"]]; return (a["pts"], a["gan"], a["g1"] + a["g2"])
             orden = sorted(jugs, key=lambda j: (-_keyf(j)[0], -_keyf(j)[1],
                                                 -_keyf(j)[2], (j["nombre"] or "").lower()))
-            prev, prk = None, 0
+            # 16.6: el puesto cambia SOLO cuando cambian los puntos (el desempate
+            # por aciertos solo ordena visualmente dentro del mismo puesto).
+            prev_pts, prk = None, 0
             for i, j in enumerate(orden):
-                k = _keyf(j)
-                if k != prev:
-                    prk = i + 1; prev = k
+                pts_j = acc[j["id"]]["pts"]
+                if pts_j != prev_pts:
+                    prk = i + 1; prev_pts = pts_j
                 series[j["id"]].append(prk)
         return {"labels": labels, "total": len(jugs),
                 "jugadores": [{"id": j["id"], "nombre": j["nombre"],

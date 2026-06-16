@@ -1051,11 +1051,9 @@ def _top12_text(inline=False) -> str:
             return ""
         parts = []; pos = 1
         for i, s in enumerate(standings):
-            if i > 0:
-                prev = standings[i - 1]
-                if not (s["pts"] == prev["pts"] and s["gan"] == prev["gan"]
-                        and (s["g1"] + s["g2"]) == (prev["g1"] + prev["g2"])):
-                    pos = i + 1
+            # 16.6: puesto SOLO por puntos (mismos pts = mismo puesto)
+            if i > 0 and s["pts"] != standings[i - 1]["pts"]:
+                pos = i + 1
             if pos > 2:
                 break
             parts.append(f"{pos}. {s['nombre']} ({s['pts']}pts)" if inline
@@ -3321,11 +3319,10 @@ async def get_standings():
         lider = st[0]["pts"]
         rows, pos = [], 1
         for i, s in enumerate(st):
-            if i > 0:
-                prev = st[i - 1]
-                if not (s["pts"] == prev["pts"] and s["gan"] == prev["gan"] and
-                        s["g1"] + s["g2"] == prev["g1"] + prev["g2"]):
-                    pos = i + 1
+            # 16.6: el PUESTO se define SOLO por puntos (mismos pts = mismo puesto).
+            # El desempate por aciertos solo ordena visualmente (ya viene ordenado).
+            if i > 0 and s["pts"] != st[i - 1]["pts"]:
+                pos = i + 1
             rows.append([pos, s["nombre"], s["pts"], s["pts"] - lider])
         result = [["POS", "NOMBRE", "Ptos", "Diferencia"]] + rows
         _cache["standings_rows"] = result
