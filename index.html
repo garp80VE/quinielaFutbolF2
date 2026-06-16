@@ -372,6 +372,11 @@
       </div>
     </div>
   </div>
+  <div style="flex-shrink:0;padding:8px 14px;background:#f8fafc;border-bottom:1px solid #eef2f7;display:flex;align-items:center;gap:8px">
+    <input id="comp-filtro" oninput="_filtrarComp(this.value)" placeholder="🔍 Buscar jugador (coma = varios)" style="flex:1;min-width:0;border:1px solid #e2e8f0;border-radius:9px;padding:7px 10px;font-size:13px;outline:none">
+    <span id="comp-filtro-cnt" style="font-size:11px;color:#94a3b8;min-width:30px;text-align:right"></span>
+    <button onclick="_limpiarFiltro('comp-filtro','comp-content','comp-filtro-cnt')" title="Limpiar" style="flex-shrink:0;border:none;background:#eef2f7;color:#64748b;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">✕</button>
+  </div>
   <div class="scroll-area px-4 py-4" id="comp-content">
     <div class="flex flex-col items-center justify-center py-16 gap-3">
       <div class="spinner"></div>
@@ -391,6 +396,11 @@
         <h2 class="text-xl font-black">Tabla de Posiciones</h2>
       </div>
     </div>
+  </div>
+  <div style="flex-shrink:0;padding:8px 14px;background:#f8fafc;border-bottom:1px solid #eef2f7;display:flex;align-items:center;gap:8px">
+    <input id="tabla-filtro" oninput="_aplicarFiltro('tabla-content',this.value,'tabla-filtro-cnt')" placeholder="🔍 Buscar jugador (coma = varios)" style="flex:1;min-width:0;border:1px solid #e2e8f0;border-radius:9px;padding:7px 10px;font-size:13px;outline:none">
+    <span id="tabla-filtro-cnt" style="font-size:11px;color:#94a3b8;min-width:30px;text-align:right"></span>
+    <button onclick="_limpiarFiltro('tabla-filtro','tabla-content','tabla-filtro-cnt')" title="Limpiar" style="flex-shrink:0;border:none;background:#eef2f7;color:#64748b;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">✕</button>
   </div>
   <div class="scroll-area px-4 py-4" id="tabla-content">
     <div class="flex flex-col items-center justify-center py-16 gap-3">
@@ -412,6 +422,11 @@
       </div>
       <button onclick="abrirRecorrido()" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:10px;padding:7px 12px;color:white;font-weight:800;font-size:12px;cursor:pointer;white-space:nowrap">📈 Recorrido</button>
     </div>
+  </div>
+  <div style="flex-shrink:0;padding:8px 14px;background:#f8fafc;border-bottom:1px solid #eef2f7;display:flex;align-items:center;gap:8px">
+    <input id="prob-filtro" oninput="_aplicarFiltro('prob-content',this.value,'prob-filtro-cnt')" placeholder="🔍 Buscar jugador (coma = varios)" style="flex:1;min-width:0;border:1px solid #e2e8f0;border-radius:9px;padding:7px 10px;font-size:13px;outline:none">
+    <span id="prob-filtro-cnt" style="font-size:11px;color:#94a3b8;min-width:30px;text-align:right"></span>
+    <button onclick="_limpiarFiltro('prob-filtro','prob-content','prob-filtro-cnt')" title="Limpiar" style="flex-shrink:0;border:none;background:#eef2f7;color:#64748b;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">✕</button>
   </div>
   <div class="scroll-area px-4 py-4" id="prob-content">
     <div class="flex flex-col items-center justify-center py-16 gap-3">
@@ -2674,6 +2689,46 @@ function buildGroupsGrid() {
 }
 
 
+// ─── Filtros de búsqueda por nombre (Bloque 16.2) ──────────────────
+function _norm(s) { return (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+function _aplicarFiltro(containerId, q, counterId) {
+  const cont = document.getElementById(containerId); if (!cont) return;
+  const terms = _norm((q || '').trim()).split(',').map(t => t.trim()).filter(Boolean); // coma = OR
+  let vis = 0, tot = 0;
+  cont.querySelectorAll('[data-nombre]').forEach(el => {
+    tot++; const nom = _norm(el.getAttribute('data-nombre'));
+    const ok = terms.length === 0 || terms.some(t => nom.includes(t));
+    el.style.display = ok ? '' : 'none'; if (ok) vis++;
+  });
+  const c = counterId && document.getElementById(counterId);
+  if (c) c.textContent = terms.length ? `${vis}/${tot}` : '';
+}
+function _filtrarComp(q) {
+  _aplicarFiltro('comp-content', q, 'comp-filtro-cnt');
+  const hay = _norm((q || '').trim()).length > 0;
+  document.querySelectorAll('#comp-content .comp-body').forEach(b => {
+    if (hay) {
+      const algunaVis = [...b.querySelectorAll('[data-nombre]')].some(r => r.style.display !== 'none');
+      b.style.display = algunaVis ? 'block' : 'none';
+      const arrow = b.parentElement && b.parentElement.querySelector('[id$="-arrow"]');
+      if (arrow) arrow.style.transform = algunaVis ? 'rotate(180deg)' : 'rotate(0deg)';
+    } else {
+      b.style.display = 'none';
+      const arrow = b.parentElement && b.parentElement.querySelector('[id$="-arrow"]');
+      if (arrow) arrow.style.transform = 'rotate(0deg)';
+    }
+  });
+}
+function _limpiarFiltro(inputId, containerId, counterId) {
+  const el = document.getElementById(inputId); if (el) el.value = '';
+  if (containerId === 'comp-content') _filtrarComp(''); else _aplicarFiltro(containerId, '', counterId);
+}
+function _limpiarFiltrosPantallas() {
+  _limpiarFiltro('tabla-filtro', 'tabla-content', 'tabla-filtro-cnt');
+  _limpiarFiltro('prob-filtro',  'prob-content',  'prob-filtro-cnt');
+  _limpiarFiltro('comp-filtro',  'comp-content',  'comp-filtro-cnt');
+}
+
 // Mini-formateador de texto: **negrita**, ---, listas "- ", enlaces [txt](url). Seguro (escapa HTML).
 function mdToHtml(text) {
   if (!text) return '';
@@ -3626,7 +3681,7 @@ async function loadTabla(force=false) {
       }).join('');
 
       let rowBg = es.rowBg ? `background:${es.rowBg}` : (badge ? `background:${badge.bg}22` : (i % 2 ? 'background:#f9fafb' : ''));
-      return `<tr style="${rowBg}">${cells}</tr>`;
+      return `<tr data-nombre="${(nombre||'').replace(/"/g,'&quot;')}" style="${rowBg}">${cells}</tr>`;
     }
 
     cont.innerHTML = `
@@ -3642,6 +3697,7 @@ async function loadTabla(force=false) {
           </table>
         </div>
       </div>`;
+    _aplicarFiltro('tabla-content', document.getElementById('tabla-filtro')?.value || '', 'tabla-filtro-cnt');
     tablaLoaded = true;
   } catch(e) {
     cont.innerHTML = `<p style="color:#dc2626;text-align:center;font-size:13px;padding:16px">Error: ${e.message}</p>`;
@@ -3825,7 +3881,7 @@ async function loadProbabilidades(force=false) {
         </div>` : '';
 
       return `
-        <div style="background:${cardBg};border-radius:14px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.07);border:${cardBorder}">
+        <div data-nombre="${(p.name||'').replace(/"/g,'&quot;')}" style="background:${cardBg};border-radius:14px;padding:12px 14px;box-shadow:0 1px 4px rgba(0,0,0,.07);border:${cardBorder}">
           <div style="display:flex;align-items:center;gap:10px">
             ${iconEl}
             <div style="flex:1">
@@ -3862,6 +3918,7 @@ async function loadProbabilidades(force=false) {
       </div>`;
     // Solo re-dibujar si el contenido cambió (evita parpadeo y conserva el scroll)
     if (!(_probLoaded && _html === _probSig)) { cont.innerHTML = _html; _probSig = _html; }
+    _aplicarFiltro('prob-content', document.getElementById('prob-filtro')?.value || '', 'prob-filtro-cnt');
     _probLoaded = true;
   } catch(e) {
     cont.innerHTML = `<p style="color:#dc2626;text-align:center;font-size:13px;padding:16px">Error: ${e.message}</p>`;
@@ -3917,7 +3974,7 @@ async function loadComparacion(force=false) {
         const ganDisp = hasPick ? pgan : '—';
         const rowBg = i%2===0 ? '' : 'background:#f8fafc';
         const nameSt = hasPick ? 'color:#1e293b;font-weight:600' : 'color:#94a3b8';
-        return `<tr style="${rowBg}">
+        return `<tr data-nombre="${(p.nombre||'').replace(/"/g,'&quot;')}" style="${rowBg}">
           <td style="padding:7px 8px;font-size:12px;${nameSt};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${p.nombre}</td>
           <td style="padding:7px 6px;text-align:center;font-size:12px;color:${hasPick?'#1e293b':'#94a3b8'}">${pickStr}</td>
           <td style="padding:7px 6px;text-align:center;font-size:11px;color:${hasPick?'#7c3aed':'#94a3b8'};font-weight:${hasPick?'700':'400'};white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis">${ganDisp}</td>
@@ -3940,7 +3997,7 @@ async function loadComparacion(force=false) {
               <span style="font-weight:700;font-size:13px;flex:1;color:#1e293b">${eq2Disp}</span>
             </div>
           </div>
-          <div id="${bodyId}" style="display:none;overflow-x:auto">
+          <div id="${bodyId}" class="comp-body" style="display:none;overflow-x:auto">
             <table style="width:100%;border-collapse:collapse;font-size:12px">
               <thead>
                 <tr style="background:#f1f5f9">
@@ -3959,6 +4016,8 @@ async function loadComparacion(force=false) {
     const _html = note + gameCards;
     // Solo re-dibujar si cambió: evita parpadeo y conserva acordeones abiertos/scroll
     if (!(_compLoaded && _html === _compSig)) { cont.innerHTML = _html; _compSig = _html; }
+    const _cf = document.getElementById('comp-filtro');
+    if (_cf && _cf.value) _filtrarComp(_cf.value);   // conservar el filtro tras el render
     _compLoaded = true;
   } catch(e) {
     cont.innerHTML = `<p style="color:#dc2626;text-align:center;font-size:13px;padding:16px">Error: ${e.message}</p>`;
@@ -3988,6 +4047,7 @@ function _sorteoStartPolling() {
 function navTo(tab, dir) {
   // dir: 'left' (→ siguiente) | 'right' (→ anterior) | undefined (sin animación)
   if (tab !== 'sorteo') _sorteoStopPolling();   // detener polling al salir del sorteo
+  try { _limpiarFiltrosPantallas(); } catch(_) {}  // limpiar buscadores al cambiar de pantalla
   const _tabScreen = {picks:'s-dashboard', apuestas:'s-apuestas', puntos:'s-puntos', tabla:'s-tabla', comp:'s-comp', prob:'s-prob'};
   const prev = document.querySelector('.screen.active');
   setNavActive(tab);
@@ -4229,9 +4289,14 @@ async function _pollTick() {
         renderGames(curGroup.games);
       }
     } else if (_currentScreen === 's-apuestas') {
-      // Solo refrescar la lista, no el detalle (para no interrumpir)
       const listVisible = document.getElementById('apuestas-games-list')?.style.display !== 'none';
-      if (listVisible) buildApuestasGameList();
+      if (listVisible) {
+        buildApuestasGameList();
+      } else if (_apuestasDetalleGame) {
+        // 16.7: detalle abierto y partido EN VIVO → refrescar marcador/picks en silencio
+        const g = S.games.find(x => String(x.jgo) === String(_apuestasDetalleGame.jgo));
+        if (g && g.estado && !['PROG',''].includes(g.estado)) loadApuestasDetail(g, true);
+      }
     } else if (_currentScreen === 's-tabla') {
       tablaLoaded = false;
       loadTabla(true);
@@ -4533,6 +4598,7 @@ function openApuestas() {
 }
 
 function buildApuestasGameList() {
+  _apuestasDetalleGame = null;   // 16.7: ya no hay detalle abierto
   const list   = document.getElementById('apuestas-games-list');
   const detail = document.getElementById('apuestas-detail');
   detail.style.display = 'none';
@@ -4586,23 +4652,27 @@ function buildApuestasGameList() {
   }
 }
 
-async function loadApuestasDetail(game) {
+let _apuestasDetalleGame = null;   // partido cuyo detalle está abierto (16.7)
+async function loadApuestasDetail(game, silent=false) {
+  _apuestasDetalleGame = game;
   const list   = document.getElementById('apuestas-games-list');
   const detail = document.getElementById('apuestas-detail');
   const title  = document.getElementById('apuestas-title');
   const loading = document.getElementById('apuestas-loading');
+  const _filtroPrev = document.getElementById('apu-filtro')?.value || '';  // conservar buscador
 
-  list.style.display    = 'none';
-  detail.style.display  = 'none';
-  loading.style.display = 'flex';
+  if (!silent) {
+    list.style.display    = 'none';
+    detail.style.display  = 'none';
+    loading.style.display = 'flex';
+  }
   const detEq1 = resolveTeamName(game.eq1) || game.eq1 || '?';
   const detEq2 = resolveTeamName(game.eq2) || game.eq2 || '?';
   title.textContent     = `${detEq1} vs ${detEq2}`;
 
   try {
     const r = await api('GET', `/api/game-picks?jgo=${game.jgo}`);
-    loading.style.display = 'none';
-    detail.style.display  = 'block';
+    if (!silent) { loading.style.display = 'none'; detail.style.display = 'block'; }
 
     const isFinal  = game.estado === 'FINAL';
     const hayScore = game.gol1 !== '' && game.gol2 !== '';
@@ -4623,6 +4693,12 @@ async function loadApuestasDetail(game) {
           <span style="font-weight:700;font-size:13px;flex:1">${detEq2}</span>
         </div>
         ${isFinal && ganLabelGame ? `<p style="text-align:center;font-size:12px;color:#64748b;margin-top:6px">🏆 ${ganLabelGame}</p>` : ''}
+      </div>
+
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <input id="apu-filtro" oninput="_aplicarFiltro('apuestas-detail',this.value,'apu-filtro-cnt')" placeholder="🔍 Buscar jugador (coma = varios)" style="flex:1;min-width:0;border:1px solid #e2e8f0;border-radius:9px;padding:7px 10px;font-size:13px;outline:none">
+        <span id="apu-filtro-cnt" style="font-size:11px;color:#94a3b8;min-width:30px;text-align:right"></span>
+        <button onclick="_limpiarFiltro('apu-filtro','apuestas-detail','apu-filtro-cnt')" title="Limpiar" style="flex-shrink:0;border:none;background:#eef2f7;color:#64748b;border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">✕</button>
       </div>
 
       <div class="card-open" style="border-radius:14px;overflow:hidden">
@@ -4650,7 +4726,7 @@ async function loadApuestasDetail(game) {
                 const ganStyle = (hasMarcador && pgan)
                   ? (isFinal ? (pgan === game.ganador ? 'color:#16a34a;font-weight:700' : 'color:#dc2626') : 'color:#475569')
                   : 'color:#94a3b8';
-                return `<tr style="${i%2?'background:#f8fafc':''}">
+                return `<tr data-nombre="${(p.nombre||'').replace(/"/g,'&quot;')}" style="${i%2?'background:#f8fafc':''}">
                   <td style="padding:10px 12px;font-weight:600;color:${hasMarcador?'#1e293b':'#94a3b8'}">${p.nombre}</td>
                   <td style="padding:10px 8px;text-align:center;color:#475569">${pickStr}</td>
                   <td style="padding:10px 8px;text-align:center;${ganStyle};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${ganDisp}</td>
@@ -4663,7 +4739,12 @@ async function loadApuestasDetail(game) {
           </table>
         </div>
       </div>`;
+    // Restaurar el buscador tras re-pintar (clave en refresco en vivo silencioso)
+    const _af = document.getElementById('apu-filtro');
+    if (_af) _af.value = _filtroPrev;
+    _aplicarFiltro('apuestas-detail', _filtroPrev, 'apu-filtro-cnt');
   } catch(e) {
+    if (silent) return;   // en refresco silencioso, no romper la vista por un error puntual
     loading.style.display = 'none';
     detail.style.display  = 'block';
     detail.innerHTML = `<button onclick="buildApuestasGameList()" style="background:none;border:none;color:#64748b;font-size:13px;cursor:pointer;margin-bottom:12px">← Volver</button>
