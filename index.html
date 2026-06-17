@@ -1527,7 +1527,7 @@
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
     Tabla<div class="bni-dot"></div>
   </button>
-  <button class="bni" id="bni-comp" onclick="navTo('comp')">
+  <button class="bni" id="bni-comp" onclick="navTo('comp')" style="display:none">
     <span style="font-size:18px;line-height:1">👁</span>
     <span style="font-size:10px;font-weight:700">Comp.</span>
     <div class="bni-dot"></div>
@@ -1538,7 +1538,7 @@
     <span id="bni-sorteo-live" style="display:none;position:absolute;top:4px;right:4px;width:8px;height:8px;background:#ef4444;border-radius:50%;animation:pulse 1s infinite"></span>
     <div class="bni-dot"></div>
   </button>
-  <button class="bni" id="bni-prob" onclick="navTo('prob')">
+  <button class="bni" id="bni-prob" onclick="navTo('prob')" style="display:none">
     <span style="font-size:18px;line-height:1">🎯</span>
     <span style="font-size:10px;font-weight:700">Prob.</span>
     <div class="bni-dot"></div>
@@ -4044,8 +4044,31 @@ function _sorteoStartPolling() {
   _sorteoInterval = setInterval(sorteoCheckEstado, 2000);
 }
 
+// Comparar / Probabilidades / Sorteo: ocultas hasta que ARRANQUE el primer partido
+// de la F2 (mientras la quiniela está abierta nadie debe ver picks ajenos ni
+// probabilidades). El trigger es "algún partido ya inició" (estado != PROG).
+function _torneoArranco() {
+  return (S.games || []).some(g => g.estado && !['PROG', ''].includes(g.estado));
+}
+function _updateNavLock() {
+  const activo = _torneoArranco();
+  const comp = document.getElementById('bni-comp');
+  const prob = document.getElementById('bni-prob');
+  if (comp) comp.style.display = activo ? '' : 'none';
+  if (prob) prob.style.display = activo ? '' : 'none';
+  if (!activo) {
+    const sort = document.getElementById('bni-sorteo');
+    if (sort) sort.style.display = 'none';   // el sorteo es post-arranque
+  }
+}
+
 function navTo(tab, dir) {
   // dir: 'left' (→ siguiente) | 'right' (→ anterior) | undefined (sin animación)
+  // Bloqueo: estas pestañas no existen hasta que arranca el primer partido.
+  if (['comp', 'prob', 'sorteo'].includes(tab) && !_torneoArranco()) {
+    try { showToast('Disponible cuando comience el primer partido'); } catch(_) {}
+    return;
+  }
   if (tab !== 'sorteo') _sorteoStopPolling();   // detener polling al salir del sorteo
   try { _limpiarFiltrosPantallas(); } catch(_) {}  // limpiar buscadores al cambiar de pantalla
   const _tabScreen = {picks:'s-dashboard', apuestas:'s-apuestas', puntos:'s-puntos', tabla:'s-tabla', comp:'s-comp', prob:'s-prob'};
@@ -4277,6 +4300,7 @@ async function _pollTick() {
     }
 
     _updateLiveIndicator();
+    _updateNavLock();   // mostrar/ocultar Comp./Prob./Sorteo según si arrancó el torneo
 
     // Refrescar la pantalla activa
     if (_currentScreen === 's-dashboard') {
@@ -6784,9 +6808,12 @@ async function sorteoCheckEstado() {
     const tab     = document.getElementById('bni-sorteo');
     const liveDot = document.getElementById('bni-sorteo-live');
     if (tab) {
-      if (r.fase !== 'idle') {
+      // El sorteo solo existe una vez ARRANCADO el torneo (nunca antes del 1er partido).
+      if (r.fase !== 'idle' && _torneoArranco()) {
         tab.style.display = 'flex';
         if (liveDot) liveDot.style.display = r.fase === 'live' ? 'block' : 'none';
+      } else {
+        tab.style.display = 'none';
       }
     }
 
