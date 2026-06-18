@@ -4155,16 +4155,21 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
 
 
 def _get_tie_counts() -> tuple:
-    """Lee la hoja POSICIONES y retorna (tie_1st, tie_2nd):
-    cuántos jugadores comparten el 1° lugar y el 2° lugar."""
+    """Retorna (tie_1st, tie_2nd): cuántos jugadores comparten el 1° y el 2° lugar.
+    16.6: el puesto se cuenta SOLO por puntos (mismos pts = mismo puesto), igual que
+    la tabla, para que el reparto de premios en empates sea correcto. Lee de SQLite
+    (antes leía POSICIONES de Sheets, vacío en F2 → siempre 1,1)."""
     try:
-        ws_pos = state["sh"].worksheet("POSICIONES")
-        rows = ws_pos.get_all_values()
+        st = _db.db_compute_standings(state.get("cfg", {}))
+        if not st:
+            return 1, 1
         from collections import Counter
         pos_counter: Counter = Counter()
-        for r in rows[2:]:  # fila 1 = título, fila 2 = headers
-            if r and r[0].strip().isdigit():
-                pos_counter[int(r[0].strip())] += 1
+        pos = 1
+        for i, s in enumerate(st):
+            if i > 0 and s["pts"] != st[i - 1]["pts"]:
+                pos = i + 1
+            pos_counter[pos] += 1
         tie_1 = pos_counter.get(1, 1)
         second_pos = min((p for p in pos_counter if p > 1), default=None)
         tie_2 = pos_counter.get(second_pos, 1) if second_pos else 0
