@@ -41,6 +41,7 @@
     .btn-w.sel{background:var(--wfc-blue);color:#fff;border-color:var(--wfc-blue)}
     .goal-inp{-moz-appearance:textfield}
     .goal-inp::-webkit-inner-spin-button,.goal-inp::-webkit-outer-spin-button{opacity:0}
+    .gol-falta{border-color:#ef4444 !important;background:#fef2f2 !important}
     button:active{opacity:.82;transform:scale(.97)}
     .no-scale:active{transform:none;opacity:1}
     .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(90px);background:var(--wfc-blue);color:#fff;border-radius:20px;padding:13px 22px;font-size:13px;font-weight:700;white-space:nowrap;transition:all .35s cubic-bezier(.34,1.56,.64,1);z-index:999;opacity:0;box-shadow:0 8px 30px rgba(0,0,0,.35)}
@@ -2835,7 +2836,7 @@ function renderGames(games) {
     const inputCls = locked
       ? 'goal-inp w-full text-center text-2xl font-black border-2 border-gray-100 bg-gray-100 rounded-2xl py-3 text-gray-400 cursor-not-allowed'
       : 'goal-inp w-full text-center text-2xl font-black border-2 border-gray-100 bg-gray-50 rounded-2xl py-3 focus:outline-none focus:border-emerald-500 focus:bg-white transition-all';
-    const inputAttr = locked ? 'disabled' : `oninput="this.value=Math.max(0,parseInt(this.value)||0);autoW('${jgo}')"`;
+    const inputAttr = locked ? 'disabled' : `inputmode="numeric" maxlength="2" oninput="sanitGol(this);autoW('${jgo}')" onkeydown="if(['e','E','+','-','.',','].includes(event.key))event.preventDefault()"`;
 
     // Card class
     const cardCls = isFinal
@@ -3002,7 +3003,7 @@ function renderGames(games) {
         <div class="flex items-stretch gap-3 mb-3">
           <div class="flex-1 flex flex-col items-center gap-1">
             ${teamDisp1}
-            <input type="number" id="pgol1-${jgo}" min="0" max="30"
+            <input type="text" id="pgol1-${jgo}"
               value="${p.gol1}" placeholder="—"
               class="${inputCls}" ${inputAttr}>
           </div>
@@ -3014,7 +3015,7 @@ function renderGames(games) {
           </div>
           <div class="flex-1 flex flex-col items-center gap-1">
             ${teamDisp2}
-            <input type="number" id="pgol2-${jgo}" min="0" max="30"
+            <input type="text" id="pgol2-${jgo}"
               value="${p.gol2}" placeholder="—"
               class="${inputCls}" ${inputAttr}>
           </div>
@@ -3082,12 +3083,28 @@ async function loadTeams() {
 }
 
 // Se llama cuando el usuario cambia el marcador (inputs de goles)
+// Sanitiza un input de goles: SOLO enteros, sin ceros a la izquierda, permite vacío.
+// "02"->"2", "010"->"10", "001"->"1", "A1"->"1", "-"->"" (vacío), "" se mantiene vacío.
+function sanitGol(el) {
+  let v = (el.value || '').replace(/\D+/g, '');     // quita todo lo que no sea dígito
+  if (v.length > 1) v = String(parseInt(v, 10));    // sin ceros a la izquierda
+  if (v !== '' && +v > 30) v = '30';                // tope razonable de goles
+  el.value = v;
+}
+
 function autoW(jgo) {
   const gol1 = document.getElementById(`pgol1-${jgo}`)?.value ?? '';
   const gol2 = document.getElementById(`pgol2-${jgo}`)?.value ?? '';
   if (!S.picks[String(jgo)]) S.picks[String(jgo)] = {eq1:'',gol1:'',gol2:'',eq2:'',ganador:''};
   S.picks[String(jgo)].gol1 = gol1;
   S.picks[String(jgo)].gol2 = gol2;
+
+  // Regla "ambos o ninguno": si solo uno de los dos marcadores está lleno, resalta
+  // en rojo el que falta. Si ambos llenos o ambos vacíos, sin resaltado.
+  const _e1 = document.getElementById(`pgol1-${jgo}`);
+  const _e2 = document.getElementById(`pgol2-${jgo}`);
+  const _soloUno = (gol1 !== '') !== (gol2 !== '');
+  [_e1, _e2].forEach(el => { if (el) el.classList.toggle('gol-falta', _soloUno && el.value === ''); });
 
   // En F2: si el marcador NO es empate, auto-seleccionar ganador obvio
   // Si es empate, limpiar auto-selección (usuario debe elegir manualmente)
@@ -3224,6 +3241,24 @@ function setGanF2(jgo, which) {
 // ─── Guardar ronda (F2) ───────────────────────────────────────────
 async function saveGroupAndBack() {
   if (!curGroup) return;
+
+  // Regla "ambos o ninguno": ningún juego puede quedar con un solo marcador.
+  const incompletos = curGroup.games.filter(g => {
+    const g1 = document.getElementById(`pgol1-${g.jgo}`)?.value ?? '';
+    const g2 = document.getElementById(`pgol2-${g.jgo}`)?.value ?? '';
+    return (g1 !== '') !== (g2 !== '');   // exactamente uno lleno
+  });
+  if (incompletos.length) {
+    const ej = incompletos[0];
+    const e1 = resolveTeamName(ej.eq1) || ej.eq1 || 'Eq1';
+    const e2 = resolveTeamName(ej.eq2) || ej.eq2 || 'Eq2';
+    showToast(`⚠️ Completa ambos marcadores de ${e1} vs ${e2}` +
+              (incompletos.length > 1 ? ` (y ${incompletos.length - 1} más)` : ''));
+    const falta = (document.getElementById(`pgol1-${ej.jgo}`)?.value ?? '') === ''
+      ? `pgol1-${ej.jgo}` : `pgol2-${ej.jgo}`;
+    document.getElementById(falta)?.focus();
+    return;
+  }
 
   // Validar consistencia de picks: marcador y ganador van juntos
   // Un pick válido requiere gol1 + gol2 + ganador, o ninguno de los tres
