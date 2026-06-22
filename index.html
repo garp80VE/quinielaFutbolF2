@@ -4326,8 +4326,10 @@ async function _pollTick() {
     S.games = newGames;
     S.hasFinals = gRes.has_finals || false;
 
-    // Actualizar picks + PUNTOS (recalculados por el backend con el marcador nuevo)
-    if (pRes && pRes.picks) {
+    // Actualizar picks + PUNTOS (recalculados por el backend con el marcador nuevo).
+    // OJO: si el usuario está EDITANDO sus picks (pantalla s-games), NO pisar S.picks
+    // con los del servidor — borraría lo que está escribiendo sin guardar todavía.
+    if (pRes && pRes.picks && _currentScreen !== 's-games') {
       const np = {};
       Object.entries(pRes.picks).forEach(([k, v]) => {
         np[k] = {
@@ -4356,10 +4358,10 @@ async function _pollTick() {
       buildGroupsGrid();
       updateProgress();
     } else if (_currentScreen === 's-games') {
-      // Re-renderizar tarjetas del grupo activo con datos frescos
+      // El usuario está EDITANDO: NO re-renderizar (perdería el foco y los marcadores
+      // que escribió sin guardar). Solo mantenemos la referencia de juegos al día.
       if (curGroup && curGroup.key && S.groups[curGroup.key]) {
         curGroup.games = S.groups[curGroup.key];
-        renderGames(curGroup.games);
       }
     } else if (_currentScreen === 's-apuestas') {
       const listVisible = document.getElementById('apuestas-games-list')?.style.display !== 'none';
@@ -4643,6 +4645,12 @@ function shortName(t) {
     return ref.jgo ? `J${ref.jgo}?` : `${tag}${ref.nth}?`;
   }
   if (t.startsWith('Gan. ') || t.startsWith('Perdedor ')) return t;
+  // Placeholders de grupo (vienen de ESPN en inglés): versión corta y distintiva
+  // en español, para no mostrar "Group Place" (que perdía la letra del grupo).
+  let _m;
+  if (_m = t.match(/^Group\s+([A-Z0-9]+)\s+Winner$/i))     return `1° Gr.${_m[1].toUpperCase()}`;
+  if (_m = t.match(/^Group\s+([A-Z0-9]+)\s+2nd\s+Place$/i)) return `2° Gr.${_m[1].toUpperCase()}`;
+  if (_m = t.match(/^Third\s+Place\s+Group\s+(.+)$/i))      return `3° (${_m[1].trim()})`;
   const parts = t.trim().split(/\s+/);
   if (parts.length === 1) return parts[0];
   if (parts.length === 2) return t;  // "Costa Rica" → "Costa Rica"
