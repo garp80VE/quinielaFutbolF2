@@ -981,6 +981,7 @@ _reminded_15: set  = set()  # espn_ids que ya recibieron el recordatorio 15-min
 _aviso15:     set  = set()  # 16.4: aviso "~15 min" de inicio de partido (tras el cierre)
 _aviso5:      set  = set()  # 16.4: aviso "~5 min" de inicio de partido (tras el cierre)
 _aviso1pago:  set  = set()  # 16.4: recordatorio de pago (~1-3 min antes, 2da mitad del torneo)
+_aviso_cierre: set = set()  # aviso ~15 min antes del ÚLTIMO 16vo (cierra toda la quiniela)
 _live_clocks: dict = {}   # {espn_id: "45'"} — minuto actual de partidos en vivo
 _pending_notifs: list = []   # notificaciones de gol/final pendientes hasta tener standings frescos
 _day_end_notified:     set  = set()  # fechas "YYYY-MM-DD" que ya recibieron notif de fin de día
@@ -1175,6 +1176,38 @@ def _check_aviso_partidos(games_db, cfg):
         return  # solo tras el cierre
     from datetime import datetime as _dt, timezone as _tz
     now = _dt.now(_tz.utc)
+    # Aviso especial: ~15 min antes del ÚLTIMO 16vo (R32), que CIERRA toda la quiniela.
+    dt_cierre = _r32_cierre_dt(games_db)
+    if dt_cierre and not _quiniela_cerrada(games_db):
+        ck = dt_cierre.isoformat()
+        mins_c = (dt_cierre - now).total_seconds() / 60
+        if 10 <= mins_c <= 20 and ck not in _aviso_cierre:
+            _aviso_cierre.add(ck)
+            ult = None
+            for h in games_db:
+                if (h.get("ronda") or h.get("grupo") or "") != "R32":
+                    continue
+                f, hh = (h.get("fecha") or "").strip(), (h.get("hora") or "").strip()
+                if not f or not hh:
+                    continue
+                try:
+                    if _dt.fromisoformat(f"{f}T{hh}:00+00:00") == dt_cierre:
+                        ult = h; break
+                except Exception:
+                    pass
+            par = f"{_eq(ult.get('eq1',''))} vs {_eq(ult.get('eq2',''))}" if ult else ""
+            msg = ("🔒 ¡ÚLTIMO LLAMADO! En ~15 min comienza el ÚLTIMO partido de 16vos"
+                   + (f" ({par})" if par else "")
+                   + " y con él se CIERRAN TODOS LOS PICKS de todas las rondas.\n"
+                   "Revisa y completa tus picks AHORA. ¡Mucha suerte a todos! 🍀🏆")
+            try: _wa("POST", "/send", json={"message": msg})
+            except Exception: pass
+            try: _tg_send(msg)
+            except Exception: pass
+            try: _send_push_all("🔒 Último llamado",
+                                "El último 16vo cierra todos los picks en ~15 min. ¡Revisa los tuyos!",
+                                {"tipo": "cierre"})
+            except Exception: pass
     # El recordatorio de pago se gatilla por el NÚMERO de partido (jgo >= total//2+1),
     # NO por cuántos van jugados (1 min antes del #37 solo hay 36 finalizados).
     total       = len(games_db)
@@ -1363,13 +1396,13 @@ def _primer_partido_dt(games):
 
 
 def _avisar_picks_faltantes(games_db, cfg):
-    """~6h antes del primer partido: push DIRIGIDO a cada jugador con pendientes +
-    un resumen SIN nombres al grupo (Telegram/WhatsApp). NO se usan DMs individuales de
-    WhatsApp (disparan bloqueos). Dedup por config ligado al primer partido."""
+    """~6h antes del CIERRE de la quiniela (último 16vo): push DIRIGIDO a cada jugador
+    con pendientes + un resumen SIN nombres al grupo (Telegram/WhatsApp). NO se usan DMs
+    individuales de WhatsApp (disparan bloqueos). Dedup por config ligado al cierre."""
     from datetime import datetime as _dt, timezone as _tz
     if not games_db:
         return
-    dt0 = _primer_partido_dt(games_db)
+    dt0 = _r32_cierre_dt(games_db)   # el cierre real es el último 16vo
     if not dt0:
         return
     horas = (dt0 - _dt.now(_tz.utc)).total_seconds() / 3600.0
@@ -1377,7 +1410,7 @@ def _avisar_picks_faltantes(games_db, cfg):
         return  # fuera de la ventana de ~6h
     target_iso = dt0.isoformat()
     if cfg.get("AVISO_6H_DONE", "") == target_iso:
-        return  # ya enviado para este primer partido
+        return  # ya enviado para este cierre
     pendientes = 0
     for j in _db.db_get_jugadores():
         if j.get("excluido"):
@@ -1416,11 +1449,10 @@ def _check_exclusiones(games_db, cfg):
     from datetime import datetime as _dt
     if not games_db:
         return
-    iniciado = any((g.get("estado") or "") not in ("", "PROG") for g in games_db)
-    if not iniciado:
-        return  # aún no cierra
-    dt0 = _primer_partido_dt(games_db)
-    target_iso = dt0.isoformat() if dt0 else "iniciado"
+    if not _quiniela_cerrada(games_db):
+        return  # aún no cierra (la quiniela cierra al arrancar el último 16vo)
+    dt0 = _r32_cierre_dt(games_db)
+    target_iso = dt0.isoformat() if dt0 else "cerrada"
     if cfg.get("EXCL_TARGET", "") != target_iso:
         _db.db_save_config({"EXCL_TARGET": target_iso, "EXCL_DONE": ""})
         state.setdefault("cfg", {}).update({"EXCL_TARGET": target_iso, "EXCL_DONE": ""})
@@ -2587,8 +2619,8 @@ async def auth_register(body: RegisterBody, response: Response):
     # 15.1: una vez iniciado el torneo no se admiten registros nuevos (un jugador
     # nuevo no podría llenar los picks de partidos ya jugados). El admin sí puede
     # seguir agregando jugadores a mano (su flujo no pasa por este endpoint).
-    if _torneo_activo().get("activo"):
-        raise HTTPException(403, "La quiniela ya comenzó. Los registros están cerrados.")
+    if _quiniela_cerrada():
+        raise HTTPException(403, "La quiniela ya cerró (arrancó el último 16vo). Los registros están cerrados.")
     phone_norm = _normalize_phone(body.phone)
     if not phone_norm:
         raise HTTPException(400, "Número de teléfono requerido")
@@ -2675,9 +2707,8 @@ async def player_self_delete(
     Identifica al jugador por la cookie de sesion (ql_session = telefono o email);
     phone/email en query se mantienen como fallback para compatibilidad."""
     games, _ = _get_games_cache()
-    torneo_iniciado = any((g.get("estado") or "") not in ("", "PROG") for g in games)
-    if _torneo_activo().get("activo") or torneo_iniciado:
-        raise HTTPException(403, "No puedes retirarte: el torneo ya inició")
+    if _quiniela_cerrada(games):
+        raise HTTPException(403, "No puedes retirarte: la quiniela ya cerró (arrancó el último 16vo)")
     p = (find_player_any(phone=ql_session, email=ql_session) if ql_session else None) \
         or find_player_any(phone=phone, email=email)
     if not p:
@@ -3289,10 +3320,10 @@ async def save_picks(body: SavePicksBody):
     games, _ = _get_games_cache()
     modo_prueba = state.get("cfg", {}).get("MODO_PRUEBA", "") in ("1", "true", "True")
 
-    # Bloqueo TOTAL: el torneo se cierra en cuanto arranca el primer partido.
-    # A partir de ahí, NINGÚN pick (de ninguna ronda) se puede cambiar.
-    torneo_iniciado = not modo_prueba and any(
-        g.get("estado", "") not in ("", "PROG") for g in games)
+    # Cierre de la quiniela: se bloquea TODO cuando ARRANCA el último 16vo (R32).
+    # Hasta entonces, cada partido se bloquea individualmente al iniciar (no se
+    # puede editar un partido ya empezado), pero el resto sigue editable.
+    cerrada = (not modo_prueba) and _quiniela_cerrada(games)
 
     guardados = bloqueados = medias = protegidos = 0
 
@@ -3312,7 +3343,14 @@ async def save_picks(body: SavePicksBody):
             bloqueados += 1
             continue
 
-        if torneo_iniciado:
+        # Cierre total (arrancó el último 16vo) → ningún pick se puede cambiar.
+        if cerrada:
+            bloqueados += 1
+            continue
+
+        # Bloqueo por partido: un partido que ya inició no se puede editar
+        # (aunque la quiniela siga abierta para los demás).
+        if (not modo_prueba) and (game.get("estado") or "PROG") not in ("PROG", ""):
             bloqueados += 1
             continue
 
@@ -4031,6 +4069,57 @@ def _torneo_activo() -> dict:
         return {"activo": False, "razon": str(e)}
 
 
+def _r32_cierre_dt(games=None):
+    """Datetime UTC del ÚLTIMO partido de 16vos (R32). Cuando ese partido arranca,
+    se cierra TODA la quiniela (todos los picks de todas las rondas)."""
+    from datetime import datetime as _dt
+    if games is None:
+        games, _ = _get_games_cache()
+    dts = []
+    for g in games:
+        ronda = (g.get("ronda") or g.get("grupo") or "")
+        if ronda != "R32":
+            continue
+        f, h = (g.get("fecha") or "").strip(), (g.get("hora") or "").strip()
+        if not f or not h:
+            continue
+        try:
+            dts.append(_dt.fromisoformat(f"{f}T{h}:00+00:00"))
+        except Exception:
+            pass
+    return max(dts) if dts else None
+
+
+def _quiniela_cerrada(games=None) -> bool:
+    """True cuando ya comenzó el ÚLTIMO 16vo (R32): cierra TODA la quiniela.
+    Hasta ese momento, cada partido se bloquea solo al iniciar, pero el resto
+    (partidos no iniciados de cualquier ronda) sigue editable."""
+    from datetime import datetime as _dt, timezone as _tz
+    if games is None:
+        games, _ = _get_games_cache()
+    r32 = [g for g in games if (g.get("ronda") or g.get("grupo") or "") == "R32"]
+    if not r32:
+        return False
+    dt_cierre = _r32_cierre_dt(games)
+    if dt_cierre is None:
+        # Sin horas: respaldo = todos los R32 ya iniciaron
+        return all((g.get("estado") or "PROG") not in ("PROG", "") for g in r32)
+    if _dt.now(_tz.utc) >= dt_cierre:
+        return True
+    # Adelanto: el R32 más tardío ya está en vivo/finalizado (ESPN lo marcó antes de hora)
+    for g in r32:
+        f, h = (g.get("fecha") or "").strip(), (g.get("hora") or "").strip()
+        if not f or not h:
+            continue
+        try:
+            gdt = _dt.fromisoformat(f"{f}T{h}:00+00:00")
+        except Exception:
+            continue
+        if gdt == dt_cierre and (g.get("estado") or "PROG") not in ("PROG", ""):
+            return True
+    return False
+
+
 class AdminLogin(BaseModel):
     user: str
     password: str
@@ -4480,6 +4569,16 @@ async def prize_info():
                          fee_pct=fee_pct)
     result["costo"] = cost
     result["torneo_activo"] = _torneo_activo().get("activo", False)
+    # quiniela_cerrada: la quiniela se cierra al arrancar el ÚLTIMO 16vo (R32).
+    # El frontend lo usa para ocultar Comparar/Probabilidades/Sorteo y el botón
+    # de retirarse (mientras siga abierta, nadie debe ver picks ajenos).
+    try:
+        _dtc = _r32_cierre_dt()
+        result["quiniela_cerrada"] = _quiniela_cerrada()
+        result["cierre_dt"] = _dtc.strftime("%Y-%m-%dT%H:%M:%SZ") if _dtc else ""
+    except Exception:
+        result["quiniela_cerrada"] = False
+        result["cierre_dt"] = ""
     result["sorteo_ganadores"] = [g for g in ganadores if g and g.strip()]
     return result
 

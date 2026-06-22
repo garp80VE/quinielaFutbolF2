@@ -2822,10 +2822,12 @@ function renderGames(games) {
   sorted.forEach(g => {
     const jgo    = g.jgo;
     const estado = g.estado || '';
-    // Lock logic F2: BLOQUEO TOTAL. El torneo se cierra en cuanto arranca el
-    // primer partido; a partir de ahí TODO el bracket queda bloqueado.
-    const torneoIniciado = S.games.some(x => x.estado && x.estado !== 'PROG');
-    let locked = torneoIniciado;
+    // Lock F2: la quiniela cierra al arrancar el ÚLTIMO 16vo (bloquea TODO el
+    // bracket). Antes de eso, cada partido se bloquea solo cuando ESE partido
+    // ya inició; el resto sigue editable.
+    const cerrada = _quinielaCerrada();
+    const esteIniciado = !!estado && !['PROG', ''].includes(estado);
+    let locked = cerrada || esteIniciado;
     const isFinal = estado === 'FINAL' || estado === 'FT';
     const isLive  = ['EN VIVO','MEDIO TIEMPO','PRORROGA','PENALES','1H','2H','HT','ET','PT'].includes(estado);
     const {fecha: fechaLocal, hora: horaLocal} = formatLocalDT(g);
@@ -3048,9 +3050,10 @@ function renderGames(games) {
 function updateSaveButton() {
   const btn = document.getElementById('save-group-btn');
   if (!btn || !curGroup) return;
-  // Bloqueo TOTAL: si el torneo ya arrancó (algún partido inició), todo el
-  // bracket queda bloqueado y el botón pasa a "Regresar".
-  const allLocked = S.games.some(x => x.estado && x.estado !== 'PROG');
+  // La quiniela cierra al arrancar el ÚLTIMO 16vo: ahí todo el bracket queda
+  // bloqueado y el botón pasa a "Regresar". Antes de eso sigue en "Guardar"
+  // (los partidos ya iniciados se rechazan individualmente al guardar).
+  const allLocked = _quinielaCerrada();
   if (allLocked) {
     btn.onclick = goBack;
     btn.style.background = 'linear-gradient(135deg,#64748b,#475569)';
@@ -3424,8 +3427,8 @@ function _updateInfoProgress(torneoActivo) {
 
   // Botón Retirarme: se oculta si el torneo esta activo (config) O si ya
   // arranco el primer partido (algun juego con estado distinto de PROG).
-  const torneoIniciado = S.games.some(g => g.estado && g.estado !== 'PROG');
-  if (retCard) retCard.style.display = (torneoActivo || torneoIniciado) ? 'none' : 'block';
+  // Retirarse: permitido hasta que la quiniela CIERRE (arranca el último 16vo).
+  if (retCard) retCard.style.display = _quinielaCerrada() ? 'none' : 'block';
 }
 
 async function infoDownloadPDF() {
@@ -4044,29 +4047,40 @@ function _sorteoStartPolling() {
   _sorteoInterval = setInterval(sorteoCheckEstado, 2000);
 }
 
-// Comparar / Probabilidades / Sorteo: ocultas hasta que ARRANQUE el primer partido
-// de la F2 (mientras la quiniela está abierta nadie debe ver picks ajenos ni
-// probabilidades). El trigger es "algún partido ya inició" (estado != PROG).
-function _torneoArranco() {
-  return (S.games || []).some(g => g.estado && !['PROG', ''].includes(g.estado));
+// Comparar / Probabilidades / Sorteo: ocultas hasta que la quiniela CIERRE, es decir
+// hasta que arranque el ÚLTIMO 16vo (R32). Mientras siga abierta (se pueden editar
+// picks) nadie debe ver picks ajenos ni probabilidades. Se deriva de S.games: el R32
+// con mayor fecha/hora ya inició (estado != PROG) o su hora ya pasó.
+function _quinielaCerrada() {
+  const r32 = (S.games || []).filter(g => (g.ronda || g.grupo) === 'R32');
+  if (!r32.length) return false;
+  let ult = null;
+  for (const g of r32) {
+    if (!g.datetime_utc) continue;
+    if (!ult || g.datetime_utc > ult.datetime_utc) ult = g;
+  }
+  if (!ult) return false;
+  const iniciado = ult.estado && !['PROG', ''].includes(ult.estado);
+  const horaPaso = !!ult.datetime_utc && new Date(ult.datetime_utc) <= new Date();
+  return iniciado || horaPaso;
 }
 function _updateNavLock() {
-  const activo = _torneoArranco();
+  const cerrada = _quinielaCerrada();
   const comp = document.getElementById('bni-comp');
   const prob = document.getElementById('bni-prob');
-  if (comp) comp.style.display = activo ? '' : 'none';
-  if (prob) prob.style.display = activo ? '' : 'none';
-  if (!activo) {
+  if (comp) comp.style.display = cerrada ? '' : 'none';
+  if (prob) prob.style.display = cerrada ? '' : 'none';
+  if (!cerrada) {
     const sort = document.getElementById('bni-sorteo');
-    if (sort) sort.style.display = 'none';   // el sorteo es post-arranque
+    if (sort) sort.style.display = 'none';   // el sorteo es post-cierre
   }
 }
 
 function navTo(tab, dir) {
   // dir: 'left' (→ siguiente) | 'right' (→ anterior) | undefined (sin animación)
-  // Bloqueo: estas pestañas no existen hasta que arranca el primer partido.
-  if (['comp', 'prob', 'sorteo'].includes(tab) && !_torneoArranco()) {
-    try { showToast('Disponible cuando comience el primer partido'); } catch(_) {}
+  // Bloqueo: estas pestañas no existen hasta que la quiniela cierre (último 16vo).
+  if (['comp', 'prob', 'sorteo'].includes(tab) && !_quinielaCerrada()) {
+    try { showToast('Disponible cuando cierre la quiniela (último 16vo)'); } catch(_) {}
     return;
   }
   if (tab !== 'sorteo') _sorteoStopPolling();   // detener polling al salir del sorteo
@@ -6808,8 +6822,8 @@ async function sorteoCheckEstado() {
     const tab     = document.getElementById('bni-sorteo');
     const liveDot = document.getElementById('bni-sorteo-live');
     if (tab) {
-      // El sorteo solo existe una vez ARRANCADO el torneo (nunca antes del 1er partido).
-      if (r.fase !== 'idle' && _torneoArranco()) {
+      // El sorteo solo existe una vez CERRADA la quiniela (nunca antes del último 16vo).
+      if (r.fase !== 'idle' && _quinielaCerrada()) {
         tab.style.display = 'flex';
         if (liveDot) liveDot.style.display = r.fase === 'live' ? 'block' : 'none';
       } else {
