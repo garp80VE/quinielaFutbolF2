@@ -2786,6 +2786,12 @@ const hasPick = jgo => {
 
 // ─── Pantalla de Grupo ────────────────────────────────────────────
 let curGroup = null;
+let _gamesSig = '';   // firma de los equipos/resultados mostrados en la pantalla de picks
+// Firma de lo que afecta los NOMBRES de equipo (no los marcadores): si cambia, hay
+// que refrescar la pantalla de picks para mostrar los equipos que se van resolviendo.
+function _gamesDataSig(games) {
+  return (games || []).map(g => `${g.jgo}:${g.eq1||''}|${g.eq2||''}|${g.ganador||''}|${g.estado||''}`).join(';');
+}
 
 const _RONDA_COLOR_MAP = {'R32':'#002868','R16':'#1d4ed8','QF':'#7c3aed',
                           'SF':'#be185d','3ER':'#047857','FINAL':'#b45309'};
@@ -2816,6 +2822,7 @@ function _gameOrder(g) {
 function renderGames(games) {
   const list = document.getElementById('games-list');
   list.innerHTML = '';
+  _gamesSig = _gamesDataSig(S.games);   // registrar la firma de los datos recién pintados
 
   // Ordenar: EN VIVO → PROG → Terminados
   const sorted = [...games].sort((a, b) => _gameOrder(a) - _gameOrder(b));
@@ -4358,10 +4365,19 @@ async function _pollTick() {
       buildGroupsGrid();
       updateProgress();
     } else if (_currentScreen === 's-games') {
-      // El usuario está EDITANDO: NO re-renderizar (perdería el foco y los marcadores
-      // que escribió sin guardar). Solo mantenemos la referencia de juegos al día.
+      // Refresco DINÁMICO: re-renderizar solo si cambiaron los equipos/resultados
+      // (los que se van resolviendo desde ESPN/bracket), NO en cada poll. Así los
+      // equipos aparecen solos, pero los marcadores que se editan no se borran
+      // (en s-games el polling no pisa S.picks; los valores vienen de S.picks).
       if (curGroup && curGroup.key && S.groups[curGroup.key]) {
         curGroup.games = S.groups[curGroup.key];
+        if (_gamesDataSig(S.games) !== _gamesSig) {
+          // No interrumpir si está escribiendo un marcador AHORA (foco en un input
+          // de gol); se refrescará en el siguiente ciclo al quitar el foco.
+          const af = document.activeElement;
+          const editando = af && af.tagName === 'INPUT' && (af.id || '').startsWith('pgol');
+          if (!editando) renderGames(curGroup.games);
+        }
       }
     } else if (_currentScreen === 's-apuestas') {
       const listVisible = document.getElementById('apuestas-games-list')?.style.display !== 'none';
