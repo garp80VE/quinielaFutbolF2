@@ -3223,6 +3223,32 @@ async def admin_diag_sync(key: str = Query(""), ql_admin: str = Cookie(default="
     }
 
 
+@app.get("/api/admin/unpaid")
+async def admin_unpaid(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Lista de jugadores que NO han pagado (excluye a los marcados como excluidos).
+    Acceso: ?key=CLAVE_ADMIN o sesión admin."""
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN o inicia sesión como admin.")
+    jugadores = _db.db_get_jugadores()
+    unpaid = [{"id": p.get("id"), "nombre": p.get("nombre", ""), "whatsapp": p.get("whatsapp", ""),
+               "email": p.get("email", ""), "fecha_reg": p.get("fecha_reg", "")}
+              for p in jugadores if not p.get("pagado") and not p.get("excluido")]
+    unpaid.sort(key=lambda x: (x["nombre"] or "").lower())
+    return {"count": len(unpaid), "total_jugadores": len(jugadores), "unpaid": unpaid}
+
+
+@app.get("/api/admin/recordar-pago")
+async def admin_recordar_pago(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Envía AHORA el recordatorio de pago (WA+TG+push) si quedan morosos. Acceso:
+    ?key=CLAVE_ADMIN o sesión admin."""
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN o inicia sesión como admin.")
+    res = _send_recordatorio_pago()
+    return {"ok": True, "enviado": res["enviado"], "faltan": res["n_sin"]}
+
+
 @app.get("/api/admin/player-picks")
 async def admin_player_picks(key: str = Query(""), phone: str = Query(""),
                              id: int = Query(0), ql_admin: str = Cookie(default="")):

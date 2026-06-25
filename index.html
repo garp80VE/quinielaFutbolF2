@@ -4703,43 +4703,37 @@ function buildApuestasGameList() {
     return;
   }
 
-  // Agrupar por ronda (F2 usa ronda, no grupo)
-  const groups = {};
-  for (const g of activos) {
-    const k = g.ronda || g.grupo || '?';
-    if (!groups[k]) groups[k] = [];
-    groups[k].push(g);
-  }
-
-  for (const [key, games] of Object.entries(groups).sort((a,b) => sortKey(b[0]).localeCompare(sortKey(a[0])))) {
-    const sec = document.createElement('div');
-    sec.style.marginBottom = '20px';
-    const titulo = _RONDA_LABEL_MAP[key] || (isJornada(key) ? `Jornada ${key}` : `Ronda ${key}`);
-    sec.innerHTML = `<p style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">${titulo}</p>
-      <div style="display:flex;flex-direction:column;gap:8px" id="ap-grp-${key}"></div>`;
-    list.appendChild(sec);
-    const grpEl = sec.querySelector(`#ap-grp-${key}`);
-
-    // Dentro de cada grupo: más recientes primero (por datetime_utc desc)
-    const sortedGames = [...games].sort((a,b) => (b.datetime_utc||'').localeCompare(a.datetime_utc||''));
-    for (const game of sortedGames) {
-      const btn = document.createElement('button');
-      const badgeCls = (game.estado === 'FINAL' || game.estado === 'FT') ? 'badge-final' : 'badge-live';
-      btn.style.cssText = 'width:100%;background:white;border:1.5px solid #e8eaf0;border-radius:14px;padding:12px 14px;cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px';
-      const apEq1 = resolveTeamName(game.eq1) || game.eq1 || '?';
-      const apEq2 = resolveTeamName(game.eq2) || game.eq2 || '?';
-      btn.innerHTML = `
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${apEq1} vs ${apEq2}</div>
-          <div style="font-size:11px;color:#64748b;margin-top:2px">${formatLocalDT(game).fecha} ${formatLocalDT(game).hora}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          ${game.gol1 !== '' && game.gol2 !== '' ? `<span style="font-weight:800;font-size:14px;color:#1e293b">${game.gol1} – ${game.gol2}</span>` : ''}
-          <span class="badge ${badgeCls}">${game.estado}${game.minuto && game.estado !== 'FINAL' ? ' · ' + game.minuto + "'" : ''}</span>
-        </div>`;
-      btn.onclick = () => loadApuestasDetail(game);
-      grpEl.appendChild(btn);
-    }
+  // Lista PLANA ordenada por número de partido (jgo) desc; el grupo/ronda va como
+  // referencia DENTRO de cada tarjeta (no como encabezado de sección). (16.8)
+  const sortedGames = [...activos].sort((a,b) => {
+    const na = Number(a.jgo), nb = Number(b.jgo);
+    if (!isNaN(na) && !isNaN(nb) && na !== nb) return nb - na;       // por nº de partido desc
+    return (b.datetime_utc||'').localeCompare(a.datetime_utc||'');   // respaldo: por fecha desc
+  });
+  const cont = document.createElement('div');
+  cont.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+  list.appendChild(cont);
+  for (const game of sortedGames) {
+    const btn = document.createElement('button');
+    const badgeCls = (game.estado === 'FINAL' || game.estado === 'FT') ? 'badge-final' : 'badge-live';
+    btn.style.cssText = 'width:100%;background:white;border:1.5px solid #e8eaf0;border-radius:14px;padding:12px 14px;cursor:pointer;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:8px';
+    const apEq1 = resolveTeamName(game.eq1) || game.eq1 || '?';
+    const apEq2 = resolveTeamName(game.eq2) || game.eq2 || '?';
+    const _rk   = game.ronda || game.grupo || '';
+    const rondaLbl = _RONDA_LABEL_MAP[_rk] || (isJornada(_rk) ? `Jornada ${_rk}` : _rk);
+    const ref = [game.jgo ? `Partido #${game.jgo}` : '', rondaLbl].filter(Boolean).join(' · ');
+    btn.innerHTML = `
+      <div style="flex:1;min-width:0">
+        <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">${ref}</div>
+        <div style="font-size:13px;font-weight:700;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${apEq1} vs ${apEq2}</div>
+        <div style="font-size:11px;color:#64748b;margin-top:2px">${formatLocalDT(game).fecha} ${formatLocalDT(game).hora}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+        ${game.gol1 !== '' && game.gol2 !== '' ? `<span style="font-weight:800;font-size:14px;color:#1e293b">${game.gol1} – ${game.gol2}</span>` : ''}
+        <span class="badge ${badgeCls}">${game.estado}${game.minuto && game.estado !== 'FINAL' ? ' · ' + game.minuto + "'" : ''}</span>
+      </div>`;
+    btn.onclick = () => loadApuestasDetail(game);
+    cont.appendChild(btn);
   }
 }
 
