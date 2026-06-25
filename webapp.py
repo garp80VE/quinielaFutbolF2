@@ -4305,9 +4305,10 @@ async def admin_save_config(body: AdminConfigSave, ql_admin: str = Cookie(defaul
     return {"ok": True}
 
 @app.get("/api/admin/players")
-async def admin_get_players(ql_admin: str = Cookie(default="")):
-    if not _admin_check(ql_admin):
-        raise HTTPException(403, "No autorizado")
+async def admin_get_players(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN o inicia sesión como admin.")
     # F2 es SQLite-primario (antes leía de Sheets, vacío). Incluye el responsable
     # (invitador) y el estado de aprobación de cada jugador.
     players = []
