@@ -3303,6 +3303,41 @@ async def admin_recordar_pago(key: str = Query(""), ql_admin: str = Cookie(defau
     return {"ok": True, "enviado": res["enviado"], "faltan": res["n_sin"]}
 
 
+@app.get("/api/admin/telegram-updates")
+async def admin_telegram_updates(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Ayuda a obtener TU chat_id de Telegram: escríbele algo a tu bot y abre esto.
+    Muestra los chats que han escrito al bot. ?key=CLAVE_ADMIN."""
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN.")
+    token = (cfg.get("TELEGRAM_BOT_TOKEN", "") or "").strip()
+    if not token:
+        return {"ok": False, "error": "No hay TELEGRAM_BOT_TOKEN configurado en el panel."}
+    try:
+        j = requests.get(f"https://api.telegram.org/bot{token}/getUpdates", timeout=10).json()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    chats = {}
+    for upd in j.get("result", []):
+        msg = upd.get("message") or upd.get("edited_message") or upd.get("channel_post") or {}
+        ch  = msg.get("chat") or {}
+        if ch.get("id"):
+            chats[str(ch["id"])] = {
+                "chat_id": ch.get("id"),
+                "tipo":    ch.get("type"),
+                "nombre":  (ch.get("title")
+                            or " ".join([ch.get("first_name", ""), ch.get("last_name", "")]).strip()
+                            or ch.get("username", "")),
+            }
+    return {
+        "ok": True,
+        "instrucciones": ("1) En Telegram escríbele algo a tu bot (un '/start' o 'hola'). "
+                          "2) Recarga esta página. 3) Copia el chat_id del tipo 'private' (el tuyo) "
+                          "y pégalo en TELEGRAM_ADMIN_CHAT_ID en el panel → Guardar."),
+        "chats": list(chats.values()),
+    }
+
+
 @app.get("/api/admin/player-picks")
 async def admin_player_picks(key: str = Query(""), phone: str = Query(""),
                              id: int = Query(0), ql_admin: str = Cookie(default="")):
@@ -4084,6 +4119,7 @@ ADMIN_CONFIG_FIELDS = [
     ("INTERVAL_SEGS",        "Intervalo updater (segundos)"),
     ("TELEGRAM_BOT_TOKEN",   "Token del bot de Telegram"),
     ("TELEGRAM_CHAT_ID",     "ID del grupo de Telegram"),
+    ("TELEGRAM_ADMIN_CHAT_ID", "Tu chat personal de Telegram (DM al admin: nuevos registros, respaldos, salud)"),
     ("TELEGRAM_ENABLED",     "Notificaciones Telegram activas (1=sí, 0=no)"),
     ("TELEGRAM_INVITE_LINK", "Enlace de invitación al grupo (https://t.me/+...)"),
     ("RESET_KEY",           "Clave para resetear el torneo"),
