@@ -909,8 +909,9 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                                    "gan": r["gan_pick"], "eq1": r["eq1_pick"] or "",
                                    "eq2": r["eq2_pick"] or ""} for r in pk_rows}
 
-            # Puntos actuales (partidos ya jugados)
+            # Puntos actuales (partidos ya jugados) + desglose por puntaje (16.10)
             pts = 0
+            breakdown: dict = {}
             for jgo_str, pk in _pp.items():
                 game = by_jgo.get(jgo_str)
                 if not game:
@@ -921,6 +922,7 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                 _, _, _, _, ptot = calc_pts_inferred(
                     game, pk, by_jgo, by_ronda, _pp, vL, vG, v1, v2, vC)
                 pts += ptot
+                breakdown[ptot] = breakdown.get(ptot, 0) + 1
 
             # Equipos que predijo (ganador) y siguen vivos
             equipos_vivos_jug = set()
@@ -950,6 +952,7 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                 "jugador_id":      j["id"],
                 "nombre":          j["nombre"],
                 "pts":             pts,
+                "pts_breakdown":   breakdown,
                 "max_realista":    pts + max_add,
                 "equipos_vivos":   len(equipos_vivos_jug),
                 "equipos_lista":   sorted(equipos_vivos_jug),

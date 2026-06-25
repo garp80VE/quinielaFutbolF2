@@ -3928,13 +3928,17 @@ async def get_probabilities():
             "prob_1st":      prob_1st,
             "univ_1st":      univ_1st,
             "univ_2nd":      univ_2nd,
+            "pts_breakdown": p.get("pts_breakdown", {}),
         })
 
+    _vL = int(cfg.get("PTS_LOGRO", 1) or 1); _vG = int(cfg.get("PTS_GAN", 2) or 2)
+    _v1 = int(cfg.get("PTS_GOL1", 1) or 1); _v2 = int(cfg.get("PTS_GOL2", 1) or 1)
     return {
         "players":      players_out,
         "fixed_games":  len(fixed_games),
         "pending_games": pending_count,
         "games":        game_dist,
+        "max_pts":      _vL + _vG + _v1 + _v2,   # 16.10: máximo por partido (logro+gan+gol1+gol2)
     }
 
 @app.get("/api/compare-picks")

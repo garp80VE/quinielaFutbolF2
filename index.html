@@ -3888,6 +3888,22 @@ async function loadProbabilidades(force=false) {
       </div>`;
     }
 
+    // 16.10: desglose de aciertos por partido (chips de max_pts a 0). Las claves del
+    // dict llegan como string en JSON → leer brk[v] || brk[String(v)]. Atenúa los ×0.
+    function brkChips(p) {
+      if (!data.fixed_games || !data.max_pts) return '';
+      const brk = p.pts_breakdown || {};
+      let chips = '';
+      for (let v = data.max_pts; v >= 0; v--) {
+        const n = brk[v] || brk[String(v)] || 0;
+        const isMax = v === data.max_pts;
+        const color = isMax ? '#b45309' : (v === 0 ? '#94a3b8' : '#475569');
+        const bg    = isMax ? '#fef3c7' : '#f1f5f9';
+        chips += `<span style="font-size:10px;font-weight:700;background:${bg};color:${color};border-radius:6px;padding:2px 6px;opacity:${n?1:.4}">${v}pt ×${n}</span>`;
+      }
+      return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">${chips}</div>`;
+    }
+
     function playerCard(p, idx) {
       const isLeader = p.rank === 1;
       // La 🚑/🥈 de 2do solo aplica si la categoría reparte 2do premio (B/C).
@@ -3955,6 +3971,7 @@ async function loadProbabilidades(force=false) {
             </div>
           </div>
           ${univSection}
+          ${brkChips(p)}
         </div>`;
     }
 
