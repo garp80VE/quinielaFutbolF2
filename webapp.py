@@ -1170,20 +1170,19 @@ def _send_recordatorio_pago() -> dict:
 
 
 def _check_aviso_partidos(games_db, cfg):
-    """16.4: tras el cierre, avisa ~15 y ~5 min antes de cada partido + recordatorio de
-    pago (~1-3 min antes, desde el partido mitad+1, si quedan morosos)."""
-    if not _torneo_activo().get("activo"):
-        return  # solo tras el cierre
+    """Aviso ~15 min antes del PRIMER 16vo (cierra TODA la quiniela) y —tras el primer
+    partido— avisos de ~15/~5 min de cada partido + recordatorio de pago."""
     from datetime import datetime as _dt, timezone as _tz
     now = _dt.now(_tz.utc)
-    # Aviso especial: ~15 min antes del ÚLTIMO 16vo (R32), que CIERRA toda la quiniela.
+    # Aviso ~15 min antes del PRIMER 16vo (R32), que CIERRA toda la quiniela. Debe poder
+    # salir ANTES del primer partido → va ANTES del gate de _torneo_activo.
     dt_cierre = _r32_cierre_dt(games_db)
     if dt_cierre and not _quiniela_cerrada(games_db):
         ck = dt_cierre.isoformat()
         mins_c = (dt_cierre - now).total_seconds() / 60
         if 10 <= mins_c <= 20 and ck not in _aviso_cierre:
             _aviso_cierre.add(ck)
-            ult = None
+            prim = None
             for h in games_db:
                 if (h.get("ronda") or h.get("grupo") or "") != "R32":
                     continue
@@ -1192,11 +1191,11 @@ def _check_aviso_partidos(games_db, cfg):
                     continue
                 try:
                     if _dt.fromisoformat(f"{f}T{hh}:00+00:00") == dt_cierre:
-                        ult = h; break
+                        prim = h; break
                 except Exception:
                     pass
-            par = f"{_eq(ult.get('eq1',''))} vs {_eq(ult.get('eq2',''))}" if ult else ""
-            msg = ("🔒 ¡ÚLTIMO LLAMADO! En ~15 min comienza el ÚLTIMO partido de 16vos"
+            par = f"{_eq(prim.get('eq1',''))} vs {_eq(prim.get('eq2',''))}" if prim else ""
+            msg = ("🔒 ¡ÚLTIMO LLAMADO! En ~15 min comienza el PRIMER partido de 16vos"
                    + (f" ({par})" if par else "")
                    + " y con él se CIERRAN TODOS LOS PICKS de todas las rondas.\n"
                    "Revisa y completa tus picks AHORA. ¡Mucha suerte a todos! 🍀🏆")
@@ -1205,9 +1204,12 @@ def _check_aviso_partidos(games_db, cfg):
             try: _tg_send(msg)
             except Exception: pass
             try: _send_push_all("🔒 Último llamado",
-                                "El último 16vo cierra todos los picks en ~15 min. ¡Revisa los tuyos!",
+                                "El primer 16vo cierra todos los picks en ~15 min. ¡Revisa los tuyos!",
                                 {"tipo": "cierre"})
             except Exception: pass
+    # Los avisos de partido y el recordatorio de pago solo aplican una vez iniciado el torneo.
+    if not _torneo_activo().get("activo"):
+        return
     # El recordatorio de pago se gatilla por el NÚMERO de partido (jgo >= total//2+1),
     # NO por cuántos van jugados (1 min antes del #37 solo hay 36 finalizados).
     total       = len(games_db)
@@ -1396,13 +1398,13 @@ def _primer_partido_dt(games):
 
 
 def _avisar_picks_faltantes(games_db, cfg):
-    """~6h antes del CIERRE de la quiniela (último 16vo): push DIRIGIDO a cada jugador
+    """~6h antes del CIERRE de la quiniela (primer 16vo): push DIRIGIDO a cada jugador
     con pendientes + un resumen SIN nombres al grupo (Telegram/WhatsApp). NO se usan DMs
     individuales de WhatsApp (disparan bloqueos). Dedup por config ligado al cierre."""
     from datetime import datetime as _dt, timezone as _tz
     if not games_db:
         return
-    dt0 = _r32_cierre_dt(games_db)   # el cierre real es el último 16vo
+    dt0 = _r32_cierre_dt(games_db)   # el cierre real es el primer 16vo
     if not dt0:
         return
     horas = (dt0 - _dt.now(_tz.utc)).total_seconds() / 3600.0
@@ -3320,9 +3322,9 @@ async def save_picks(body: SavePicksBody):
     games, _ = _get_games_cache()
     modo_prueba = state.get("cfg", {}).get("MODO_PRUEBA", "") in ("1", "true", "True")
 
-    # Cierre de la quiniela: se bloquea TODO cuando ARRANCA el último 16vo (R32).
-    # Hasta entonces, cada partido se bloquea individualmente al iniciar (no se
-    # puede editar un partido ya empezado), pero el resto sigue editable.
+    # Cierre de la quiniela: se bloquean TODOS los picks cuando ARRANCA el PRIMER
+    # 16vo (R32). El bloqueo por partido de abajo queda redundante (todo se cierra
+    # de golpe), pero es inocuo.
     cerrada = (not modo_prueba) and _quiniela_cerrada(games)
 
     guardados = bloqueados = medias = protegidos = 0
@@ -4070,7 +4072,7 @@ def _torneo_activo() -> dict:
 
 
 def _r32_cierre_dt(games=None):
-    """Datetime UTC del ÚLTIMO partido de 16vos (R32). Cuando ese partido arranca,
+    """Datetime UTC del PRIMER partido de 16vos (R32). Cuando ese partido arranca,
     se cierra TODA la quiniela (todos los picks de todas las rondas)."""
     from datetime import datetime as _dt
     if games is None:
@@ -4087,37 +4089,21 @@ def _r32_cierre_dt(games=None):
             dts.append(_dt.fromisoformat(f"{f}T{h}:00+00:00"))
         except Exception:
             pass
-    return max(dts) if dts else None
+    return min(dts) if dts else None
 
 
 def _quiniela_cerrada(games=None) -> bool:
-    """True cuando ya comenzó el ÚLTIMO 16vo (R32): cierra TODA la quiniela.
-    Hasta ese momento, cada partido se bloquea solo al iniciar, pero el resto
-    (partidos no iniciados de cualquier ronda) sigue editable."""
+    """True cuando ya comenzó el PRIMER 16vo (R32): a partir de ahí se bloquean TODOS
+    los picks de todas las rondas (cierre justo, nadie edita viendo resultados)."""
     from datetime import datetime as _dt, timezone as _tz
     if games is None:
         games, _ = _get_games_cache()
-    r32 = [g for g in games if (g.get("ronda") or g.get("grupo") or "") == "R32"]
-    if not r32:
-        return False
-    dt_cierre = _r32_cierre_dt(games)
-    if dt_cierre is None:
-        # Sin horas: respaldo = todos los R32 ya iniciaron
-        return all((g.get("estado") or "PROG") not in ("PROG", "") for g in r32)
-    if _dt.now(_tz.utc) >= dt_cierre:
+    # Algún partido ya inició (R32 es la 1ª ronda → su primer partido es el del torneo).
+    if any((g.get("estado") or "PROG") not in ("PROG", "") for g in games):
         return True
-    # Adelanto: el R32 más tardío ya está en vivo/finalizado (ESPN lo marcó antes de hora)
-    for g in r32:
-        f, h = (g.get("fecha") or "").strip(), (g.get("hora") or "").strip()
-        if not f or not h:
-            continue
-        try:
-            gdt = _dt.fromisoformat(f"{f}T{h}:00+00:00")
-        except Exception:
-            continue
-        if gdt == dt_cierre and (g.get("estado") or "PROG") not in ("PROG", ""):
-            return True
-    return False
+    # Respaldo: la hora del primer R32 ya pasó aunque ESPN no haya marcado el inicio.
+    dt = _r32_cierre_dt(games)
+    return dt is not None and _dt.now(_tz.utc) >= dt
 
 
 class AdminLogin(BaseModel):

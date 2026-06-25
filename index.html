@@ -2830,9 +2830,8 @@ function renderGames(games) {
   sorted.forEach(g => {
     const jgo    = g.jgo;
     const estado = g.estado || '';
-    // Lock F2: la quiniela cierra al arrancar el ÚLTIMO 16vo (bloquea TODO el
-    // bracket). Antes de eso, cada partido se bloquea solo cuando ESE partido
-    // ya inició; el resto sigue editable.
+    // Lock F2: la quiniela cierra al arrancar el PRIMER 16vo → a partir de ahí se
+    // bloquean TODOS los picks de todas las rondas (cierre justo).
     const cerrada = _quinielaCerrada();
     const esteIniciado = !!estado && !['PROG', ''].includes(estado);
     let locked = cerrada || esteIniciado;
@@ -4090,21 +4089,16 @@ function _sorteoStartPolling() {
 }
 
 // Comparar / Probabilidades / Sorteo: ocultas hasta que la quiniela CIERRE, es decir
-// hasta que arranque el ÚLTIMO 16vo (R32). Mientras siga abierta (se pueden editar
-// picks) nadie debe ver picks ajenos ni probabilidades. Se deriva de S.games: el R32
-// con mayor fecha/hora ya inició (estado != PROG) o su hora ya pasó.
+// hasta que arranque el PRIMER 16vo (R32). Mientras siga abierta (se pueden editar
+// picks) nadie debe ver picks ajenos ni probabilidades. Cierra cuando algún partido
+// ya inició (R32 es la 1ª ronda) o cuando la hora del primer R32 ya pasó.
 function _quinielaCerrada() {
-  const r32 = (S.games || []).filter(g => (g.ronda || g.grupo) === 'R32');
+  if ((S.games || []).some(g => g.estado && !['PROG', ''].includes(g.estado))) return true;
+  const r32 = (S.games || []).filter(g => (g.ronda || g.grupo) === 'R32' && g.datetime_utc);
   if (!r32.length) return false;
-  let ult = null;
-  for (const g of r32) {
-    if (!g.datetime_utc) continue;
-    if (!ult || g.datetime_utc > ult.datetime_utc) ult = g;
-  }
-  if (!ult) return false;
-  const iniciado = ult.estado && !['PROG', ''].includes(ult.estado);
-  const horaPaso = !!ult.datetime_utc && new Date(ult.datetime_utc) <= new Date();
-  return iniciado || horaPaso;
+  let prim = null;
+  for (const g of r32) { if (!prim || g.datetime_utc < prim.datetime_utc) prim = g; }
+  return !!prim && new Date(prim.datetime_utc) <= new Date();
 }
 function _updateNavLock() {
   const cerrada = _quinielaCerrada();
