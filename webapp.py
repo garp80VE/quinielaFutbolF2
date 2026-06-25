@@ -2607,12 +2607,21 @@ async def auth_check(body: AuthCheck, response: Response):
     pagado_raw = p.get("PAGADO", "").upper()
     is_paid    = pagado_raw in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X")
     stripe_activo = state.get("cfg", {}).get("STRIPE_ACTIVO", "0") == "1"
+    # Estado de aprobación (control de invitador) — leído fresco de SQLite para reflejar
+    # al instante cuando el admin lo libera.
+    _fresh = _db.db_find_player(
+        phone=_normalize_phone(body.phone) if body.phone else "",
+        email=(body.email or "").strip().lower()) or {}
+    aprobado  = bool(_fresh.get("aprobado", 1))
+    invitador = _fresh.get("invitador", "") or ""
     return {"registered": True, "nombre": p.get("NOMBRE", ""),
             "tab": p.get("TAB_NOMBRE", ""),
             "phone": p.get("WHATSAPP","") or p.get("TELEFONO",""),
             "email": p.get("EMAIL",""),
             "pagado": is_paid,
             "reglas_ok": bool(p.get("REGLAS_OK")),
+            "aprobado": aprobado,
+            "invitador": invitador,
             "stripe_activo": stripe_activo}
 
 
@@ -2641,6 +2650,19 @@ async def auth_register(body: RegisterBody, response: Response):
     )
     _invalidate_players()
     _cache["players"].clear()
+
+    # Aviso al admin: nuevo registro PENDIENTE de asignar invitador (en hilo aparte).
+    def _aviso_pendiente():
+        try:
+            tg_admin = (state.get("cfg", {}).get("TELEGRAM_ADMIN_CHAT_ID", "") or "").strip()
+            msg = ("🆕 <b>Nuevo registro pendiente</b>\n"
+                   f"👤 {body.nombre.strip()} ({phone_norm})"
+                   + (f" · {email_clean}" if email_clean else "")
+                   + "\nAsígnale quién lo invitó en el panel para liberarlo.")
+            (_tg_send_personal(tg_admin, msg) if tg_admin else _tg_send(msg))
+        except Exception as e:
+            print(f"[registro] aviso admin: {e}")
+    threading.Thread(target=_aviso_pendiente, daemon=True).start()
 
     # ── 2. Sheets (async best-effort) ────────────────────────────────────────
     def _sheets_register():
@@ -3144,6 +3166,38 @@ async def admin_reactivar_jugador(jugador_id: int, ql_admin: str = Cookie(defaul
     return {"ok": True, "msg": "Jugador reactivado"}
 
 
+@app.post("/api/admin/set-invitador")
+async def admin_set_invitador(body: dict, ql_admin: str = Cookie(default="")):
+    """Asigna quién invitó al jugador y lo APRUEBA (lo libera para registrar picks).
+    invitador vacío → vuelve a pendiente. Body: {id|phone, invitador}."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    jid       = body.get("id") or 0
+    phone     = (body.get("phone") or "").strip()
+    invitador = (body.get("invitador") or "").strip()
+    if not jid and phone:
+        p = find_player_any(phone=phone)
+        if p:
+            jid = p.get("_id") or p.get("id")
+    if not jid:
+        raise HTTPException(404, "Jugador no encontrado")
+    ok = _db.db_set_invitador(int(jid), invitador)
+    if not ok:
+        raise HTTPException(404, "Jugador no encontrado")
+    _invalidate_players()
+    _cache["players"].clear()
+    # Avisar al jugador (push) que fue liberado, si se aprobó.
+    if invitador:
+        try:
+            j = next((x for x in _db.db_get_jugadores() if x.get("id") == int(jid)), {})
+            _send_push_players([j.get("whatsapp") or ""], [j.get("email") or ""],
+                "✅ ¡Acceso liberado!",
+                "Ya puedes registrar tus picks y ver la quiniela. ¡Mucha suerte!",
+                {"tipo": "aprobado"})
+        except Exception as e:
+            print(f"[set-invitador] push: {e}")
+    return {"ok": True, "aprobado": bool(invitador), "invitador": invitador}
+
+
 @app.post("/api/admin/test-avance")
 async def admin_test_avance(ql_admin: str = Cookie(default="")):
     """Envía AHORA al grupo (WhatsApp + Telegram) el resumen de avance de picks."""
@@ -3344,6 +3398,11 @@ async def save_picks(body: SavePicksBody):
     player_id = p.get("_id") or p.get("id")
     if not player_id:
         raise HTTPException(404, "Jugador sin ID")
+
+    # Control de invitador: si el jugador no está aprobado, no puede guardar picks.
+    _fresh_j = _db.db_find_player(phone=body.phone or "", email=body.email or "") or {}
+    if not bool(_fresh_j.get("aprobado", 1)):
+        raise HTTPException(403, "Tu registro está pendiente de aprobación por el administrador.")
 
     games, _ = _get_games_cache()
     modo_prueba = state.get("cfg", {}).get("MODO_PRUEBA", "") in ("1", "true", "True")
@@ -4302,6 +4361,14 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
         pct_1       = float(cfg.get("PCT_1_LUGAR",     "70") or "70")
         sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2")  or "2"))
         ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
+        # Estado de aprobación/invitador fresco de SQLite (por teléfono normalizado).
+        _jdb  = _db.db_get_jugadores()
+        _amap = {_normalize_phone(j.get("whatsapp", "") or ""): j for j in _jdb if j.get("whatsapp")}
+        # Jugadores ya aprobados (para el dropdown de invitador en el admin).
+        aprobados = sorted(
+            [j.get("nombre", "") for j in _jdb
+             if j.get("aprobado", 1) and not j.get("excluido") and j.get("nombre")],
+            key=lambda s: s.lower())
         paid    = 0
         players = []
         for row in rows:
@@ -4313,6 +4380,7 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
             is_paid    = pagado_raw in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X")
             if is_paid:
                 paid += 1
+            _jrec = _amap.get(_normalize_phone(d.get("WHATSAPP", d.get("TELEFONO", "")) or ""), {})
             players.append({
                 "nombre": d.get("NOMBRE", ""),
                 "email":  d.get("EMAIL", ""),
@@ -4320,6 +4388,9 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
                 "fecha":  d.get("FECHA REG.", d.get("FECHA_REGISTRO", "")),
                 "tab":    d.get("TAB_NOMBRE", ""),
                 "pagado": is_paid,
+                "id":        _jrec.get("id"),
+                "aprobado":  bool(_jrec.get("aprobado", 1)),
+                "invitador": _jrec.get("invitador", "") or "",
             })
         tie_1st, tie_2nd = _get_tie_counts()
         fee_pct = float(cfg.get("FEE_PCT", "0") or "0")
@@ -4331,7 +4402,7 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
         prize["costo"] = cost
         prize["stripe_activo"] = cfg.get("STRIPE_ACTIVO", "0") == "1"
         prize["torneo_activo"] = _torneo_activo().get("activo", False)
-        return {"prize": prize, "players": players}
+        return {"prize": prize, "players": players, "aprobados": aprobados}
     except HTTPException:
         raise
     except Exception as e:

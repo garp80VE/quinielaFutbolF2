@@ -165,6 +165,10 @@
           <label for="inp-name" class="block text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1.5">👤 Nombre completo</label>
           <input id="inp-name" type="text" name="name" autocomplete="name" placeholder="Ej: Giovanni Ramirez" class="inp-auth">
         </div>
+        <div>
+          <label for="inp-email" class="block text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1.5">📧 Correo (opcional)</label>
+          <input id="inp-email" type="email" name="email" autocomplete="email" placeholder="tucorreo@ejemplo.com" class="inp-auth">
+        </div>
       </div>
 
       <button id="btn-auth" type="submit"
@@ -1914,6 +1918,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         S.phone  = phone;
         S.nombre = r.nombre || sess.nombre || '';
         saveSession(phone, S.nombre);
+        if (!_gateEntrada(r, phone)) return;   // pendiente de aprobación → pantalla de espera
         await openDashboard(); return;
       }
     } catch(_) {}
@@ -2012,13 +2017,15 @@ async function doAuth() {
   // Si ya mostramos los campos de registro → registrar
   if (extra.style.display === 'flex') {
     const nombre = document.getElementById('inp-name').value.trim();
+    const email  = (document.getElementById('inp-email')?.value || '').trim();
     if (!nombre) return showErr(errEl,'Ingresa tu nombre');
     try {
       btnEl.disabled = true; btnEl.textContent = 'Registrando...';
-      const r = await api('POST','/api/auth/register',{phone, nombre});
+      const r = await api('POST','/api/auth/register',{phone, nombre, email});
       S.phone = phone; S.nombre = r.nombre;
       saveSession(phone, r.nombre);
-      await openDashboard();
+      // El registro queda PENDIENTE hasta que el admin asigne quién lo invitó.
+      _mostrarEsperaAprobacion(phone);
     } catch(e) { showErr(errEl, e.message); }
     finally { btnEl.disabled = false; btnEl.textContent = 'Continuar →'; }
     return;
@@ -2033,6 +2040,7 @@ async function doAuth() {
       S.pagado = r.pagado || false; S.stripe_activo = r.stripe_activo || false;
       S.reglas_ok = r.reglas_ok || false;
       saveSession(phone, r.nombre);
+      if (!_gateEntrada(r, phone)) return;   // pendiente de aprobación → pantalla de espera
       await openDashboard();
     } else {
       // Mostrar campos de registro
@@ -2217,6 +2225,55 @@ async function _checkPaymentStatus() {
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────
+// ─── Control de acceso por invitador (aprobación del admin) ────────
+let _aprobInterval = null;
+function _gateEntrada(r, phone) {
+  // r.aprobado puede no venir en versiones viejas → default true (no bloquear).
+  S.aprobado  = (r.aprobado !== false);
+  S.invitador = r.invitador || '';
+  if (!S.aprobado) { _mostrarEsperaAprobacion(phone); return false; }
+  return true;
+}
+function _mostrarEsperaAprobacion(phone) {
+  showScreen('s-auth');   // pantalla base; el overlay va encima
+  let ov = document.getElementById('aprob-overlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'aprob-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#002868,#1a3a8a);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px;color:white';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `
+    <div style="font-size:54px;margin-bottom:16px">⏳</div>
+    <h2 style="font-size:20px;font-weight:900;margin:0 0 10px">¡Registro recibido!</h2>
+    <p style="font-size:14px;color:#cbd5e1;max-width:320px;line-height:1.55;margin:0 0 20px">
+      Tu acceso está <b>pendiente de aprobación</b>. El administrador te preguntará quién te invitó y te liberará la quiniela. Deja esta pantalla abierta: <b>entrarás automáticamente</b> cuando te aprueben.</p>
+    <div class="spinner" style="margin-bottom:20px"></div>
+    <button onclick="_logoutAprob()" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);border-radius:10px;padding:8px 16px;color:white;font-weight:700;font-size:13px;cursor:pointer">Salir</button>`;
+  ov.style.display = 'flex';
+  if (_aprobInterval) clearInterval(_aprobInterval);
+  _aprobInterval = setInterval(async () => {
+    try {
+      const r = await api('POST', '/api/auth/check', {phone});
+      if (r.registered && r.aprobado !== false) {
+        clearInterval(_aprobInterval); _aprobInterval = null;
+        ov.style.display = 'none';
+        S.phone = phone; S.nombre = r.nombre || S.nombre || '';
+        S.pagado = r.pagado || false; S.stripe_activo = r.stripe_activo || false;
+        S.reglas_ok = r.reglas_ok || false; S.aprobado = true; S.invitador = r.invitador || '';
+        saveSession(phone, S.nombre);
+        await openDashboard();
+      }
+    } catch(_) {}
+  }, 8000);
+}
+function _logoutAprob() {
+  if (_aprobInterval) { clearInterval(_aprobInterval); _aprobInterval = null; }
+  const ov = document.getElementById('aprob-overlay'); if (ov) ov.style.display = 'none';
+  try { localStorage.removeItem('ql_session'); } catch(_) {}
+  location.reload();
+}
+
 async function openDashboard() {
   document.getElementById('dash-name').textContent = (S.nombre||S.phone||'').split(' ')[0];
   _updateInstallBtn();
@@ -5359,28 +5416,40 @@ async function _loadAdminPrizeNow() {
     if (!players.length) {
       playersEl.innerHTML = '<p style="text-align:center;padding:16px 8px;color:#94a3b8;font-size:13px">Sin jugadores registrados</p>';
     } else {
+      const _aprobados = res.aprobados || [];
       playersEl.innerHTML = '<p style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;padding:12px 0 4px">Jugadores</p>'
-        + players.map((pl, i) => `
-        <div style="display:flex;align-items:center;gap:10px;padding:9px 0;${i>0?'border-top:1px solid #f8fafc':''}">
-          <div style="width:34px;height:34px;border-radius:50%;background:${pl.pagado?'#15803d':'#cbd5e1'};color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0;transition:background .2s">
-            ${(pl.nombre||'?')[0].toUpperCase()}
+        + players.map((pl, i) => {
+        const pendiente = pl.aprobado === false;
+        const opts = ['<option value="">— quién lo invitó —</option>',
+          '<option value="Organizador">Organizador</option>']
+          .concat(_aprobados.filter(n => n !== pl.nombre)
+            .map(n => `<option value="${(n||'').replace(/"/g,'&quot;')}">${n}</option>`)).join('');
+        const dot = pendiente ? '#f59e0b' : (pl.pagado ? '#15803d' : '#cbd5e1');
+        return `
+        <div style="padding:9px 0;${i>0?'border-top:1px solid #f8fafc':''}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:34px;height:34px;border-radius:50%;background:${dot};color:white;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex-shrink:0">
+              ${(pl.nombre||'?')[0].toUpperCase()}
+            </div>
+            <div style="flex:1;min-width:0">
+              <p style="font-weight:700;font-size:13px;color:#1e293b;margin:0">${pl.nombre||'—'} ${pendiente?'<span style="font-size:10px;font-weight:700;color:#b45309;background:#fef3c7;border-radius:5px;padding:1px 6px">⏳ Pendiente</span>':''}</p>
+              <p style="font-size:11px;color:#94a3b8;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${pl.phone||''}</p>
+            </div>
+            <button onclick="togglePagado('${pl.phone||''}',${!pl.pagado},this)"
+              style="flex-shrink:0;border:${pl.pagado?'none':'1.5px solid #e2e8f0'};border-radius:8px;padding:6px 12px;font-size:11px;font-weight:800;cursor:pointer;background:${pl.pagado?'#dcfce7':'#f8fafc'};color:${pl.pagado?'#15803d':'#64748b'}">
+              ${pl.pagado ? '✓ Pagado' : 'Marcar'}
+            </button>
+            <button onclick="adminEliminarJugador(this)" data-phone="${pl.phone||''}" data-nombre="${(pl.nombre||'?').replace(/"/g,'&quot;')}" title="Eliminar jugador"
+              style="flex-shrink:0;border:none;border-radius:8px;padding:6px 8px;font-size:14px;cursor:pointer;background:#fff0f0;color:#ef4444">🗑</button>
           </div>
-          <div style="flex:1;min-width:0">
-            <p style="font-weight:700;font-size:13px;color:#1e293b;margin:0">${pl.nombre||'—'}</p>
-            <p style="font-size:11px;color:#94a3b8;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${pl.phone||''}</p>
-          </div>
-          <button onclick="togglePagado('${pl.phone||''}',${!pl.pagado},this)"
-            style="flex-shrink:0;border:${pl.pagado?'none':'1.5px solid #e2e8f0'};border-radius:8px;padding:6px 12px;font-size:11px;font-weight:800;cursor:pointer;transition:all .15s;background:${pl.pagado?'#dcfce7':'#f8fafc'};color:${pl.pagado?'#15803d':'#64748b'}">
-            ${pl.pagado ? '✓ Pagado' : 'Marcar'}
-          </button>
-          <button onclick="adminEliminarJugador(this)"
-            data-phone="${pl.phone||''}"
-            data-nombre="${(pl.nombre||'?').replace(/"/g,'&quot;')}"
-            title="Eliminar jugador"
-            style="flex-shrink:0;border:none;border-radius:8px;padding:6px 8px;font-size:14px;cursor:pointer;background:#fff0f0;color:#ef4444;transition:background .15s">
-            🗑
-          </button>
-        </div>`).join('');
+          ${pendiente ? `
+            <div style="display:flex;gap:6px;margin-top:8px;padding-left:44px">
+              <select id="inv-sel-${i}" style="flex:1;min-width:0;border:1.5px solid #fdba74;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff7ed;color:#1e293b">${opts}</select>
+              <button onclick="setInvitador('${pl.phone||''}', this, ${i})" style="flex-shrink:0;background:#16a34a;color:white;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:800;cursor:pointer">Liberar</button>
+            </div>`
+          : (pl.invitador ? `<p style="font-size:11px;color:#94a3b8;margin:4px 0 0;padding-left:44px">Invitó: <b style="color:#64748b">${pl.invitador}</b></p>` : '')}
+        </div>`;
+        }).join('');
     }
   } catch(e) {
     const msg = e?.message || String(e);
@@ -5436,6 +5505,21 @@ async function togglePagado(phone, paid, btn) {
     showToast('Error: ' + e.message);
     btn.textContent = prev;
     btn.disabled = false;
+  }
+}
+
+async function setInvitador(phone, btn, idx) {
+  const sel = document.getElementById('inv-sel-' + idx);
+  const inv = sel ? sel.value : '';
+  if (!inv) { showToast('Elige quién lo invitó'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    await api('POST', '/api/admin/set-invitador', { phone, invitador: inv });
+    showToast('Jugador liberado ✅');
+    loadAdminPrize(true);
+  } catch(e) {
+    showToast('Error: ' + (e.message || e));
+    if (btn) { btn.disabled = false; btn.textContent = 'Liberar'; }
   }
 }
 

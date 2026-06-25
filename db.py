@@ -86,6 +86,10 @@ def init_db():
         "ALTER TABLE jugadores ADD COLUMN excluido INTEGER DEFAULT 0",
         "ALTER TABLE jugadores ADD COLUMN excluido_fecha TEXT DEFAULT ''",
         "ALTER TABLE jugadores ADD COLUMN excluido_motivo TEXT DEFAULT ''",
+        # Control de acceso por invitador. aprobado DEFAULT 1 → los jugadores ya
+        # registrados quedan liberados; los NUEVOS registros se insertan con aprobado=0.
+        "ALTER TABLE jugadores ADD COLUMN aprobado INTEGER DEFAULT 1",
+        "ALTER TABLE jugadores ADD COLUMN invitador TEXT DEFAULT ''",
     ]:
         try:
             conn.execute(col_sql)
@@ -130,7 +134,7 @@ def db_get_jugadores() -> list:
     try:
         rows = conn.execute(
             "SELECT id, num, email, nombre, whatsapp, fecha_reg, tab_nombre, pagado, reglas_ok, "
-            "excluido, excluido_fecha, excluido_motivo "
+            "excluido, excluido_fecha, excluido_motivo, aprobado, invitador "
             "FROM jugadores ORDER BY num, id"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -173,14 +177,31 @@ def db_register_player(email, nombre, whatsapp, fecha_reg, tab_nombre) -> int:
         with conn:
             cur = conn.execute("SELECT COALESCE(MAX(num),0)+1 FROM jugadores")
             num = cur.fetchone()[0]
+            # aprobado=0: el registro público queda PENDIENTE hasta que el admin le
+            # asigne quién lo invitó (control de acceso por invitador).
             conn.execute(
-                "INSERT INTO jugadores(num,email,nombre,whatsapp,fecha_reg,tab_nombre,pagado) "
-                "VALUES(?,?,?,?,?,?,0)",
+                "INSERT INTO jugadores(num,email,nombre,whatsapp,fecha_reg,tab_nombre,pagado,aprobado) "
+                "VALUES(?,?,?,?,?,?,0,0)",
                 (num, email or "", nombre, whatsapp or "", fecha_reg, tab_nombre)
             )
             jid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
     return jid
+
+def db_set_invitador(jugador_id: int, invitador: str) -> bool:
+    """Asigna el invitador y APRUEBA al jugador (lo libera). Si invitador queda vacío,
+    revierte a pendiente (aprobado=0). Retorna True si encontró al jugador."""
+    inv = (invitador or "").strip()
+    conn = get_conn()
+    try:
+        with _db_lock:
+            with conn:
+                r = conn.execute(
+                    "UPDATE jugadores SET invitador=?, aprobado=? WHERE id=?",
+                    (inv, 1 if inv else 0, int(jugador_id)))
+        return r.rowcount > 0
+    finally:
+        conn.close()
 
 def db_mark_paid(phone: str, paid: bool = True) -> bool:
     """Marca o desmarca jugador como pagado. Retorna True si encontro el jugador."""
