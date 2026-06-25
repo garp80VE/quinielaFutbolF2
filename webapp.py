@@ -4308,23 +4308,21 @@ async def admin_save_config(body: AdminConfigSave, ql_admin: str = Cookie(defaul
 async def admin_get_players(ql_admin: str = Cookie(default="")):
     if not _admin_check(ql_admin):
         raise HTTPException(403, "No autorizado")
-    with _sheets_lock:
-        ws   = _sheets_retry(lambda: state["sh"].worksheet("JUGADORES"))
-        rows = _sheets_retry(lambda: ws.get_all_values())
-    header_idx, headers = _jugadores_headers(rows)
+    # F2 es SQLite-primario (antes leía de Sheets, vacío). Incluye el responsable
+    # (invitador) y el estado de aprobación de cada jugador.
     players = []
-    for row in rows[header_idx + 1:]:
-        if not any(c.strip() for c in row):
-            continue
-        d = {headers[i]: (row[i].strip() if i < len(row) else "") for i in range(len(headers))}
-        d = _normalize_player(d)
-        pagado_raw = d.get("PAGADO", "").upper()
+    for j in _db.db_get_jugadores():
         players.append({
-            "nombre": d.get("NOMBRE", ""),
-            "email":  d.get("EMAIL", ""),
-            "fecha":  d.get("FECHA REG.", d.get("FECHA_REGISTRO", "")),
-            "tab":    d.get("TAB_NOMBRE", ""),
-            "pagado": pagado_raw in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"),
+            "id":        j.get("id"),
+            "nombre":    j.get("nombre", ""),
+            "email":     j.get("email", ""),
+            "phone":     j.get("whatsapp", ""),
+            "fecha":     j.get("fecha_reg", ""),
+            "tab":       j.get("tab_nombre", ""),
+            "pagado":    bool(j.get("pagado")),
+            "aprobado":  bool(j.get("aprobado", 1)),
+            "invitador": j.get("invitador", "") or "",
+            "excluido":  bool(j.get("excluido")),
         })
     return {"players": players}
 
