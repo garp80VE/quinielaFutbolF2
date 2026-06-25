@@ -5420,10 +5420,11 @@ async function _loadAdminPrizeNow() {
       playersEl.innerHTML = '<p style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;padding:12px 0 4px">Jugadores</p>'
         + players.map((pl, i) => {
         const pendiente = pl.aprobado === false;
+        const _inv = pl.invitador || '';
         const opts = ['<option value="">— quién lo invitó —</option>',
-          '<option value="Organizador">Organizador</option>']
+          `<option value="Organizador" ${_inv==='Organizador'?'selected':''}>Organizador</option>`]
           .concat(_aprobados.filter(n => n !== pl.nombre)
-            .map(n => `<option value="${(n||'').replace(/"/g,'&quot;')}">${n}</option>`)).join('');
+            .map(n => `<option value="${(n||'').replace(/"/g,'&quot;')}" ${n===_inv?'selected':''}>${n}</option>`)).join('');
         const dot = pendiente ? '#f59e0b' : (pl.pagado ? '#15803d' : '#cbd5e1');
         return `
         <div style="padding:9px 0;${i>0?'border-top:1px solid #f8fafc':''}">
@@ -5442,12 +5443,15 @@ async function _loadAdminPrizeNow() {
             <button onclick="adminEliminarJugador(this)" data-phone="${pl.phone||''}" data-nombre="${(pl.nombre||'?').replace(/"/g,'&quot;')}" title="Eliminar jugador"
               style="flex-shrink:0;border:none;border-radius:8px;padding:6px 8px;font-size:14px;cursor:pointer;background:#fff0f0;color:#ef4444">🗑</button>
           </div>
-          ${pendiente ? `
-            <div style="display:flex;gap:6px;margin-top:8px;padding-left:44px">
-              <select id="inv-sel-${i}" style="flex:1;min-width:0;border:1.5px solid #fdba74;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff7ed;color:#1e293b">${opts}</select>
-              <button onclick="setInvitador('${pl.phone||''}', this, ${i})" style="flex-shrink:0;background:#16a34a;color:white;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:800;cursor:pointer">Liberar</button>
-            </div>`
-          : (pl.invitador ? `<p style="font-size:11px;color:#94a3b8;margin:4px 0 0;padding-left:44px">Invitó: <b style="color:#64748b">${pl.invitador}</b></p>` : '')}
+          ${pl.invitador ? `
+            <div id="inv-show-${i}" style="display:flex;align-items:center;gap:8px;margin-top:4px;padding-left:44px">
+              <p style="font-size:11px;color:#94a3b8;margin:0">Invitó: <b style="color:#64748b">${pl.invitador}</b></p>
+              <button onclick="_editInvitador(${i})" style="border:none;background:none;color:#3b82f6;font-size:11px;font-weight:700;cursor:pointer;padding:0">✏ cambiar</button>
+            </div>` : ''}
+          <div id="inv-edit-${i}" style="display:${pl.invitador?'none':'flex'};gap:6px;margin-top:8px;padding-left:44px">
+            <select id="inv-sel-${i}" style="flex:1;min-width:0;border:1.5px solid #fdba74;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff7ed;color:#1e293b">${opts}</select>
+            <button onclick="setInvitador('${pl.phone||''}', this, ${i})" style="flex-shrink:0;background:#16a34a;color:white;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:800;cursor:pointer">${pendiente?'Liberar':'Guardar'}</button>
+          </div>
         </div>`;
         }).join('');
     }
@@ -5508,6 +5512,13 @@ async function togglePagado(phone, paid, btn) {
   }
 }
 
+function _editInvitador(idx) {
+  const show = document.getElementById('inv-show-' + idx);
+  const edit = document.getElementById('inv-edit-' + idx);
+  if (show) show.style.display = 'none';
+  if (edit) edit.style.display = 'flex';
+}
+
 async function setInvitador(phone, btn, idx) {
   const sel = document.getElementById('inv-sel-' + idx);
   const inv = sel ? sel.value : '';
@@ -5515,7 +5526,7 @@ async function setInvitador(phone, btn, idx) {
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
   try {
     await api('POST', '/api/admin/set-invitador', { phone, invitador: inv });
-    showToast('Jugador liberado ✅');
+    showToast('✅ Responsable asignado');
     loadAdminPrize(true);
   } catch(e) {
     showToast('Error: ' + (e.message || e));
