@@ -74,6 +74,11 @@ let groupId        = null
 let reconnecting   = false
 let pairingCode    = null
 let _explicitLogout = false
+let connecting     = false      // hay un intento de conexión en curso (creado, esperando 'open')
+let reconnectTimer = null       // handle del setTimeout de reconexión pendiente
+let reconnectDelay = 5000       // backoff actual
+const RECONNECT_MIN = 5000
+const RECONNECT_MAX = 60000     // tope del backoff (1 min)
 
 // Cargar groupId persistido
 if (fs.existsSync(GROUP_ID_FILE)) {
@@ -121,11 +126,41 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms))
 }
 
+// ─── Reconexión robusta ────────────────────────────────────────────────────────
+// Agenda un reintento de conexión con backoff. Es idempotente: si ya hay uno
+// agendado / en curso / conectado / se hizo logout explícito, no hace nada.
+function scheduleReconnect(motivo = '') {
+  if (reconnectTimer || isConnected || connecting || _explicitLogout) return
+  reconnecting = true
+  const delay = reconnectDelay
+  console.log(`[WA] Reintento de conexión en ${Math.round(delay / 1000)}s ${motivo}`)
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    connectToWhatsApp().catch((e) => {
+      connecting = false
+      console.error('[WA] Reintento de conexión falló:', e.message)
+      scheduleReconnect('(tras error)')   // vuelve a agendar con backoff
+    })
+  }, delay)
+  // backoff para el siguiente intento (se resetea al conectar)
+  reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX)
+}
+
+// Watchdog: cada 30s comprueba que seguimos conectados; si no, fuerza reintento.
+// Cubre caídas silenciosas en las que el socket no emite 'close'.
+setInterval(() => {
+  if (isConnected || connecting || reconnectTimer || pairingCode || _explicitLogout) return
+  console.log('[WA] Watchdog: sin conexión → forzando reintento')
+  reconnectDelay = RECONNECT_MIN
+  scheduleReconnect('(watchdog)')
+}, 30000)
+
 // ─── Conexión Baileys ─────────────────────────────────────────────────────────
 
 // pairingPhone: si se pasa, llama requestPairingCode inmediatamente tras crear el socket
 // onCode: callback(code) cuando el código esté listo
 async function connectToWhatsApp(pairingPhone = null, onCode = null) {
+  connecting = true
   fs.mkdirSync(SESSION_PATH, { recursive: true })
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_PATH)
   const { version } = await fetchLatestBaileysVersion()
@@ -193,44 +228,42 @@ async function connectToWhatsApp(pairingPhone = null, onCode = null) {
 
     if (connection === 'open') {
       isConnected    = true
+      connecting     = false
       pairingCode    = null
       reconnecting   = false
+      reconnectDelay = RECONNECT_MIN          // resetear backoff
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       connectedPhone = sock.user?.id?.split(':')[0] || null
       console.log(`[WA] ✅ Conectado como: +${connectedPhone}`)
     }
 
     if (connection === 'close') {
       isConnected    = false
+      connecting     = false
       connectedPhone = null
       const reason   = new Boom(lastDisconnect?.error)?.output?.statusCode
-      const shouldReconnect = reason !== DisconnectReason.loggedOut
+      console.log(`[WA] Desconectado. Razón: ${reason}`)
 
-      console.log(`[WA] Desconectado. Razón: ${reason} | Reconectar: ${shouldReconnect}`)
-
-      if (shouldReconnect && !reconnecting) {
-        reconnecting = true
-        setTimeout(connectToWhatsApp, 5000)
-      } else if (!shouldReconnect) {
-        if (_explicitLogout) {
-          // Logout explícito → borrar credenciales
-          _explicitLogout = false
-          pairingCode = null
-          // No borramos groupId ni group_id.txt aquí: si se pidió eliminar
-          // el grupo, /disconnect ya lo hizo. En una desconexión normal el
-          // grupo se conserva (KEEP) para no tener que reelegirlo.
-          const KEEP = new Set(['group_id.txt', 'opted_out.json'])
-          if (fs.existsSync(SESSION_PATH)) {
-            for (const f of fs.readdirSync(SESSION_PATH)) {
-              if (!KEEP.has(f)) {
-                try { fs.rmSync(path.join(SESSION_PATH, f), { recursive: true, force: true }) } catch {}
-              }
+      if (_explicitLogout) {
+        // Logout explícito (admin pulsó Desconectar) → borrar credenciales y NO
+        // reconectar. Conservamos group_id.txt y opted_out.json (KEEP).
+        _explicitLogout = false
+        pairingCode = null
+        const KEEP = new Set(['group_id.txt', 'opted_out.json'])
+        if (fs.existsSync(SESSION_PATH)) {
+          for (const f of fs.readdirSync(SESSION_PATH)) {
+            if (!KEEP.has(f)) {
+              try { fs.rmSync(path.join(SESSION_PATH, f), { recursive: true, force: true }) } catch {}
             }
           }
-          console.log('[WA] Credenciales de sesión borradas (logout explícito)')
-        } else {
-          console.log('[WA] 401 recibido (posiblemente rolling deploy) — sesión en disco conservada')
         }
+        console.log('[WA] Credenciales borradas (logout explícito) — no se reconecta')
+        return
       }
+
+      // Cualquier otra caída (timeout, red, 401 por rolling deploy, etc.):
+      // reintentar siempre. La sesión en disco se conserva.
+      scheduleReconnect(`(razón ${reason})`)
     }
   })
 }
@@ -269,6 +302,8 @@ app.post('/pair', async (req, res) => {
     // Necesario porque si hay un socket en loop de 408 (timeout de sesión vieja),
     // requestPairingCode fallará con "Connection Closed".
     reconnecting = true   // bloquea el setTimeout pendiente para que no relance
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+    connecting = false
     if (sock) {
       try { sock.ev.removeAllListeners(); sock.end?.() } catch {}
       sock = null
@@ -572,4 +607,8 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log(`[WA] Servidor escuchando en http://127.0.0.1:${PORT}`)
 })
 
-connectToWhatsApp().catch(console.error)
+connectToWhatsApp().catch((e) => {
+  connecting = false
+  console.error('[WA] Conexión inicial falló:', e.message)
+  scheduleReconnect('(arranque)')
+})

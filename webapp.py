@@ -5809,6 +5809,65 @@ async def admin_test_notif(body: dict = None, ql_admin: str = Cookie(default="")
     return {"ok": True, "results": results}
 
 
+@app.post("/api/admin/test-notif-juego")
+async def admin_test_notif_juego(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Envía AHORA una notificación con el estado REAL del partido en vivo
+    (marcador y minuto actuales) por push + Telegram + WhatsApp. Si no hay
+    ninguno en vivo, usa el primer partido no finalizado. ?key=CLAVE_ADMIN."""
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado. Usa ?key=CLAVE_ADMIN.")
+    games, _ = _get_games_cache()
+    _vivos = {"EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"}
+    g = (next((x for x in games if x.get("estado", "") in _vivos), None)
+         or next((x for x in games if x.get("estado", "") not in ("FINAL",) and x.get("espn_id")), None)
+         or (games[0] if games else None))
+    if not g:
+        return {"ok": False, "msg": "No hay partidos cargados."}
+
+    eq1, eq2 = g.get("eq1", ""), g.get("eq2", "")
+    b1, b2   = _eq(eq1), _eq(eq2)
+    g1, g2   = g.get("gol1", "") or "0", g.get("gol2", "") or "0"
+    estado   = g.get("estado", "PROG")
+    minuto   = _live_clocks.get(g.get("espn_id", ""), "")
+    if estado in _vivos:
+        min_txt = f" ({minuto}')" if minuto and minuto not in ("MT",) else (" (MT)" if estado == "MEDIO TIEMPO" else "")
+        encab   = "⚽ MARCADOR EN VIVO"
+        cuerpo  = f"{b1} {g1} – {g2} {b2}{min_txt}"
+    elif estado == "FINAL":
+        encab  = "🏁 PARTIDO FINALIZADO"
+        cuerpo = f"{b1} {g1} – {g2} {b2}"
+    else:
+        encab  = "🟡 PRÓXIMO PARTIDO"
+        cuerpo = f"{b1} vs {b2}"
+
+    titulo = f"🧪 PRUEBA · {encab}"
+    results = {}
+    # Push
+    if _push_subs:
+        try:
+            _send_push_all(titulo, cuerpo, {"tipo": "test", "url": "/"})
+            results["push"] = f"{len(_push_subs)} enviado(s)"
+        except Exception as e:
+            results["push"] = f"Error: {e}"
+    else:
+        results["push"] = "Sin suscriptores"
+    # Telegram
+    try:
+        _tg_send(f"🧪 <b>{encab}</b>\n{cuerpo}")
+        results["telegram"] = "Enviado"
+    except Exception as e:
+        results["telegram"] = f"Error: {e}"
+    # WhatsApp
+    try:
+        _wa("POST", "/send", json={"message": f"🧪 {encab}\n{cuerpo}"})
+        results["whatsapp"] = "Enviado"
+    except Exception as e:
+        results["whatsapp"] = f"Error: {e}"
+
+    return {"ok": True, "juego": {"jgo": g.get("jgo"), "estado": estado, "texto": cuerpo}, "results": results}
+
+
 @app.post("/api/admin/push-test")
 async def push_test(ql_admin: str = Cookie(default="")):
     """Envía una notificación push de prueba a todos los suscriptores."""
