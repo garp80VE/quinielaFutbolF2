@@ -36,8 +36,22 @@ import { fileURLToPath } from 'url'
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const SESSION_PATH = process.env.SESSION_PATH
-  || path.join(__dirname, 'baileys_session')
+// Persistencia de la sesión de WhatsApp:
+//   1) SESSION_PATH si está definido (Railway recomendado: /data/baileys_session)
+//   2) /data/baileys_session si existe el volumen /data (mismo volumen que la BD)
+//   3) ./baileys_session (local / efímero) como último recurso
+// Sin esto, cada despliegue reinicia el contenedor y borra la sesión efímera,
+// obligando a re-vincular el número y perdiendo el grupo guardado.
+function _resolveSessionPath() {
+  if (process.env.SESSION_PATH) return process.env.SESSION_PATH
+  try {
+    if (fs.existsSync('/data') && fs.statSync('/data').isDirectory())
+      return '/data/baileys_session'
+  } catch {}
+  return path.join(__dirname, 'baileys_session')
+}
+const SESSION_PATH = _resolveSessionPath()
+console.log(`[WA] SESSION_PATH = ${SESSION_PATH}`)
 const GROUP_ID_FILE   = path.join(SESSION_PATH, 'group_id.txt')
 const OPT_OUT_FILE    = path.join(SESSION_PATH, 'opted_out.json')  // usuarios que se salieron
 const PORT = parseInt(process.env.WA_PORT || '3001')
