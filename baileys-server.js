@@ -405,6 +405,42 @@ app.post('/update-group', async (req, res) => {
   }
 })
 
+// GET /list-groups → lista los grupos donde el bot YA es miembro (para ELEGIR uno
+// existente en vez de crear uno). El admin crea/puebla el grupo a mano; el bot solo
+// necesita estar dentro para poder enviar mensajes.
+app.get('/list-groups', async (req, res) => {
+  if (!isConnected) return res.status(503).json({ ok: false, msg: 'WhatsApp no conectado' })
+  try {
+    const all = await sock.groupFetchAllParticipating()
+    const groups = Object.values(all || {})
+      .map(g => ({ id: g.id, name: g.subject || '(grupo sin nombre)', size: (g.participants || []).length }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    res.json({ ok: true, groups, selected: groupId || null })
+  } catch (e) {
+    console.error('[WA] Error listando grupos:', e)
+    res.status(500).json({ ok: false, msg: e.message })
+  }
+})
+
+// POST /select-group  body: { groupId }
+// Fija como destino un grupo existente (sin crear ni agregar a nadie).
+app.post('/select-group', async (req, res) => {
+  if (!isConnected) return res.status(503).json({ ok: false, msg: 'WhatsApp no conectado' })
+  const { groupId: gid } = req.body || {}
+  if (!gid) return res.status(400).json({ ok: false, msg: 'Falta el campo "groupId"' })
+  try {
+    const meta = await sock.groupMetadata(gid)
+    if (!meta || !meta.id) return res.status(404).json({ ok: false, msg: 'Grupo no encontrado' })
+    saveGroupId(meta.id)
+    const members = (meta.participants || []).length
+    console.log(`[WA] Grupo seleccionado: "${meta.subject}" (${meta.id}) — ${members} miembros`)
+    res.json({ ok: true, groupId: meta.id, name: meta.subject, members })
+  } catch (e) {
+    console.error('[WA] Error seleccionando grupo:', e)
+    res.status(500).json({ ok: false, msg: e.message })
+  }
+})
+
 // POST /add-member  body: { phone: "+521234..." }
 // Agrega un nuevo participante al grupo (se llama automáticamente al registrarse)
 app.post('/add-member', async (req, res) => {

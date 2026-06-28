@@ -5884,6 +5884,23 @@ async def wa_create_group(ql_admin: str = Cookie(default="")):
     )
 
 
+@app.get("/api/admin/wa-groups")
+async def wa_groups(ql_admin: str = Cookie(default="")):
+    """Lista los grupos de WhatsApp donde el número ya es miembro (para elegir uno)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    return _wa("GET", "/list-groups")
+
+
+@app.post("/api/admin/wa-select-group")
+async def wa_select_group(body: dict = None, ql_admin: str = Cookie(default="")):
+    """Fija como destino de notificaciones un grupo EXISTENTE (por su id)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    gid = (body or {}).get("groupId", "")
+    if not gid:
+        raise HTTPException(400, "Falta el campo 'groupId'")
+    return _wa("POST", "/select-group", json={"groupId": gid})
+
+
 @app.post("/api/admin/wa-add-member")
 async def wa_add_member(body: dict = None, ql_admin: str = Cookie(default="")):
     """Agrega un jugador individual al grupo de WhatsApp."""
