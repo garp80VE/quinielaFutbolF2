@@ -2928,19 +2928,15 @@ function renderGames(games) {
     // NO sobreescribir cuando la inferencia ya devolvió un equipo real — esto evita
     // que picks viejos/incorrectos corrompan los cruces del bracket.
     const _pickIsRealName = s => !!(s && s !== 'TBD' && !isPlaceholder(s) && !s.startsWith('Gan. ') && !s.startsWith('Perdedor '));
+    // Para R16+: la inferencia EN VIVO del front (_inferBracketSlot sobre S.picks)
+    // tiene prioridad — refleja al INSTANTE el cambio de ganador de un 16vo. peq1/peq2
+    // (backend) y eq1/eq2 (guardado) solo como FALLBACK cuando la inferencia no resolvió.
+    // Si el backend ganara, mostraría el equipo viejo (el bug de "no me refresca el octavo").
     if (g.ronda && g.ronda !== 'R32') {
       const _inf1Ok = !!(rEq1 && rEq1 !== 'TBD' && !rEq1.startsWith('Gan. ') && !rEq1.startsWith('Perdedor ') && !isPlaceholder(rEq1));
       const _inf2Ok = !!(rEq2 && rEq2 !== 'TBD' && !rEq2.startsWith('Gan. ') && !rEq2.startsWith('Perdedor ') && !isPlaceholder(rEq2));
-      if (!_inf1Ok && _pickIsRealName(p.eq1)) rEq1 = p.eq1;
-      if (!_inf2Ok && _pickIsRealName(p.eq2)) rEq2 = p.eq2;
-    }
-    // Fuente unica de verdad: el backend ya infiere los equipos PREDICHOS del
-    // jugador (peq1/peq2). Preferirlos evita que el _inferBracketSlot del front
-    // diverja (p.ej. en 3er puesto, donde mostraba los equipos reales en vez de
-    // los que el jugador eligio). Asi se ve el ganador que el jugador predijo.
-    if (g.ronda && g.ronda !== 'R32') {
-      if (_pickIsRealName(p.peq1)) rEq1 = p.peq1;
-      if (_pickIsRealName(p.peq2)) rEq2 = p.peq2;
+      if (!_inf1Ok) { if (_pickIsRealName(p.peq1)) rEq1 = p.peq1; else if (_pickIsRealName(p.eq1)) rEq1 = p.eq1; }
+      if (!_inf2Ok) { if (_pickIsRealName(p.peq2)) rEq2 = p.peq2; else if (_pickIsRealName(p.eq2)) rEq2 = p.eq2; }
     }
     // Para R32 los equipos están fijos; para rondas superiores son TBD → dropdown
     // Los inferred "Gan. " y "Perdedor " son semi-conocidos: se muestran como <p> pero no como equipo confirmado
