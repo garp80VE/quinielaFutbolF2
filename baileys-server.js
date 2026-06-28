@@ -201,8 +201,9 @@ async function connectToWhatsApp(pairingPhone = null, onCode = null) {
           // Logout explícito → borrar credenciales
           _explicitLogout = false
           pairingCode = null
-          groupId     = null
-          if (fs.existsSync(GROUP_ID_FILE)) fs.unlinkSync(GROUP_ID_FILE)
+          // No borramos groupId ni group_id.txt aquí: si se pidió eliminar
+          // el grupo, /disconnect ya lo hizo. En una desconexión normal el
+          // grupo se conserva (KEEP) para no tener que reelegirlo.
           const KEEP = new Set(['group_id.txt', 'opted_out.json'])
           if (fs.existsSync(SESSION_PATH)) {
             for (const f of fs.readdirSync(SESSION_PATH)) {
@@ -522,9 +523,13 @@ app.post('/disconnect', async (req, res) => {
       }
     }
 
-    groupId     = null
     pairingCode = null
-    if (fs.existsSync(GROUP_ID_FILE)) fs.unlinkSync(GROUP_ID_FILE)
+    // Solo olvidar el grupo si se pidió eliminarlo. En una desconexión
+    // normal conservamos group_id.txt para que al reconectar siga elegido.
+    if (deleteGroup) {
+      groupId = null
+      if (fs.existsSync(GROUP_ID_FILE)) fs.unlinkSync(GROUP_ID_FILE)
+    }
 
     _explicitLogout = true
     if (sock) await sock.logout().catch(() => {})

@@ -6915,7 +6915,7 @@ async function waUpdateGroup() {
 
 async function waTest() {
   try {
-    await api('POST', '/api/admin/wa-send', { message: '🔔 Mensaje de prueba desde Quiniela ✅' });
+    await api('POST', '/api/admin/wa-test', { message: '🔔 Mensaje de prueba desde Quiniela ✅' });
     showToast('✅ Mensaje de prueba enviado al grupo');
   } catch(e) { showToast('❌ Error: ' + e.message); }
 }
