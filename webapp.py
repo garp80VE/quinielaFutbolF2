@@ -1629,10 +1629,15 @@ def _tg_send_document(chat_id_user: str, filename: str, content: bytes, caption:
         print(f"[telegram-doc] {e}")
 
 
-def _jugador_picks_payload(player_id, nombre, telefono, email, games):
+def _jugador_picks_payload(player_id, nombre, telefono, email, games,
+                           by_jgo=None, by_ronda=None):
     """Dict con los picks de un jugador (sobre los juegos pickables).
+    En rondas superiores resuelve eq1/eq2 al equipo que el propio jugador
+    dedujo con sus picks (no el placeholder "Round of 32 1 Winner").
     Retorna (data, llenos)."""
     picks = _db.db_get_picks(player_id)
+    if by_jgo is None or by_ronda is None:
+        by_jgo, by_ronda = _db.build_bracket_index(games)
     lista = []; llenos = 0
     for g in games:
         if not _juego_pickable(g):
@@ -1641,9 +1646,11 @@ def _jugador_picks_payload(player_id, nombre, telefono, email, games):
         g1, g2, gan = p.get("g1", ""), p.get("g2", ""), p.get("gan", "")
         if _pick_completo(p):
             llenos += 1
+        eq1 = _db._disp_team(g, "eq1", by_jgo, by_ronda, picks) or g.get("eq1", "")
+        eq2 = _db._disp_team(g, "eq2", by_jgo, by_ronda, picks) or g.get("eq2", "")
         lista.append({
             "jgo": str(g.get("jgo", "")), "ronda": g.get("grupo", "") or g.get("ronda", ""),
-            "eq1": g.get("eq1", ""), "eq2": g.get("eq2", ""),
+            "eq1": eq1, "eq2": eq2,
             "g1": g1, "g2": g2, "ganador": gan,
         })
     total = sum(1 for g in games if _juego_pickable(g))
@@ -1655,9 +1662,11 @@ def _jugador_picks_payload(player_id, nombre, telefono, email, games):
 def _todos_los_picks_json(games):
     """JSON con TODOS los jugadores y sus picks. Retorna (data, bytes)."""
     jugadores = []
+    by_jgo, by_ronda = _db.build_bracket_index(games)
     for j in _db.db_get_jugadores():
         d, _ = _jugador_picks_payload(j["id"], j.get("nombre", ""),
-                                      j.get("whatsapp", ""), j.get("email", ""), games)
+                                      j.get("whatsapp", ""), j.get("email", ""), games,
+                                      by_jgo, by_ronda)
         d["excluido"] = bool(j.get("excluido"))
         jugadores.append(d)
     out = {"n_jugadores": len(jugadores), "total_juegos": sum(1 for g in games if _juego_pickable(g)),
