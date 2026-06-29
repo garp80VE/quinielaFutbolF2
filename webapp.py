@@ -3597,6 +3597,11 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
     vivos = _db._equipos_vivos(games)          # equipos aún no eliminados
     picks = _db.db_get_picks(pid)
 
+    cfg = state.get("cfg", {})
+    vL = int(cfg.get("PTS_LOGRO", 1) or 1); vG = int(cfg.get("PTS_GAN", 2) or 2)
+    v1 = int(cfg.get("PTS_GOL1", 1) or 1); v2 = int(cfg.get("PTS_GOL2", 1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
+
     def _is_ph(n):
         n = (n or "").strip()
         return (not n) or _db._is_placeholder(n) or n.startswith("Gan. ") or n.startswith("Perdedor ")
@@ -3629,14 +3634,34 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
             estado = g.get("estado", "")
             jugado = bool(estado) and estado != "PROG"
             real_gan = (g.get("ganador") or "").strip()
+            st1, st2, stw = _status(e1), _status(e2), _status(ganp)
+            es_final = key == "FINAL"
+            # Puntos: si ya se jugó → ganados reales; si está pendiente → máximo
+            # aún disponible según qué equipos predichos siguen vivos.
+            if jugado:
+                _, _, _, _, ganado = _db.calc_pts_inferred(
+                    g, pk, by_jgo, by_ronda, picks, vL, vG, v1, v2, vC)
+                max_disp = ganado
+            else:
+                ganado = None
+                if st1 != "alive" and st2 != "alive":
+                    max_disp = 0   # ambos equipos muertos → no suma nada
+                else:
+                    max_disp = vL                                  # logro (no-empate)
+                    if stw == "alive": max_disp += vG              # ganador
+                    if st1 == "alive": max_disp += v1              # gol equipo 1
+                    if st2 == "alive": max_disp += v2              # gol equipo 2
+                    if es_final and stw == "alive": max_disp += vC # campeón
             matches.append({
                 "jgo":    js,
-                "eq1":    {"name": ("?" if _is_ph(e1) else e1), "status": _status(e1)},
-                "eq2":    {"name": ("?" if _is_ph(e2) else e2), "status": _status(e2)},
-                "winner": {"name": ("?" if _is_ph(ganp) else ganp), "status": _status(ganp)},
+                "eq1":    {"name": ("?" if _is_ph(e1) else e1), "status": st1},
+                "eq2":    {"name": ("?" if _is_ph(e2) else e2), "status": st2},
+                "winner": {"name": ("?" if _is_ph(ganp) else ganp), "status": stw},
                 "g1":     pk.get("g1", ""), "g2": pk.get("g2", ""),
                 "jugado": jugado,
                 "acerto": bool(jugado and ganp and real_gan and ganp == real_gan),
+                "max":    max_disp,
+                "ganado": ganado,
             })
         rondas.append({"key": key, "label": label, "matches": matches})
 

@@ -3893,9 +3893,23 @@ function _renderMiCuadro(r) {
     const isW2 = w.name!=='?' && m.eq2.name===w.name;
     const mark = m.jugado ? (m.acerto ? ' <span style="color:#15803d">✓</span>' : ' <span style="color:#b91c1c">✗</span>') : '';
     const goles = (m.g1!=='' && m.g2!=='') ? `<span style="color:#94a3b8;font-size:9px"> (${esc(m.g1)}-${esc(m.g2)})</span>` : '';
+    // Puntos: ganados (si ya se jugó) o máximo disponible según equipos vivos
+    let ptsChip = '';
+    if (m.jugado) {
+      const g = m.ganado || 0;
+      const col = g > 0 ? {fg:'#15803d',bg:'#dcfce7'} : {fg:'#94a3b8',bg:'#f1f5f9'};
+      ptsChip = `<span style="font-size:8.5px;font-weight:800;color:${col.fg};background:${col.bg};border-radius:5px;padding:1px 5px">+${g} pt</span>`;
+    } else {
+      const mx = (m.max != null) ? m.max : 0;
+      const col = mx === 0 ? {fg:'#b91c1c',bg:'#fee2e2'} : (mx >= 5 ? {fg:'#15803d',bg:'#dcfce7'} : {fg:'#0369a1',bg:'#e0f2fe'});
+      ptsChip = `<span style="font-size:8.5px;font-weight:800;color:${col.fg};background:${col.bg};border-radius:5px;padding:1px 5px">máx ${mx} pt</span>`;
+    }
     return `<div style="border:1.5px solid ${bd};border-radius:8px;padding:4px 6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)">
       ${teamRow(m.eq1, isW1)}${teamRow(m.eq2, isW2)}
-      <div style="font-size:9px;color:#64748b;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">→ <b>${esc(w.name)}</b>${goles}${mark}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:2px">
+        <span style="font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">→ <b>${esc(w.name)}</b>${goles}${mark}</span>
+        ${ptsChip}
+      </div>
     </div>`;
   }
   const cols = rondas.map(rd => {
