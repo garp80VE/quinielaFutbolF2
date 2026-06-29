@@ -3818,6 +3818,8 @@ async def get_game_picks(jgo: int = Query(...)):
     grouped = _db.db_get_all_picks_grouped()
     game_picks = []
     for _pid, data in grouped.items():
+        if data.get("excluido"):
+            continue   # los jugadores excluidos no aparecen en la comparación
         pp = data["picks"]
         pk = pp.get(str(jgo))
         if not pk:
@@ -3878,6 +3880,8 @@ def _compute_compare_picks() -> dict:
 
         game_picks = []
         for _pid, data in grouped.items():
+            if data.get("excluido"):
+                continue   # los jugadores excluidos no aparecen en la comparación
             pp = data["picks"]
             pk = pp.get(jgo_str)
             if not pk:

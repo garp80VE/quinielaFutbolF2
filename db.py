@@ -456,7 +456,7 @@ def db_get_all_picks_grouped() -> dict:
     conn = get_conn()
     try:
         rows = conn.execute("""
-            SELECT p.jugador_id, j.nombre, p.jgo,
+            SELECT p.jugador_id, j.nombre, j.excluido, p.jgo,
                    p.g1_pick, p.g2_pick, p.gan_pick, p.eq1_pick, p.eq2_pick
             FROM picks p JOIN jugadores j ON j.id = p.jugador_id
         """).fetchall()
@@ -464,7 +464,9 @@ def db_get_all_picks_grouped() -> dict:
         for r in rows:
             pid = r["jugador_id"]
             if pid not in out:
-                out[pid] = {"nombre": r["nombre"], "picks": {}}
+                out[pid] = {"nombre": r["nombre"],
+                            "excluido": bool(r["excluido"]),
+                            "picks": {}}
             out[pid]["picks"][str(r["jgo"])] = {
                 "g1": r["g1_pick"], "g2": r["g2_pick"], "gan": r["gan_pick"],
                 "eq1": r["eq1_pick"] or "", "eq2": r["eq2_pick"] or "",
