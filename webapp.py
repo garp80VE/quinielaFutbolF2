@@ -3652,6 +3652,14 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
                     if st1 == "alive": max_disp += v1              # gol equipo 1
                     if st2 == "alive": max_disp += v2              # gol equipo 2
                     if es_final and stw == "alive": max_disp += vC # campeón
+            real = None
+            if jugado:
+                real = {
+                    "eq1": (g.get("eq1") or "").strip(),
+                    "eq2": (g.get("eq2") or "").strip(),
+                    "g1":  g.get("gol1", ""), "g2": g.get("gol2", ""),
+                    "gan": real_gan,
+                }
             matches.append({
                 "jgo":    js,
                 "eq1":    {"name": ("?" if _is_ph(e1) else e1), "status": st1},
@@ -3662,6 +3670,7 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
                 "acerto": bool(jugado and ganp and real_gan and ganp == real_gan),
                 "max":    max_disp,
                 "ganado": ganado,
+                "real":   real,
             })
         rondas.append({"key": key, "label": label, "matches": matches})
 
