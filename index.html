@@ -3877,8 +3877,11 @@ function _renderMiCuadro(r) {
 
   // Alto fijo del cuadro: las columnas se reparten con space-around → cada ronda
   // queda centrada frente a sus alimentadoras (efecto bracket sin líneas SVG).
-  const maxMatches = Math.max(...rondas.map(rd => rd.matches.length));
-  const BOXH = 58, H = Math.max(260, maxMatches * BOXH);
+  // Cada ronda usa slots cuya altura se DUPLICA (R32=1×, octavos=2×, cuartos=4×…)
+  // y la caja se centra en su slot → alineación exacta de cada cruce con sus dos
+  // alimentadores, sin depender del alto del contenido.
+  const RIDX = { R32:0, R16:1, QF:2, SF:3, '3ER':4, FINAL:4 };
+  const BASE = 64, H = 16 * BASE;
 
   function teamRow(t, isWin) {
     const c = COL[t.status] || COL.unknown;
@@ -3916,12 +3919,14 @@ function _renderMiCuadro(r) {
     const esTercer = rd.key === '3ER';
     const lblColor = esTercer ? '#b45309' : '#047857';
     const lbl = esTercer ? '🥉 Tercer puesto' : esc(rd.label);
+    const idx = (RIDX[rd.key] != null) ? RIDX[rd.key] : 0;
+    const slotH = BASE * Math.pow(2, idx);
+    const slots = rd.matches.map(m =>
+      `<div style="height:${slotH}px;display:flex;flex-direction:column;justify-content:center;padding:0 1px">${matchBox(m)}</div>`).join('');
     return `
     <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column">
       <p style="font-size:10px;font-weight:800;color:${lblColor};text-transform:uppercase;letter-spacing:.4px;margin:0;text-align:center;position:sticky;top:0;background:#fff;z-index:2;padding:3px 0 6px">${lbl}</p>
-      <div style="display:flex;flex-direction:column;justify-content:space-around;height:${H}px;gap:6px">
-        ${rd.matches.map(matchBox).join('')}
-      </div>
+      <div style="height:${H}px">${slots}</div>
     </div>`;
   }).join('');
 
@@ -3932,7 +3937,7 @@ function _renderMiCuadro(r) {
   const champCol = `
     <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column">
       <p style="font-size:10px;font-weight:800;color:#047857;text-transform:uppercase;letter-spacing:.4px;margin:0;text-align:center;position:sticky;top:0;background:#fff;z-index:2;padding:3px 0 6px">Campeón</p>
-      <div style="display:flex;flex-direction:column;justify-content:center;height:${H}px">
+      <div style="height:${H}px;display:flex;flex-direction:column;justify-content:center">
         <div style="background:${cc.bg};border:2px solid ${cc.b};border-radius:12px;padding:12px;text-align:center">
           <p style="font-size:18px;margin:0">🏆</p>
           <p style="font-size:15px;font-weight:900;color:${cc.fg};margin:2px 0 0;${c.status==='dead'?'text-decoration:line-through':''}">${esc(c.name)}</p>
