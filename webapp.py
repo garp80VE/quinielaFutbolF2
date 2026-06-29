@@ -3666,8 +3666,19 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
             return "unknown"
         return "alive" if name in vivos else "dead"
 
+    _FLAG_SUB = {"🏴󠁧󠁢󠁥󠁮󠁧󠁿": "gb-eng", "🏴󠁧󠁢󠁳󠁣󠁴󠁿": "gb-sct", "🏴󠁧󠁢󠁷󠁬󠁳󠁿": "gb-wls"}
     def _flag(name):
-        return _BANDERAS.get((name or "").strip().lower(), "")
+        """Código ISO para flagcdn (imagen de bandera, funciona en todas las
+        plataformas — Windows no renderiza las banderas emoji)."""
+        e = _BANDERAS.get((name or "").strip().lower(), "")
+        if not e:
+            return ""
+        if e in _FLAG_SUB:
+            return _FLAG_SUB[e]
+        ri = [c for c in e if 0x1F1E6 <= ord(c) <= 0x1F1FF]
+        if len(ri) == 2:
+            return "".join(chr(ord(c) - 0x1F1E6 + ord('a')) for c in ri)
+        return ""
 
     ROND = [("R32", "Dieciseisavos"), ("R16", "Octavos"), ("QF", "Cuartos"),
             ("SF", "Semis"), ("3ER", "Tercer puesto"), ("FINAL", "Final")]
