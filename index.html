@@ -5610,8 +5610,8 @@ async function _loadAdminPrizeNow() {
               </span>
             </label>
             <div>
-              <p style="font-size:12px;font-weight:700;color:#15803d;margin:0">Pago con tarjeta (Stripe)</p>
-              <p style="font-size:10px;color:#6b7280;margin:0" id="adm-stripe-label">${stripeActivo ? 'Activo — los jugadores ven el botón de pago' : 'Inactivo — banner de pago oculto'}</p>
+              <p style="font-size:12px;font-weight:700;color:#15803d;margin:0">Cobro a jugadores</p>
+              <p style="font-size:10px;color:#6b7280;margin:0" id="adm-stripe-label">${stripeActivo ? 'Activo — los jugadores ven cómo pagar' : 'Inactivo — banner de pago oculto'}</p>
             </div>
           </div>
 
@@ -5718,11 +5718,11 @@ async function toggleStripeActivo(checked) {
   if (slider) slider.style.background = checked ? '#16a34a' : '#cbd5e1';
   if (knob)   knob.style.left         = checked ? '18px' : '2px';
   if (label)  label.textContent       = checked
-    ? 'Activo — los jugadores ven el botón de pago'
+    ? 'Activo — los jugadores ven cómo pagar'
     : 'Inactivo — banner de pago oculto';
   try {
     await api('POST', '/api/admin/config', { fields: { STRIPE_ACTIVO: checked ? '1' : '0' } });
-    showToast(checked ? '✅ Pago con tarjeta activado' : '🔒 Pago con tarjeta desactivado');
+    showToast(checked ? '✅ Cobro a jugadores activado' : '🔒 Cobro a jugadores desactivado');
   } catch(e) {
     showToast('Error guardando configuración');
   }
