@@ -4835,12 +4835,18 @@ async def sorteo_estado():
             dt_utc_sorteo = _sorteo_dt_utc(cfg, fecha, hora)
             ahora_utc     = _dt2.now(_tz2.utc).replace(tzinfo=None)
             minutos       = (dt_utc_sorteo - ahora_utc).total_seconds() / 60
+            # Ventana de gracia tras la hora del sorteo: si la fecha ya pasó pero
+            # hace poco (≤6 h), seguimos en lobby esperando que el admin lance. Si
+            # pasó hace mucho (fecha vieja/obsoleta), NO activamos el sorteo: se
+            # mantiene 'idle' y la pestaña permanece oculta.
+            _GRACIA_MIN = 6 * 60
             if fase_actual == "idle":
-                if minutos <= 0:
+                if -_GRACIA_MIN <= minutos <= 0:
                     _sorteo["fase"] = "lobby"
                     fase_actual = "lobby"
-                elif minutos <= 15:
+                elif 0 < minutos <= 15:
                     fase_actual = "lobby"  # mostrar tab pero no cambiar estado
+                # minutos < -gracia → fecha pasada obsoleta → seguir idle (tab oculto)
             # Precompute eligibles when entering lobby so they show on screen
             if fase_actual == "lobby" and not _sorteo["elegibles"]:
                 try:
