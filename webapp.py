@@ -1946,11 +1946,36 @@ def _updater_loop():
 
                 if sc["estado"] != "PROG" and estado_prev == "PROG":
                     _b1, _b2 = _eq(eq1), _eq(eq2)
-                    _tg_send(f"\U0001f7e1 <b>INICIO:</b> {_b1} vs {_b2}\nJornada")
-                    _send_push_all("\u26bd Partido iniciado", f"{_b1} vs {_b2}",
+                    # Distribuci\u00f3n de apuestas: cu\u00e1ntos predijeron cada equipo a
+                    # los 90' (1 / empate / 2). En empate a 90' avanza por penales.
+                    dist_txt = ""
+                    try:
+                        def _ni(x):
+                            try: return int(str(x).strip())
+                            except (ValueError, TypeError): return None
+                        n1 = ne = n2 = 0
+                        for _p in _db.db_get_all_picks_for_game(jgo):
+                            g1p, g2p = _ni(_p.get("g1_pick")), _ni(_p.get("g2_pick"))
+                            if g1p is None or g2p is None:
+                                continue
+                            if g1p == g2p:
+                                ne += 1
+                            else:
+                                gn = (_p.get("gan_pick") or "").strip()
+                                if gn == eq1:   n1 += 1
+                                elif gn == eq2: n2 += 1
+                                elif g1p > g2p: n1 += 1
+                                else:           n2 += 1
+                        tot = n1 + ne + n2
+                        if tot:
+                            dist_txt = f"\n{tot} apuestas \u00b7 {n1} {_b1} \u00b7 {ne} empate \u00b7 {n2} {_b2}"
+                    except Exception as _de:
+                        print(f"[updater] dist inicio: {_de}")
+                    _tg_send(f"\U0001f7e1 <b>INICIO:</b> {_b1} vs {_b2}{dist_txt}")
+                    _send_push_all("\u26bd Partido iniciado", f"{_b1} vs {_b2}{dist_txt}",
                                    {"tipo": "inicio", "eq1": eq1, "eq2": eq2})
                     try:
-                        _wa("POST", "/send", json={"message": f"\U0001f7e1 INICIO: {_b1} vs {_b2}\n"})
+                        _wa("POST", "/send", json={"message": f"\U0001f7e1 INICIO: {_b1} vs {_b2}{dist_txt}"})
                     except Exception as e:
                         print(f"[WA] Error inicio: {e}")
                 elif sc["estado"] in ("EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"):
