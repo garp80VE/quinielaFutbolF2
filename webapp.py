@@ -1932,9 +1932,19 @@ def _updater_loop():
                     (eq2_espn and eq2_espn != eq2_sheet)
                 )
 
+                # ── REGLA F2: tras los 90', los goles YA NO CUENTAN; solo se
+                # define quién avanza. Congelamos el marcador a los 90' (el que ya
+                # está en la BD) durante prórroga/penales y al finalizar tras ellas.
+                _post90 = (sc["estado"] in ("PRORROGA", "PENALES") or
+                           (sc["estado"] == "FINAL" and estado_prev in ("PRORROGA", "PENALES")))
+                if _post90 and game.get("gol1", "") != "" and game.get("gol2", "") != "":
+                    sc_g1, sc_g2 = game.get("gol1", ""), game.get("gol2", "")
+                else:
+                    sc_g1, sc_g2 = sc["gol1"], sc["gol2"]
+
                 if (sc["estado"] == estado_prev and
-                        sc["gol1"] == game.get("gol1", "") and
-                        sc["gol2"] == game.get("gol2", "") and
+                        sc_g1 == game.get("gol1", "") and
+                        sc_g2 == game.get("gol2", "") and
                         sc["ganador"] == game.get("ganador", "") and
                         not teams_changed):
                     time.sleep(0.3)
@@ -1981,61 +1991,66 @@ def _updater_loop():
                 elif sc["estado"] in ("EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"):
                     # 12.1: comparar el marcador contra la BD (game), no contra el estado
                     # en memoria (_prev_states) — así sobrevive a reinicios del server.
-                    if sc["gol1"] != game.get("gol1", "") or sc["gol2"] != game.get("gol2", ""):
+                    # Gol solo si cambia el marcador QUE CUENTA (≤90'). En prórroga
+                    # sc_g1/sc_g2 quedan congelados → no se notifican goles de ET.
+                    if sc_g1 != game.get("gol1", "") or sc_g2 != game.get("gol2", ""):
                         minuto  = _live_clocks.get(espn_id, "")
                         min_txt = (f" ({minuto}')" if minuto and minuto != "MT"
                                    else (" (MT)" if sc["estado"] == "MEDIO TIEMPO" else ""))
                         _pending_notifs.append({
                             "tipo": "gol", "eq1": eq1, "eq2": eq2,
-                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                            "gol1": sc_g1, "gol2": sc_g2,
                             "min_txt": min_txt, "minuto": minuto,
                         })
                     # 12.2: aviso de MEDIO TIEMPO (una sola vez, al entrar a esa fase)
                     if sc["estado"] == "MEDIO TIEMPO" and estado_prev != "MEDIO TIEMPO":
                         _pending_notifs.append({
                             "tipo": "medio_tiempo", "eq1": eq1, "eq2": eq2,
-                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                            "gol1": sc_g1, "gol2": sc_g2,
                         })
-                    # Inicio de TIEMPO EXTRA (prórroga) — una sola vez
+                    # Inicio de TIEMPO EXTRA (prórroga) — una sola vez. Muestra el
+                    # marcador a los 90' (sc_g1/sc_g2 congelado).
                     if sc["estado"] == "PRORROGA" and estado_prev != "PRORROGA":
                         _pending_notifs.append({
                             "tipo": "prorroga", "eq1": eq1, "eq2": eq2,
-                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                            "gol1": sc_g1, "gol2": sc_g2,
                         })
                     # Inicio de la TANDA DE PENALES — una sola vez
                     if sc["estado"] == "PENALES" and estado_prev != "PENALES":
                         _pending_notifs.append({
                             "tipo": "penales", "eq1": eq1, "eq2": eq2,
-                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                            "gol1": sc_g1, "gol2": sc_g2,
                         })
                 elif sc["estado"] == "FINAL" and estado_prev != "FINAL":
-                    if sc["gol1"] != game.get("gol1", "") or sc["gol2"] != game.get("gol2", ""):
+                    if sc_g1 != game.get("gol1", "") or sc_g2 != game.get("gol2", ""):
                         _pending_notifs.append({
                             "tipo": "gol", "eq1": eq1, "eq2": eq2,
-                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                            "gol1": sc_g1, "gol2": sc_g2,
                             "min_txt": "", "minuto": "",
                         })
                     gan_eq = sc["ganador"] if sc["ganador"] else "Sin definir"
                     _pending_notifs.append({
                         "tipo": "final", "eq1": eq1, "eq2": eq2,
-                        "gol1": sc["gol1"], "gol2": sc["gol2"],
+                        "gol1": sc_g1, "gol2": sc_g2,
                         "ganador": sc["ganador"], "gan_eq": gan_eq,
                         "pen1": sc.get("pen1", ""), "pen2": sc.get("pen2", ""),
                     })
 
                 _prev_states[espn_id] = {
                     "estado": sc["estado"],
-                    "gol1":   sc["gol1"],
-                    "gol2":   sc["gol2"],
+                    "gol1":   sc_g1,
+                    "gol2":   sc_g2,
                 }
 
                 # Con equipos congelados (FREEZE_EQUIPOS=1 o rondas superiores), el
                 # GANADOR debe derivarse del marcador aplicado a los equipos de la
                 # QUINIELA, NO copiarse de ESPN (que trae el equipo del partido real).
+                # Usa el marcador A LOS 90' (sc_g1/sc_g2): si fue empate, el que
+                # avanza viene del campo "winner" de ESPN (penales/prórroga).
                 ganador_final = sc["ganador"]
                 if freeze and (eq1_sheet or eq2_sheet) and sc["estado"] not in ("", "PROG"):
                     try:
-                        _g1 = int(sc["gol1"] or 0); _g2 = int(sc["gol2"] or 0)
+                        _g1 = int(sc_g1 or 0); _g2 = int(sc_g2 or 0)
                     except (ValueError, TypeError):
                         _g1 = _g2 = 0
                     if _g1 > _g2:
@@ -2051,7 +2066,7 @@ def _updater_loop():
 
                 ult_act = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 _db.db_update_game_result(
-                    jgo, sc["estado"], sc["gol1"], sc["gol2"], ganador_final, ult_act
+                    jgo, sc["estado"], sc_g1, sc_g2, ganador_final, ult_act
                 )
 
                 if teams_changed:
