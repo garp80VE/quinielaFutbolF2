@@ -3885,11 +3885,14 @@ function _renderMiCuadro(r) {
 
   function teamRow(t, isWin, realGoal) {
     const c = COL[t.status] || COL.unknown;
-    const deco = t.status === 'dead' ? 'text-decoration:line-through;' : '';
+    const muerto = t.status === 'dead';
+    const deco = muerto ? 'text-decoration:line-through;' : '';
+    // Equipo muerto: solo la raya (sin punto). Vivo/por definir: con 🟢/⚪.
+    const dot = muerto ? '' : `<span style="font-size:8px">${c.dot}</span>`;
     const goalChip = (realGoal !== null && realGoal !== undefined && realGoal !== '')
       ? `<span style="margin-left:auto;padding-left:4px;font-weight:800;color:#0f172a;font-size:12px">${esc(realGoal)}</span>` : '';
     return `<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:${c.fg};${deco}${isWin?'font-weight:800':''}">
-      <span style="font-size:8px">${c.dot}</span><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.name)}</span>${goalChip}</div>`;
+      ${dot}<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.name)}</span>${goalChip}</div>`;
   }
   function matchBox(m) {
     const w = m.winner || {status:'unknown',name:'?'};
