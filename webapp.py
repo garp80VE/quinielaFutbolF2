@@ -3666,6 +3666,9 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
             return "unknown"
         return "alive" if name in vivos else "dead"
 
+    def _flag(name):
+        return _BANDERAS.get((name or "").strip().lower(), "")
+
     ROND = [("R32", "Dieciseisavos"), ("R16", "Octavos"), ("QF", "Cuartos"),
             ("SF", "Semis"), ("3ER", "Tercer puesto"), ("FINAL", "Final")]
     by_r = {}
@@ -3717,9 +3720,9 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
                 }
             matches.append({
                 "jgo":    js,
-                "eq1":    {"name": ("?" if _is_ph(e1) else e1), "status": st1},
-                "eq2":    {"name": ("?" if _is_ph(e2) else e2), "status": st2},
-                "winner": {"name": ("?" if _is_ph(ganp) else ganp), "status": stw},
+                "eq1":    {"name": ("?" if _is_ph(e1) else e1), "status": st1, "flag": _flag(e1)},
+                "eq2":    {"name": ("?" if _is_ph(e2) else e2), "status": st2, "flag": _flag(e2)},
+                "winner": {"name": ("?" if _is_ph(ganp) else ganp), "status": stw, "flag": _flag(ganp)},
                 "g1":     pk.get("g1", ""), "g2": pk.get("g2", ""),
                 "jugado": jugado,
                 "acerto": bool(jugado and ganp and real_gan and ganp == real_gan),
@@ -3735,7 +3738,7 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
         pkf = picks.get(str(fin[0]["jgo"])) or {}
         c = (_db._resolve_team_name((pkf.get("gan") or "").strip(), by_jgo, by_ronda, picks)
              or (pkf.get("gan") or "").strip())
-        camp = {"name": ("?" if _is_ph(c) else c), "status": _status(c)}
+        camp = {"name": ("?" if _is_ph(c) else c), "status": _status(c), "flag": _flag(c)}
 
     # Reordenar cada ronda en ORDEN DE CUADRO (no por fecha/jgo de FIFA): se deriva
     # desde la Final hacia abajo con _WC2026_MAP, para que los 2 alimentadores de

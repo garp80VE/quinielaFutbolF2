@@ -3891,8 +3891,9 @@ function _renderMiCuadro(r) {
     const dot = muerto ? '' : `<span style="font-size:8px">${c.dot}</span>`;
     const goalChip = (realGoal !== null && realGoal !== undefined && realGoal !== '')
       ? `<span style="margin-left:auto;padding-left:4px;font-weight:800;color:#0f172a;font-size:12px">${esc(realGoal)}</span>` : '';
+    const flag = t.flag ? esc(t.flag) + ' ' : '';
     return `<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:${c.fg};${deco}${isWin?'font-weight:800':''}">
-      ${dot}<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.name)}</span>${goalChip}</div>`;
+      ${dot}<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${flag}${esc(t.name)}</span>${goalChip}</div>`;
   }
   function matchBox(m) {
     const w = m.winner || {status:'unknown',name:'?'};
@@ -3922,7 +3923,7 @@ function _renderMiCuadro(r) {
     return `<div style="border:1.5px solid ${bd};border-radius:8px;padding:4px 6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)">
       ${teamRow(m.eq1, isW1, r1)}${teamRow(m.eq2, isW2, r2)}
       <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:2px">
-        <span style="font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">→ <b>${esc(w.name)}</b>${goles}${mark}</span>
+        <span style="font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">→ <b>${w.flag?esc(w.flag)+' ':''}${esc(w.name)}</b>${goles}${mark}</span>
         ${ptsChip}
       </div>
     </div>`;
@@ -3952,7 +3953,7 @@ function _renderMiCuadro(r) {
       <div style="height:${H}px;display:flex;flex-direction:column;justify-content:center">
         <div style="background:${cc.bg};border:2px solid ${cc.b};border-radius:12px;padding:12px;text-align:center">
           <p style="font-size:18px;margin:0">🏆</p>
-          <p style="font-size:15px;font-weight:900;color:${cc.fg};margin:2px 0 0;${c.status==='dead'?'text-decoration:line-through':''}">${esc(c.name)}</p>
+          <p style="font-size:15px;font-weight:900;color:${cc.fg};margin:2px 0 0;${c.status==='dead'?'text-decoration:line-through':''}">${c.flag?esc(c.flag)+' ':''}${esc(c.name)}</p>
           <p style="font-size:10px;color:${cc.fg};margin:3px 0 0;font-weight:700">${cc.t}</p>
         </div>
       </div>
