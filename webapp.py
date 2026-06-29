@@ -3788,8 +3788,21 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
 
     games = _db.db_get_horarios()
     by_jgo, by_ronda = _db.build_bracket_index(games)
-    vivos = _db._equipos_vivos(games)          # equipos aún no eliminados
     picks = _db.db_get_picks(pid)
+
+    # Un equipo está MUERTO solo si PERDIÓ un partido ya jugado (no por no aparecer
+    # aún en un cruce pendiente: quien ganó y espera su próximo rival sigue vivo).
+    eliminados = set()
+    for g in games:
+        est = (g.get("estado") or "").strip()
+        if not est or est == "PROG":
+            continue
+        e1 = (g.get("eq1") or "").strip(); e2 = (g.get("eq2") or "").strip()
+        gan = (g.get("ganador") or "").strip()
+        if e1 and e2 and gan:
+            loser = e2 if gan == e1 else (e1 if gan == e2 else "")
+            if loser:
+                eliminados.add(loser)
 
     cfg = state.get("cfg", {})
     vL = int(cfg.get("PTS_LOGRO", 1) or 1); vG = int(cfg.get("PTS_GAN", 2) or 2)
@@ -3803,7 +3816,7 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
     def _status(name):
         if _is_ph(name):
             return "unknown"
-        return "alive" if name in vivos else "dead"
+        return "dead" if (name or "").strip() in eliminados else "alive"
 
     _FLAG_SUB = {"🏴󠁧󠁢󠁥󠁮󠁧󠁿": "gb-eng", "🏴󠁧󠁢󠁳󠁣󠁴󠁿": "gb-sct", "🏴󠁧󠁢󠁷󠁬󠁳󠁿": "gb-wls"}
     def _flag(name):
