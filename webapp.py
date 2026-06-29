@@ -3582,6 +3582,75 @@ async def get_standings():
         return {"rows": []}
 
 
+@app.get("/api/mi-cuadro")
+async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
+    """Cuadro (bracket) PREDICHO por el jugador, con el estado vivo/muerto de cada
+    equipo según el torneo real. Solo el propio jugador (su sesión)."""
+    p = find_player_any(phone=phone, email=email) if (phone or email) else None
+    if not p:
+        raise HTTPException(404, "Jugador no encontrado. Inicia sesión de nuevo.")
+    pid    = p.get("_id") or p.get("id")
+    nombre = p.get("nombre") or p.get("NOMBRE") or ""
+
+    games = _db.db_get_horarios()
+    by_jgo, by_ronda = _db.build_bracket_index(games)
+    vivos = _db._equipos_vivos(games)          # equipos aún no eliminados
+    picks = _db.db_get_picks(pid)
+
+    def _is_ph(n):
+        n = (n or "").strip()
+        return (not n) or _db._is_placeholder(n) or n.startswith("Gan. ") or n.startswith("Perdedor ")
+
+    def _status(name):
+        if _is_ph(name):
+            return "unknown"
+        return "alive" if name in vivos else "dead"
+
+    ROND = [("R32", "Dieciseisavos"), ("R16", "Octavos"), ("QF", "Cuartos"),
+            ("SF", "Semis"), ("3ER", "Tercer puesto"), ("FINAL", "Final")]
+    by_r = {}
+    for g in games:
+        r = (g.get("grupo") or g.get("ronda") or "")
+        by_r.setdefault(r, []).append(g)
+
+    rondas = []
+    for key, label in ROND:
+        gl = sorted(by_r.get(key, []),
+                    key=lambda x: int(x["jgo"]) if str(x["jgo"]).isdigit() else 0)
+        if not gl:
+            continue
+        matches = []
+        for g in gl:
+            js = str(g["jgo"]); pk = picks.get(js) or {}
+            e1 = _db._disp_team(g, "eq1", by_jgo, by_ronda, picks)
+            e2 = _db._disp_team(g, "eq2", by_jgo, by_ronda, picks)
+            ganp = (_db._resolve_team_name((pk.get("gan") or "").strip(), by_jgo, by_ronda, picks)
+                    or (pk.get("gan") or "").strip())
+            estado = g.get("estado", "")
+            jugado = bool(estado) and estado != "PROG"
+            real_gan = (g.get("ganador") or "").strip()
+            matches.append({
+                "jgo":    js,
+                "eq1":    {"name": ("?" if _is_ph(e1) else e1), "status": _status(e1)},
+                "eq2":    {"name": ("?" if _is_ph(e2) else e2), "status": _status(e2)},
+                "winner": {"name": ("?" if _is_ph(ganp) else ganp), "status": _status(ganp)},
+                "g1":     pk.get("g1", ""), "g2": pk.get("g2", ""),
+                "jugado": jugado,
+                "acerto": bool(jugado and ganp and real_gan and ganp == real_gan),
+            })
+        rondas.append({"key": key, "label": label, "matches": matches})
+
+    camp = {"name": "?", "status": "unknown"}
+    fin = [g for g in games if (g.get("grupo") or g.get("ronda") or "").upper() == "FINAL"]
+    if fin:
+        pkf = picks.get(str(fin[0]["jgo"])) or {}
+        c = (_db._resolve_team_name((pkf.get("gan") or "").strip(), by_jgo, by_ronda, picks)
+             or (pkf.get("gan") or "").strip())
+        camp = {"name": ("?" if _is_ph(c) else c), "status": _status(c)}
+
+    return {"nombre": nombre, "rondas": rondas, "campeon": camp}
+
+
 @app.get("/api/recorrido")
 async def get_recorrido(phone: str = Query(""), email: str = Query("")):
     """Evolución de la posición de cada jugador partido a partido (gráfica Recorrido)."""
