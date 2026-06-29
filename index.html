@@ -251,10 +251,10 @@
           <p id="payment-amount-label" style="font-size:12px;color:#b45309;margin:0">Entrada a la quiniela</p>
         </div>
       </div>
-      <button onclick="stripeCheckout()" style="width:100%;background:#f59e0b;border:none;border-radius:10px;padding:10px;font-weight:800;font-size:14px;color:#1c1917;cursor:pointer">
-        💳 Pagar con tarjeta
+      <button onclick="openPagoModal()" style="width:100%;background:#f59e0b;border:none;border-radius:10px;padding:10px;font-weight:800;font-size:14px;color:#1c1917;cursor:pointer">
+        💵 Cómo pagar / Subir comprobante
       </button>
-      <p style="font-size:10px;color:#b45309;text-align:center;margin:6px 0 0">Aceptamos cualquier tarjeta · Pago seguro vía Stripe</p>
+      <p id="payment-status-line" style="display:none;font-size:11px;color:#b45309;text-align:center;margin:8px 0 0;font-weight:700">🕓 Comprobante recibido — en revisión por el organizador</p>
     </div>
     <!-- Banner de pago confirmado (se muestra brevemente al volver de Stripe) -->
     <div id="payment-success-banner" style="display:none;background:linear-gradient(135deg,#dcfce7,#bbf7d0);border:1.5px solid #22c55e;border-radius:14px;padding:14px 16px;margin-bottom:12px;text-align:center">
@@ -1265,6 +1265,19 @@
   </div>
 </div>
 
+<!-- ═══ Modal: Cómo pagar / Subir comprobante ═══ -->
+<div id="pago-modal" style="display:none;position:fixed;inset:0;z-index:9998;background:rgba(15,23,42,.78);align-items:center;justify-content:center;padding:12px">
+  <div style="background:#fff;border-radius:18px;width:100%;max-width:440px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.4)">
+    <div style="background:linear-gradient(135deg,#d97706,#f59e0b);padding:16px 18px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between">
+      <p style="color:#fff;font-weight:900;font-size:16px;margin:0">💵 Cómo pagar tu entrada</p>
+      <button onclick="cerrarPagoModal()" style="background:rgba(255,255,255,.2);border:none;border-radius:9px;width:32px;height:32px;color:white;font-size:18px;cursor:pointer;flex-shrink:0">✕</button>
+    </div>
+    <div id="pago-body" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px">
+      <p style="text-align:center;color:#94a3b8;font-size:13px;padding:24px 0">Cargando...</p>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ Modal de celebración final (fuegos artificiales) ═══ -->
 <style>
 @keyframes celebPop { 0%{transform:scale(.6);opacity:0} 100%{transform:scale(1);opacity:1} }
@@ -2190,64 +2203,119 @@ async function doLogout() {
 }
 
 // ─── Stripe ───────────────────────────────────────────────────────
-async function stripeCheckout() {
-  try {
-    const btn = document.querySelector('#payment-banner button');
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Preparando pago...'; }
-    const r = await api('POST', '/api/stripe/create-checkout', {
-      phone:  S.phone || '',
-      nombre: S.nombre || '',
-      origin: window.location.origin,
-    });
-    if (r.checkout_url) {
-      window.location.href = r.checkout_url;
-    } else {
-      showToast('Error al crear el pago. Intenta de nuevo.');
-      if (btn) { btn.disabled = false; btn.textContent = '💳 Pagar con tarjeta'; }
-    }
-  } catch(e) {
-    showToast('Error: ' + e.message);
-  }
-}
+let _pagoInfo = null;   // últimos datos de /api/player/payment-info
 
 async function _checkPaymentStatus() {
-  // Leer config de Stripe para mostrar monto
-  try {
-    const cfg = await api('GET', '/api/stripe/config').catch(() => null);
-    if (cfg) {
-      const lbl = document.getElementById('payment-amount-label');
-      if (lbl) lbl.textContent = `$${cfg.amount_usd.toFixed(2)} USD (incl. comisión de pago)`;
-    }
-  } catch(e) {}
-
-  // Verificar si llegó de un pago exitoso
-  const params = new URLSearchParams(window.location.search);
-  const payStatus = params.get('payment');
-  if (payStatus === 'success') {
-    // Limpiar URL
-    window.history.replaceState({}, '', window.location.pathname);
-    // Esperar a que el webhook procese (max 5s)
-    await new Promise(r => setTimeout(r, 2000));
-    // Re-verificar estado del jugador
-    try {
-      const r = await api('POST', '/api/auth/check', { phone: S.phone });
-      if (r.pagado) S.pagado = true;
-    } catch(e) {}
-    document.getElementById('payment-banner').style.display = 'none';
-    document.getElementById('payment-success-banner').style.display = 'block';
-    setTimeout(() => {
-      document.getElementById('payment-success-banner').style.display = 'none';
-    }, 5000);
+  const banner = document.getElementById('payment-banner');
+  // El banner solo aparece si el cobro está ACTIVO y el jugador no ha pagado
+  if (!S.stripe_activo || S.pagado) {
+    if (banner) banner.style.display = 'none';
     return;
   }
-  if (payStatus === 'cancel') {
-    window.history.replaceState({}, '', window.location.pathname);
-    showToast('Pago cancelado. Puedes intentarlo cuando quieras.');
-  }
+  try {
+    _pagoInfo = await api('GET', '/api/player/payment-info');
+  } catch(e) { _pagoInfo = null; }
+  if (banner) banner.style.display = 'block';
+  const lbl = document.getElementById('payment-amount-label');
+  if (lbl && _pagoInfo) lbl.textContent = `Entrada a la quiniela · $${(_pagoInfo.monto||0).toFixed(2)} USD`;
+  // Si ya informó pago (revisión), mostrar la línea de estado
+  const line = document.getElementById('payment-status-line');
+  if (line) line.style.display = (_pagoInfo && _pagoInfo.estado === 'revision') ? 'block' : 'none';
+}
 
-  // Mostrar/ocultar banner según estado de pago y si Stripe está activo
-  const banner = document.getElementById('payment-banner');
-  if (banner) banner.style.display = (!S.pagado && S.stripe_activo) ? 'block' : 'none';
+// ─── Modal "Cómo pagar / Subir comprobante" ───────────────────────
+async function openPagoModal() {
+  const modal = document.getElementById('pago-modal');
+  const body  = document.getElementById('pago-body');
+  if (modal) modal.style.display = 'flex';
+  if (body)  body.innerHTML = '<p style="text-align:center;color:#94a3b8;font-size:13px;padding:24px 0">Cargando...</p>';
+  try {
+    _pagoInfo = await api('GET', '/api/player/payment-info');
+    _renderPago(_pagoInfo);
+  } catch(e) {
+    if (body) body.innerHTML = `<p style="text-align:center;color:#ef4444;font-size:13px;padding:24px 0">Error: ${e.message||e}</p>`;
+  }
+}
+function cerrarPagoModal() { const m = document.getElementById('pago-modal'); if (m) m.style.display = 'none'; }
+
+function _renderPago(info) {
+  const body = document.getElementById('pago-body');
+  if (!body) return;
+  const monto = (info.monto || 0).toFixed(2);
+  const instr = info.instrucciones
+    ? `<div style="background:#f8fafc;border:1px solid #eef2f7;border-radius:12px;padding:12px 14px;font-size:13px;color:#334155;line-height:1.55">${mdToHtml(info.instrucciones)}</div>`
+    : `<p style="text-align:center;color:#94a3b8;font-size:12px;padding:8px 0">El organizador aún no cargó las instrucciones de pago.</p>`;
+
+  let accion;
+  if (info.estado === 'revision') {
+    accion = `
+      <div style="margin-top:14px;background:#fffbeb;border:1.5px solid #fde68a;border-radius:12px;padding:14px;text-align:center">
+        <p style="font-size:22px;margin:0">🕓</p>
+        <p style="font-weight:800;color:#b45309;margin:4px 0 0">Comprobante en revisión</p>
+        <p style="font-size:12px;color:#92400e;margin:4px 0 10px">El organizador confirmará tu pago pronto. Puedes volver a subir otro si te equivocaste.</p>
+        <button onclick="_pagoMostrarForm()" style="background:white;border:1.5px solid #e2e8f0;border-radius:10px;padding:9px 16px;font-weight:700;font-size:13px;cursor:pointer">Subir otro comprobante</button>
+      </div>`;
+  } else {
+    accion = _pagoFormHtml();
+  }
+  body.innerHTML = `
+    <p style="text-align:center;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;font-weight:700;margin:0 0 2px">Monto a pagar</p>
+    <p style="text-align:center;font-size:26px;font-weight:900;color:#0f172a;margin:0 0 12px">$${monto} USD</p>
+    ${instr}
+    <div id="pago-accion">${accion}</div>`;
+}
+
+function _pagoFormHtml() {
+  return `
+    <div style="margin-top:14px;border-top:1px solid #eef2f7;padding-top:12px">
+      <p style="font-weight:800;color:#15803d;font-size:14px;margin:0 0 2px">✅ Ya pagué</p>
+      <p style="font-size:11px;color:#64748b;margin:0 0 10px">Escribe el número de depósito/voucher y/o sube una foto del comprobante. El organizador lo revisará y confirmará tu inscripción.</p>
+      <input type="text" id="pago-voucher" oninput="_pagoCheckEnviar()" placeholder="N° de depósito / voucher / referencia"
+        style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 12px;font-size:14px;margin-bottom:8px;outline:none">
+      <input type="file" id="pago-file" accept="image/*" onchange="_pagoCheckEnviar()"
+        style="width:100%;font-size:12px;margin-bottom:10px">
+      <button id="pago-enviar-btn" onclick="enviarComprobante()" disabled
+        style="width:100%;background:#cbd5e1;border:none;border-radius:10px;padding:12px;font-weight:800;font-size:14px;color:white;cursor:not-allowed">
+        Enviar</button>
+    </div>`;
+}
+function _pagoMostrarForm() {
+  const a = document.getElementById('pago-accion');
+  if (a) a.innerHTML = _pagoFormHtml();
+}
+function _pagoCheckEnviar() {
+  const v   = (document.getElementById('pago-voucher')?.value || '').trim();
+  const f   = document.getElementById('pago-file')?.files?.length > 0;
+  const btn = document.getElementById('pago-enviar-btn');
+  if (!btn) return;
+  const ok = !!v || f;
+  btn.disabled = !ok;
+  btn.style.background = ok ? '#16a34a' : '#cbd5e1';
+  btn.style.cursor     = ok ? 'pointer' : 'not-allowed';
+}
+async function enviarComprobante() {
+  const v   = (document.getElementById('pago-voucher')?.value || '').trim();
+  const fEl = document.getElementById('pago-file');
+  const btn = document.getElementById('pago-enviar-btn');
+  if (!v && !(fEl?.files?.length)) { showToast('Escribe el voucher o sube una foto'); return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando...'; }
+  try {
+    const fd = new FormData();
+    if (fEl?.files?.length) fd.append('file', fEl.files[0]);
+    fd.append('voucher', v);
+    const res = await fetch('/api/player/upload-comprobante', { method:'POST', body: fd, credentials:'include' });
+    if (!res.ok) {
+      const e = await res.json().catch(()=>({}));
+      throw new Error(e.detail || 'No se pudo enviar');
+    }
+    showToast('✅ Comprobante enviado — en revisión');
+    _pagoInfo = await api('GET', '/api/player/payment-info').catch(()=>_pagoInfo);
+    _renderPago(_pagoInfo || {estado:'revision', monto:0, instrucciones:''});
+    _checkPaymentStatus();
+  } catch(e) {
+    showToast('Error: ' + (e.message||e));
+    if (btn) { btn.disabled = false; btn.textContent = 'Enviar'; _pagoCheckEnviar(); }
+  }
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────
@@ -5347,9 +5415,10 @@ async function loadAdminDashboard() {
           <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🌍 Zona horaria</label>
           <select id="cfg-${key}" style="${SEL_STYLE}">${utcOpts}</select>`;
 
-      } else if (key === 'PREMIOS_REGLAS') {
+      } else if (key === 'PREMIOS_REGLAS' || key === 'PAGO_INSTRUCCIONES') {
+        const _ic = key === 'PAGO_INSTRUCCIONES' ? '💵' : '🏆';
         div.innerHTML = `
-          <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">🏆 ${label}</label>
+          <label style="display:block;font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${_ic} ${label}</label>
           <p style="font-size:11px;color:#94a3b8;margin-bottom:6px">Puedes usar emojis y saltos de línea. Cada línea en blanco separa secciones.</p>
           <textarea id="cfg-${key}" rows="8"
             style="width:100%;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 12px;font-size:13px;outline:none;resize:vertical;font-family:inherit"
@@ -5682,6 +5751,12 @@ async function _loadAdminPrizeNow() {
             <select id="inv-sel-${i}" style="flex:1;min-width:0;border:1.5px solid #fdba74;border-radius:8px;padding:6px 8px;font-size:12px;background:#fff7ed;color:#1e293b">${opts}</select>
             <button onclick="setInvitador('${pl.phone||''}', this, ${i})" style="flex-shrink:0;background:#16a34a;color:white;border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:800;cursor:pointer">${pendiente?'Liberar':'Guardar'}</button>
           </div>
+          ${(pl.comprobante || pl.voucher) ? `
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px;padding-left:44px;flex-wrap:wrap">
+              ${!pl.pagado ? '<span style="font-size:10px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:5px;padding:1px 6px">🕓 Por revisar</span>' : ''}
+              ${pl.voucher ? `<span style="font-size:11px;color:#475569">🧾 Voucher: <b>${(pl.voucher||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</b></span>` : ''}
+              ${pl.comprobante ? `<a href="/api/admin/comprobante/${pl.id}" target="_blank" rel="noopener" style="font-size:11px;color:#0369a1;font-weight:800;text-decoration:none;background:#e0f2fe;border-radius:6px;padding:2px 8px">🔍 Ver comprobante</a>` : ''}
+            </div>` : ''}
         </div>`;
         }).join('');
     }

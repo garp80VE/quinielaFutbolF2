@@ -90,6 +90,10 @@ def init_db():
         # registrados quedan liberados; los NUEVOS registros se insertan con aprobado=0.
         "ALTER TABLE jugadores ADD COLUMN aprobado INTEGER DEFAULT 1",
         "ALTER TABLE jugadores ADD COLUMN invitador TEXT DEFAULT ''",
+        # Pago por comprobante: imagen subida, fecha y número de depósito/voucher.
+        "ALTER TABLE jugadores ADD COLUMN comprobante TEXT DEFAULT ''",
+        "ALTER TABLE jugadores ADD COLUMN pago_fecha TEXT DEFAULT ''",
+        "ALTER TABLE jugadores ADD COLUMN voucher TEXT DEFAULT ''",
     ]:
         try:
             conn.execute(col_sql)
@@ -134,7 +138,8 @@ def db_get_jugadores() -> list:
     try:
         rows = conn.execute(
             "SELECT id, num, email, nombre, whatsapp, fecha_reg, tab_nombre, pagado, reglas_ok, "
-            "excluido, excluido_fecha, excluido_motivo, aprobado, invitador "
+            "excluido, excluido_fecha, excluido_motivo, aprobado, invitador, "
+            "comprobante, pago_fecha, voucher "
             "FROM jugadores ORDER BY num, id"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -214,6 +219,44 @@ def db_mark_paid(phone: str, paid: bool = True) -> bool:
                     (1 if paid else 0, phone.strip())
                 )
         return r.rowcount > 0
+    finally:
+        conn.close()
+
+def db_set_comprobante(jugador_id: int, filename=None, fecha: str = "", voucher=None) -> bool:
+    """Registra el comprobante (imagen) y/o el número de voucher de pago del jugador
+    (queda en revisión). Solo actualiza los campos que se pasen (no nulos)."""
+    sets, vals = [], []
+    if filename is not None:
+        sets.append("comprobante=?"); vals.append(filename)
+    if voucher is not None:
+        sets.append("voucher=?"); vals.append(voucher)
+    sets.append("pago_fecha=?"); vals.append(fecha)
+    vals.append(jugador_id)
+    conn = get_conn()
+    try:
+        with _db_lock:
+            with conn:
+                r = conn.execute(
+                    f"UPDATE jugadores SET {', '.join(sets)} WHERE id=?", vals
+                )
+        return r.rowcount > 0
+    finally:
+        conn.close()
+
+def db_get_pago_info(jugador_id: int) -> dict:
+    """Estado de pago de un jugador: pagado, comprobante subido, fecha y voucher."""
+    conn = get_conn()
+    try:
+        r = conn.execute(
+            "SELECT pagado, comprobante, pago_fecha, voucher FROM jugadores WHERE id=? LIMIT 1",
+            (jugador_id,)
+        ).fetchone()
+        if not r:
+            return {"pagado": False, "comprobante": "", "pago_fecha": "", "voucher": ""}
+        return {"pagado": bool(r["pagado"]),
+                "comprobante": r["comprobante"] or "",
+                "pago_fecha": r["pago_fecha"] or "",
+                "voucher": r["voucher"] or ""}
     finally:
         conn.close()
 

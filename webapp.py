@@ -34,7 +34,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import gspread
 import requests
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 _Req = Request
@@ -2877,6 +2877,111 @@ async def player_accept_rules(phone: str = Query(""), email: str = Query(""),
     return {"ok": True}
 
 
+# ── Pago por comprobante (transferencia / Zelle / etc. + foto o voucher) ──────
+_COMPROB_DIR = DATA_DIR / "comprobantes"
+
+@app.get("/api/player/payment-info")
+async def payment_info(ql_session: str = Cookie(default="")):
+    """Monto, instrucciones de pago y estado del jugador (pendiente/revision/pagado)."""
+    cfg = state.get("cfg", {})
+    instrucciones = cfg.get("PAGO_INSTRUCCIONES", "") or ""
+    monto = float(cfg.get("COSTO_QUINIELA", "10") or "10")
+    info = {"monto": monto, "instrucciones": instrucciones,
+            "estado": "pendiente", "comprobante": False, "voucher": "", "pago_fecha": ""}
+    if not ql_session:
+        return info
+    player = find_player_any(phone=ql_session, email=ql_session)
+    if not player or not player.get("_id"):
+        return info
+    pago = _db.db_get_pago_info(player["_id"])
+    if pago["pagado"]:
+        info["estado"] = "pagado"
+    elif pago["comprobante"] or pago.get("voucher"):
+        info["estado"] = "revision"
+    info["comprobante"] = bool(pago["comprobante"])
+    info["voucher"]     = pago.get("voucher", "")
+    info["pago_fecha"]  = pago["pago_fecha"]
+    return info
+
+
+@app.post("/api/player/upload-comprobante")
+async def upload_comprobante(file: UploadFile = File(None),
+                             voucher: str = Form(""),
+                             ql_session: str = Cookie(default="")):
+    """El jugador informa su pago: sube la foto/captura del comprobante y/o escribe
+    el número de depósito/voucher. Con al menos uno, queda en revisión."""
+    if not ql_session:
+        raise HTTPException(401, "No autenticado")
+    player = find_player_any(phone=ql_session, email=ql_session)
+    if not player or not player.get("_id"):
+        raise HTTPException(404, "Jugador no encontrado")
+    jid = player["_id"]
+    voucher = (voucher or "").strip()[:120]
+
+    fname = None
+    if file is not None and getattr(file, "filename", ""):
+        try:
+            from PIL import Image
+            import io
+            data = await file.read()
+            if len(data) > 8 * 1024 * 1024:
+                raise HTTPException(413, "La imagen es demasiado grande (máx. 8 MB)")
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            img.thumbnail((1600, 1600))
+            _COMPROB_DIR.mkdir(parents=True, exist_ok=True)
+            fname = f"{jid}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+            img.save(str(_COMPROB_DIR / fname), "JPEG", quality=82)
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[comprobante] Error guardando: {e}")
+            raise HTTPException(400, "No se pudo procesar la imagen. Usa una foto o captura válida.")
+
+    if not fname and not voucher:
+        raise HTTPException(400, "Sube una imagen del comprobante o escribe el número de depósito/voucher.")
+
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
+    _db.db_set_comprobante(jid, filename=fname, fecha=fecha,
+                           voucher=(voucher if voucher else None))
+    _invalidate_players()
+    print(f"[comprobante] Jugador {jid} informó pago (img={bool(fname)}, voucher={bool(voucher)})")
+
+    # Avisar al admin por Telegram que hay un pago para revisar/confirmar
+    try:
+        tg_admin = (state.get("cfg", {}).get("TELEGRAM_ADMIN_CHAT_ID", "") or "").strip()
+        if tg_admin:
+            _nombre = player.get("NOMBRE") or player.get("nombre") or "Jugador"
+            _tel    = player.get("WHATSAPP") or player.get("TELEFONO") or player.get("whatsapp") or ""
+            _det = []
+            if voucher: _det.append(f"🧾 Voucher: {voucher}")
+            if fname:   _det.append("📎 Subió foto del comprobante")
+            _msg = ("💰 <b>Pago informado</b> — revísalo en el admin para confirmar\n"
+                    f"👤 {_nombre} ({_tel})\n" + "\n".join(_det))
+            threading.Thread(target=_tg_send_personal, args=(tg_admin, _msg), daemon=True).start()
+    except Exception as e:
+        print(f"[comprobante] aviso TG: {e}")
+
+    return {"ok": True, "estado": "revision", "fecha": fecha, "voucher": voucher}
+
+
+@app.get("/api/admin/comprobante/{jugador_id}")
+async def admin_ver_comprobante(jugador_id: int, key: str = Query(""),
+                                ql_admin: str = Cookie(default="")):
+    """Sirve la imagen del comprobante de un jugador (solo admin)."""
+    cfg = state.get("cfg", {})
+    if not (_admin_check(ql_admin) or (key and key == cfg.get("ADMIN_PASS", "quiniela2026"))):
+        raise HTTPException(403, "No autorizado")
+    pago = _db.db_get_pago_info(jugador_id)
+    fname = pago.get("comprobante", "")
+    if not fname:
+        raise HTTPException(404, "Sin comprobante")
+    path = _COMPROB_DIR / fname
+    if not path.exists():
+        raise HTTPException(404, "Archivo no encontrado")
+    from fastapi.responses import FileResponse
+    return FileResponse(path=str(path), media_type="image/jpeg")
+
+
 # ── Inferencia de bracket: vive en db.py (fuente unica). Aliases para mantener
 #    las referencias existentes (PDF, _propagate_bracket, scoring). ──
 _parse_bracket_ref  = _db._parse_bracket_ref
@@ -4341,6 +4446,7 @@ ADMIN_CONFIG_FIELDS = [
     ("DIA_INICIO_JORNADA",  "Día inicio de jornada (0=Lun, 1=Mar, 2=Mié, 3=Jue, 4=Vie, 5=Sáb, 6=Dom)"),
     ("COLOR_SCHEME",        "Esquema de colores de la app"),
     ("PREMIOS_REGLAS",      "Premios y reglas (texto libre, saltos de línea permitidos)"),
+    ("PAGO_INSTRUCCIONES",  "Instrucciones de pago (cómo pagar — texto libre, saltos de línea permitidos)"),
     ("SORTEO_FECHA",        "Fecha del sorteo en vivo — activa la pestaña sorteo"),
     ("SORTEO_HORA",         "Hora del sorteo en vivo (en UTC — España verano = UTC+2, réstale 2h)"),
     ("SORTEO_ANIM",         "Animación del sorteo"),
@@ -4639,6 +4745,8 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
                 "id":        _jrec.get("id"),
                 "aprobado":  bool(_jrec.get("aprobado", 1)),
                 "invitador": _jrec.get("invitador", "") or "",
+                "comprobante": bool(_jrec.get("comprobante")),
+                "voucher":     _jrec.get("voucher", "") or "",
             })
         tie_1st, tie_2nd = _get_tie_counts()
         fee_pct = float(cfg.get("FEE_PCT", "0") or "0")
