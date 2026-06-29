@@ -1259,7 +1259,7 @@
       </div>
       <button onclick="cerrarMiCuadro()" style="background:rgba(255,255,255,.15);border:none;border-radius:9px;width:32px;height:32px;color:white;font-size:18px;cursor:pointer;flex-shrink:0">✕</button>
     </div>
-    <div id="micuadro-body" style="flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:14px">
+    <div id="micuadro-body" style="flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:14px">
       <p style="text-align:center;color:#94a3b8;font-size:13px;padding:24px 0">Cargando...</p>
     </div>
   </div>
@@ -3867,15 +3867,18 @@ function _renderMiCuadro(r) {
   if (!body) return;
   const sub  = document.getElementById('micuadro-sub');
   if (sub && r.nombre) sub.textContent = `${r.nombre} — líneas vivas y equipos eliminados`;
-  const allRondas = r.rondas || [];
-  const tercer    = allRondas.find(rd => rd.key === '3ER');
-  const rondas    = allRondas.filter(rd => rd.key !== '3ER');   // 3ER va aparte (abajo)
+  const rondas = r.rondas || [];   // incluye R32, R16, QF, SF, 3ER, FINAL (en orden)
   if (!rondas.length) {
     body.innerHTML = '<p style="text-align:center;color:#94a3b8;font-size:13px;padding:24px 0">Aún no tienes picks para mostrar.</p>';
     return;
   }
   const COL = { alive:{fg:'#15803d',dot:'🟢'}, dead:{fg:'#b91c1c',dot:'🔴'}, unknown:{fg:'#94a3b8',dot:'⚪'} };
   const esc = s => (s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+  // Alto fijo del cuadro: las columnas se reparten con space-around → cada ronda
+  // queda centrada frente a sus alimentadoras (efecto bracket sin líneas SVG).
+  const maxMatches = Math.max(...rondas.map(rd => rd.matches.length));
+  const BOXH = 58, H = Math.max(260, maxMatches * BOXH);
 
   function teamRow(t, isWin) {
     const c = COL[t.status] || COL.unknown;
@@ -3895,42 +3898,38 @@ function _renderMiCuadro(r) {
       <div style="font-size:9px;color:#64748b;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">→ <b>${esc(w.name)}</b>${goles}${mark}</div>
     </div>`;
   }
-  // Columnas COMPACTAS (sin huecos): cada ronda apila sus partidos. Un solo
-  // contenedor con scroll en ambas direcciones — sin alturas fijas gigantes.
-  const cols = rondas.map(rd => `
-    <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column;gap:6px">
-      <p style="font-size:10px;font-weight:800;color:#047857;text-transform:uppercase;letter-spacing:.4px;margin:0 0 2px;text-align:center;position:sticky;top:0;background:#fff;padding:2px 0;z-index:1">${esc(rd.label)}</p>
-      ${rd.matches.map(matchBox).join('')}
-    </div>`).join('');
+  const cols = rondas.map(rd => {
+    const esTercer = rd.key === '3ER';
+    const lblColor = esTercer ? '#b45309' : '#047857';
+    const lbl = esTercer ? '🥉 Tercer puesto' : esc(rd.label);
+    return `
+    <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column">
+      <p style="font-size:10px;font-weight:800;color:${lblColor};text-transform:uppercase;letter-spacing:.4px;margin:0 0 6px;text-align:center">${lbl}</p>
+      <div style="display:flex;flex-direction:column;justify-content:space-around;height:${H}px;gap:6px">
+        ${rd.matches.map(matchBox).join('')}
+      </div>
+    </div>`;
+  }).join('');
 
   const c = r.campeon || {status:'unknown',name:'?'};
   const cc = c.status==='dead' ? {bg:'#fee2e2',fg:'#b91c1c',b:'#fca5a5',t:'línea rota ❌'}
            : c.status==='alive' ? {bg:'#dcfce7',fg:'#15803d',b:'#86efac',t:'línea viva ✅'}
            : {bg:'#f1f5f9',fg:'#64748b',b:'#e2e8f0',t:'sin definir'};
   const champCol = `
-    <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column;gap:6px">
-      <p style="font-size:10px;font-weight:800;color:#047857;text-transform:uppercase;letter-spacing:.4px;margin:0 0 2px;text-align:center;position:sticky;top:0;background:#fff;padding:2px 0;z-index:1">Campeón</p>
-      <div style="background:${cc.bg};border:2px solid ${cc.b};border-radius:12px;padding:12px;text-align:center">
-        <p style="font-size:18px;margin:0">🏆</p>
-        <p style="font-size:15px;font-weight:900;color:${cc.fg};margin:2px 0 0;${c.status==='dead'?'text-decoration:line-through':''}">${esc(c.name)}</p>
-        <p style="font-size:10px;color:${cc.fg};margin:3px 0 0;font-weight:700">${cc.t}</p>
+    <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column">
+      <p style="font-size:10px;font-weight:800;color:#047857;text-transform:uppercase;letter-spacing:.4px;margin:0 0 6px;text-align:center">Campeón</p>
+      <div style="display:flex;flex-direction:column;justify-content:center;height:${H}px">
+        <div style="background:${cc.bg};border:2px solid ${cc.b};border-radius:12px;padding:12px;text-align:center">
+          <p style="font-size:18px;margin:0">🏆</p>
+          <p style="font-size:15px;font-weight:900;color:${cc.fg};margin:2px 0 0;${c.status==='dead'?'text-decoration:line-through':''}">${esc(c.name)}</p>
+          <p style="font-size:10px;color:${cc.fg};margin:3px 0 0;font-weight:700">${cc.t}</p>
+        </div>
       </div>
     </div>`;
 
-  // Tarjeta de tercer puesto (fija abajo, no entra al scroll del bracket)
-  let tercerHtml = '';
-  if (tercer && tercer.matches && tercer.matches.length) {
-    tercerHtml = `
-      <div style="flex-shrink:0;border-top:1px solid #eef2f7;padding-top:8px;margin-top:6px">
-        <p style="font-size:10px;font-weight:800;color:#b45309;text-transform:uppercase;letter-spacing:.4px;margin:0 0 5px;text-align:center">🥉 Tercer puesto</p>
-        <div style="max-width:260px;margin:0 auto">${tercer.matches.map(matchBox).join('')}</div>
-      </div>`;
-  }
-
   body.innerHTML = `
-    <div style="flex-shrink:0;font-size:11px;color:#64748b;text-align:center;margin-bottom:8px">🟢 vivo · 🔴 eliminado · ⚪ por definir · ✓/✗ acierto · ↔️ desliza</div>
-    <div style="flex:1;min-height:0;display:flex;gap:8px;overflow:auto;align-items:flex-start;-webkit-overflow-scrolling:touch;padding-bottom:6px">${cols}${champCol}</div>
-    ${tercerHtml}`;
+    <div style="font-size:11px;color:#64748b;text-align:center;margin-bottom:10px">🟢 sigue vivo · 🔴 eliminado · ⚪ por definir · ✓/✗ acierto del partido jugado</div>
+    <div style="display:flex;gap:6px;overflow-x:auto;align-items:flex-start;-webkit-overflow-scrolling:touch;padding-bottom:8px">${cols}${champCol}</div>`;
 }
 
 // ─── Recorrido (evolución de posición por partido) ─────────────────
