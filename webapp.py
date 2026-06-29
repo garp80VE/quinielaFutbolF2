@@ -4570,12 +4570,9 @@ async def admin_prize(ql_admin: str = Cookie(default="")):
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2")  or "2"))
     fee_pct     = float(cfg.get("FEE_PCT",          "0") or "0")
     ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
-    paid = 0
-    for row in rows:  # rows son dicts (SQLite via _jugador_db_to_cache)
-        if not row: continue
-        d = _normalize_player(row)
-        if d.get("PAGADO", "").upper() in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"):
-            paid += 1
+    # Mismo criterio que el Pozo público: cuenta aprobados no excluidos.
+    paid = sum(1 for j in _db.db_get_jugadores()
+               if j.get("aprobado", 1) and not j.get("excluido"))
     tie_1st, tie_2nd = _get_tie_counts()
     result = _calc_prize(paid, cost, cat_a_max=cat_a, cat_b_max=cat_b,
                          pct_1=pct_1, sorteo_cant=sorteo_cant,
@@ -4655,12 +4652,11 @@ async def prize_info():
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2")  or "2"))
     fee_pct     = float(cfg.get("FEE_PCT",          "0") or "0")
     ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
-    paid  = 0
-    for row in rows:  # rows son dicts (SQLite via _jugador_db_to_cache)
-        if not row: continue
-        d = _normalize_player(row)
-        if d.get("PAGADO", "").upper() in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"):
-            paid += 1
+    # El pozo cuenta a los jugadores APROBADOS y no excluidos: como el acceso ya
+    # se controla por invitador/aprobación, entrar = estar en el pozo (en F2 no
+    # hay cobro automático que marque "pagado").
+    paid = sum(1 for j in _db.db_get_jugadores()
+               if j.get("aprobado", 1) and not j.get("excluido"))
     tie_1st, tie_2nd = _get_tie_counts()
     result = _calc_prize(paid, cost, cat_a_max=cat_a, cat_b_max=cat_b,
                          pct_1=pct_1, sorteo_cant=sorteo_cant,

@@ -3469,22 +3469,14 @@ function _renderPozo(prize) {
             <span style="font-size:13px;color:#1e293b;font-weight:800">$${d.monto.toFixed(2)}</span>
           </div>
         </div>`).join('');
-  let sorteoWinnersHtml = '';
-  if (prize.categoria === 'C' && prize.sorteo_ganador_1) {
-    sorteoWinnersHtml = `
-          <div style="margin-top:10px;padding:10px;background:#f5f3ff;border-radius:10px">
-            <p style="font-size:11px;font-weight:700;color:#7c3aed;margin:0 0 4px">🎲 Ganadores por Sorteo</p>
-            <p style="font-size:13px;color:#1e293b;margin:0">#1: <b>${prize.sorteo_ganador_1}</b></p>
-            <p style="font-size:13px;color:#1e293b;margin:2px 0 0">#2: <b>${prize.sorteo_ganador_2 || '—'}</b></p>
-          </div>`;
-  }
+  // Las filas de Sorteo (con nombre · % · monto) ya vienen dentro de prize.dist,
+  // igual que en F1; no se duplican en un cuadro aparte.
   prizeBody.innerHTML = `
         <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:12px">
           <span style="font-size:26px;font-weight:900;color:#002868">$${prize.total.toFixed(2)}</span>
-          <span style="font-size:12px;color:#94a3b8">${prize.paid} jugadores pagados · $${(prize.costo||0).toFixed(2)} c/u</span>
+          <span style="font-size:12px;color:#94a3b8">${prize.paid} jugadores · $${(prize.costo||0).toFixed(2)} c/u</span>
         </div>
-        ${distHtml}
-        ${sorteoWinnersHtml}`;
+        ${distHtml}`;
 }
 async function _refreshPozoInfo() {
   try { const prize = await api('GET', '/api/prize-info').catch(() => null); if (prize) _renderPozo(prize); } catch(_) {}
