@@ -3881,13 +3881,15 @@ function _renderMiCuadro(r) {
   // y la caja se centra en su slot → alineación exacta de cada cruce con sus dos
   // alimentadores, sin depender del alto del contenido.
   const RIDX = { R32:0, R16:1, QF:2, SF:3, '3ER':4, FINAL:4 };
-  const BASE = 76, H = 16 * BASE;
+  const BASE = 66, H = 16 * BASE;
 
-  function teamRow(t, isWin) {
+  function teamRow(t, isWin, realGoal) {
     const c = COL[t.status] || COL.unknown;
     const deco = t.status === 'dead' ? 'text-decoration:line-through;' : '';
-    return `<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:${c.fg};${deco}${isWin?'font-weight:800':''};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-      <span style="font-size:8px">${c.dot}</span>${esc(t.name)}</div>`;
+    const goalChip = (realGoal !== null && realGoal !== undefined && realGoal !== '')
+      ? `<span style="margin-left:auto;padding-left:4px;font-weight:800;color:#0f172a;font-size:12px">${esc(realGoal)}</span>` : '';
+    return `<div style="display:flex;align-items:center;gap:3px;font-size:11px;color:${c.fg};${deco}${isWin?'font-weight:800':''}">
+      <span style="font-size:8px">${c.dot}</span><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(t.name)}</span>${goalChip}</div>`;
   }
   function matchBox(m) {
     const w = m.winner || {status:'unknown',name:'?'};
@@ -3907,20 +3909,19 @@ function _renderMiCuadro(r) {
       const col = mx === 0 ? {fg:'#b91c1c',bg:'#fee2e2'} : (mx >= 5 ? {fg:'#15803d',bg:'#dcfce7'} : {fg:'#0369a1',bg:'#e0f2fe'});
       ptsChip = `<span style="font-size:8.5px;font-weight:800;color:${col.fg};background:${col.bg};border-radius:5px;padding:1px 5px">máx ${mx} pt</span>`;
     }
-    // Resultado REAL (solo partidos ya jugados)
-    let realLine = '';
+    // Marcador REAL al lado de cada equipo (solo partidos jugados), mapeado por
+    // nombre: el gol real se muestra junto al equipo predicho que sí jugó.
+    let r1 = null, r2 = null;
     if (m.real) {
-      const rg = `${esc(m.real.g1)}–${esc(m.real.g2)}`;
-      const rgan = m.real.gan ? ` · <b>${esc(m.real.gan)}</b>` : '';
-      realLine = `<div style="font-size:9px;color:#334155;margin-top:2px;border-top:1px dashed #e2e8f0;padding-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🏁 Real: ${rg}${rgan}</div>`;
+      if (m.eq1.name === m.real.eq1) r1 = m.real.g1; else if (m.eq1.name === m.real.eq2) r1 = m.real.g2;
+      if (m.eq2.name === m.real.eq1) r2 = m.real.g1; else if (m.eq2.name === m.real.eq2) r2 = m.real.g2;
     }
     return `<div style="border:1.5px solid ${bd};border-radius:8px;padding:4px 6px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)">
-      ${teamRow(m.eq1, isW1)}${teamRow(m.eq2, isW2)}
+      ${teamRow(m.eq1, isW1, r1)}${teamRow(m.eq2, isW2, r2)}
       <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:2px">
         <span style="font-size:9px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">→ <b>${esc(w.name)}</b>${goles}${mark}</span>
         ${ptsChip}
       </div>
-      ${realLine}
     </div>`;
   }
   const cols = rondas.map(rd => {
