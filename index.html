@@ -3904,7 +3904,7 @@ function _renderMiCuadro(r) {
     const lbl = esTercer ? '🥉 Tercer puesto' : esc(rd.label);
     return `
     <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column">
-      <p style="font-size:10px;font-weight:800;color:${lblColor};text-transform:uppercase;letter-spacing:.4px;margin:0 0 6px;text-align:center">${lbl}</p>
+      <p style="font-size:10px;font-weight:800;color:${lblColor};text-transform:uppercase;letter-spacing:.4px;margin:0;text-align:center;position:sticky;top:0;background:#fff;z-index:2;padding:3px 0 6px">${lbl}</p>
       <div style="display:flex;flex-direction:column;justify-content:space-around;height:${H}px;gap:6px">
         ${rd.matches.map(matchBox).join('')}
       </div>
@@ -3917,7 +3917,7 @@ function _renderMiCuadro(r) {
            : {bg:'#f1f5f9',fg:'#64748b',b:'#e2e8f0',t:'sin definir'};
   const champCol = `
     <div style="min-width:150px;flex-shrink:0;display:flex;flex-direction:column">
-      <p style="font-size:10px;font-weight:800;color:#047857;text-transform:uppercase;letter-spacing:.4px;margin:0 0 6px;text-align:center">Campeón</p>
+      <p style="font-size:10px;font-weight:800;color:#047857;text-transform:uppercase;letter-spacing:.4px;margin:0;text-align:center;position:sticky;top:0;background:#fff;z-index:2;padding:3px 0 6px">Campeón</p>
       <div style="display:flex;flex-direction:column;justify-content:center;height:${H}px">
         <div style="background:${cc.bg};border:2px solid ${cc.b};border-radius:12px;padding:12px;text-align:center">
           <p style="font-size:18px;margin:0">🏆</p>
