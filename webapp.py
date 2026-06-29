@@ -3673,6 +3673,35 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
              or (pkf.get("gan") or "").strip())
         camp = {"name": ("?" if _is_ph(c) else c), "status": _status(c)}
 
+    # Reordenar cada ronda en ORDEN DE CUADRO (no por fecha/jgo de FIFA): se deriva
+    # desde la Final hacia abajo con _WC2026_MAP, para que los 2 alimentadores de
+    # cada cruce queden adyacentes y alineados con su ronda superior.
+    WCMAP = _db._WC2026_MAP
+    def _expand(parent_order, child_map):
+        out = []
+        for p in parent_order:
+            if 0 <= p < len(child_map):
+                out.extend(child_map[p])
+        return out
+    disp = {"FINAL": [0]}
+    disp["SF"]  = _expand(disp["FINAL"], WCMAP.get("FINAL", []))
+    disp["QF"]  = _expand(disp["SF"],    WCMAP.get("SF", []))
+    disp["R16"] = _expand(disp["QF"],    WCMAP.get("QF", []))
+    disp["R32"] = _expand(disp["R16"],   WCMAP.get("R16", []))
+    for rd in rondas:
+        o = disp.get(rd["key"])
+        if not o:
+            continue
+        ms = rd["matches"]; used = set()
+        nuevo = []
+        for i in o:
+            if 0 <= i < len(ms) and i not in used:
+                nuevo.append(ms[i]); used.add(i)
+        for i in range(len(ms)):           # cualquier sobrante, por seguridad
+            if i not in used:
+                nuevo.append(ms[i])
+        rd["matches"] = nuevo
+
     return {"nombre": nombre, "rondas": rondas, "campeon": camp}
 
 
