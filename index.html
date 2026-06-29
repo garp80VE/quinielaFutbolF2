@@ -3746,15 +3746,17 @@ async function loadTabla(force=false) {
       if (!probHasData) return 'vivo';
       const p = probMap[nombre.trim().toLowerCase()];
       if (!p) return 'vivo';
-      if (p.univ_1st === 0 && p.univ_2nd === 0) return 'eliminado';
-      if (p.univ_1st === 0 && p.univ_2nd > 0) {
-        // Solo destacar el 2do si la categoría reparte 2do premio (B/C).
-        // En Cat A (1 solo ganador) solo importa el 1ro → quien no puede ser 1ro queda †.
-        if (!has2ndPrize) return 'eliminado';
-        if (p.univ_2nd >= 99) return 'garantizado2do'; // 2do lugar ya asegurado → 🥈
-        return 'solo2do';                              // peleando el 2do → 🚑
+      // Usar el ESTADO matemático (proyección de universo perfecto), NO la
+      // probabilidad: con muchos partidos pendientes la prob. puede redondear a
+      // 0% aunque el jugador todavía pueda alcanzar el 1°.
+      const est = p.estado || p.chance || 'opcion_1';
+      if (est === 'eliminado') return 'eliminado';      // ya no llega ni al top-2
+      if (est === 'solo_2') {
+        if (!has2ndPrize) return 'eliminado';           // sin 2do premio → fuera
+        if ((p.prob_top2 != null ? p.prob_top2 : 0) >= 99.99) return 'garantizado2do';
+        return 'solo2do';                               // solo puede 2° → 🚑
       }
-      return 'vivo';
+      return 'vivo';                                     // aún puede ser 1°
     }
 
     // ── Renderizar fila con badge de premio + estado de eliminación ──
@@ -4174,15 +4176,18 @@ async function loadProbabilidades(force=false) {
 
     function playerCard(p, idx) {
       const isLeader = p.rank === 1;
-      // La 🚑/🥈 de 2do solo aplica si la categoría reparte 2do premio (B/C).
-      // En Cat A (1 solo ganador) quien no puede ser 1ro queda eliminado (†).
-      const eliminado      = hasData && p.univ_1st === 0 && p.univ_2nd === 0;
-      const garantizado2do = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd >= 99;
-      const soloSegundo    = hasData && has2ndPrizeP && p.univ_1st === 0 && p.univ_2nd > 0 && !garantizado2do;
+      // Estado MATEMÁTICO (universo perfecto del jugador), no la probabilidad:
+      // 🚑 "solo 2°" solo si, aun acertando TODO lo suyo, ya hay alguien por
+      // encima (no puede ser 1° en ningún universo, ni el suyo).
+      const est = p.estado || p.chance || 'opcion_1';
+      const puede1ro       = est === 'opcion_1';
+      const eliminado      = hasData && est === 'eliminado';
+      const garantizado2do = hasData && has2ndPrizeP && est === 'solo_2' && (p.prob_top2 != null ? p.prob_top2 : 0) >= 99.99;
+      const soloSegundo    = hasData && has2ndPrizeP && est === 'solo_2' && !garantizado2do;
 
       // Ícono / medalla
       let iconEl;
-      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
+      if (eliminado || (!has2ndPrizeP && hasData && !puede1ro)) {
         iconEl = `<span style="font-size:20px">†</span>`;
       } else if (garantizado2do) {
         iconEl = `<span style="font-size:20px">🥈</span>`;
@@ -4200,7 +4205,7 @@ async function loadProbabilidades(force=false) {
 
       // Estilo de la tarjeta
       let cardBg, cardBorder, nameColor;
-      if (eliminado || (!has2ndPrizeP && hasData && p.univ_1st === 0)) {
+      if (eliminado || (!has2ndPrizeP && hasData && !puede1ro)) {
         cardBg = '#fef2f2'; cardBorder = '2px solid #fca5a5'; nameColor = '#991b1b';
       } else if (garantizado2do) {
         cardBg = '#f0fdf4'; cardBorder = '2px solid #86efac'; nameColor = '#166534';
