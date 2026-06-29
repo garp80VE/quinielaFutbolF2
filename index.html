@@ -5466,7 +5466,7 @@ async function _loadAdminPrizeNow() {
       // Sin pagados aún — mostrar reglas usando parámetros configurados
       const pct1 = p.pct_1 || 70;
       const pct2 = p.pct_2 || 30;
-      const sc   = p.sorteo_cant || 2;
+      const sc   = p.sorteo_cant != null ? p.sorteo_cant : 2;
       distHtml = `
         <div style="background:#f8fafc;border-radius:10px;padding:10px 12px">
           <p style="font-size:10px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin:0 0 8px">Reglas de distribución</p>
@@ -5481,8 +5481,8 @@ async function _loadAdminPrizeNow() {
             </div>
             <div style="padding:8px 10px;background:#f5f3ff;border-radius:8px;border-left:3px solid #7c3aed">
               <p style="font-size:11px;font-weight:800;color:#7c3aed;margin:0">Cat. C — ${catB+1}+ pagados</p>
-              <p style="font-size:11px;color:#374151;margin:2px 0 0">${sc} ganador${sc>1?'es':''} sorteo: <b>$${cost.toFixed(2)} c/u</b></p>
-              <p style="font-size:11px;color:#374151;margin:1px 0 0">Del resto: 1° <b>${pct1}%</b> · 2° <b>${pct2}%</b></p>
+              ${sc > 0 ? `<p style="font-size:11px;color:#374151;margin:2px 0 0">${sc} ganador${sc>1?'es':''} sorteo: <b>$${cost.toFixed(2)} c/u</b></p>` : `<p style="font-size:11px;color:#94a3b8;margin:2px 0 0">Sin sorteo</p>`}
+              <p style="font-size:11px;color:#374151;margin:1px 0 0">${sc>0?'Del resto: ':''}1° <b>${pct1}%</b> · 2° <b>${pct2}%</b></p>
             </div>
           </div>
         </div>`;
@@ -5490,10 +5490,10 @@ async function _loadAdminPrizeNow() {
 
     // ── Sorteo (solo Cat C) ───────────────────────────────────────────
     let sorteoHtml = '';
-    if (p.categoria === 'C') {
+    const sorteoCount = p.sorteo_cant != null ? p.sorteo_cant : 2;
+    if (p.categoria === 'C' && sorteoCount > 0) {
       const ganadores   = p.sorteo_ganadores || [];
       const hasSorteo   = ganadores.some(g => !!g);
-      const sorteoCount = p.sorteo_cant || 2;
       const ganList     = hasSorteo
         ? ganadores.filter(g=>g).map((g,i) => `<p style="font-size:12px;color:#1e293b;margin:${i>0?'3px':'0'} 0 0">#${i+1}: <b>${g}</b> — $${cost.toFixed(2)}</p>`).join('')
         : '';
@@ -5571,7 +5571,7 @@ async function _loadAdminPrizeNow() {
           <!-- Sorteo cant -->
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="font-size:11px;font-weight:700;color:#94a3b8;flex-shrink:0">Quinielas por sorteo (Cat. C):</span>
-            <input id="adm-sorteo-cant" type="number" value="${p.sorteo_cant||2}" min="1" max="10"
+            <input id="adm-sorteo-cant" type="number" value="${p.sorteo_cant != null ? p.sorteo_cant : 2}" min="0" max="10"
               style="width:46px;border:1.5px solid #e2e8f0;border-radius:7px;padding:3px 6px;font-size:13px;font-weight:700;color:#7c3aed;outline:none;text-align:center"
               onfocus="this.style.borderColor='#7c3aed'" onblur="this.style.borderColor='#e2e8f0'">
             <span style="font-size:11px;color:#94a3b8">ganadores al azar · $${cost.toFixed(2)} c/u</span>
@@ -5824,7 +5824,7 @@ async function savePrizeConfig() {
   const fee = feeEl ? parseFloat(feeEl.value) || 0 : 0;
   if (isNaN(a) || isNaN(b) || a < 1 || b <= a) { showToast('Limite Cat. B debe ser mayor que A'); return; }
   if (isNaN(p1) || p1 < 1 || p1 > 99) { showToast('% 1 debe estar entre 1 y 99'); return; }
-  if (isNaN(sc) || sc < 1 || sc > 10) { showToast('Sorteos: entre 1 y 10'); return; }
+  if (isNaN(sc) || sc < 0 || sc > 10) { showToast('Sorteos: entre 0 y 10'); return; }
   if (fee < 0 || fee > 50) { showToast('Fee debe estar entre 0% y 50%'); return; }
   try {
     await api('POST', '/api/admin/config', { fields: {
