@@ -1855,10 +1855,10 @@ def _updater_loop():
             games, _ = _get_games_cache()
 
             # Polling acelerado SOLO cuando hay algún partido en vivo: consulta
-            # ESPN cada ~20s en vez de 60s para reducir el delay percibido.
+            # ESPN cada ~12s en vez de 60s para detectar goles cuanto antes.
             _vivos = {"EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"}
             if any(g.get("estado", "") in _vivos for g in games):
-                interval = min(interval, int(cfg.get("INTERVAL_LIVE_SEGS", 20) or 20))
+                interval = min(interval, int(cfg.get("INTERVAL_LIVE_SEGS", 12) or 12))
 
             try:
                 _check_reminders(games, cfg)
@@ -2077,6 +2077,15 @@ def _updater_loop():
                     _propagate_bracket()
                 except Exception as _pe:
                     print(f"[updater] propagate-bracket error: {_pe}")
+                # Gol/cambio → invalidar cachés del frontend AL INSTANTE para que
+                # Apuestas, Tabla y Probabilidades reflejen el cambio en el próximo
+                # fetch, sin esperar a que venza el TTL.
+                try:
+                    _game_picks_cache.clear()
+                    _compare_cache["data"] = None; _compare_cache["ts"] = 0.0
+                    _cache["prob_ts"] = 0.0
+                except Exception as _ce:
+                    print(f"[updater] invalidar cachés: {_ce}")
 
             if _pending_notifs:
                 top  = _top12_text()             # 1° y 2° lugar (con empates), multilínea

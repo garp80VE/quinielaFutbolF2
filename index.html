@@ -4578,7 +4578,7 @@ window.showScreen = function(id) {
 let _pollTimer     = null;
 let _pollRunning   = false;
 let _lastDataTs    = 0;   // data_ts del último poll exitoso (ms epoch)
-const INTERVAL_LIVE   = 10_000;  // 10s  - partidos en vivo
+const INTERVAL_LIVE   = 8_000;   // 8s  - partidos en vivo (refresco rápido de goles)
 const INTERVAL_RECENT = 15_000;  // 15s  - hay FINAL reciente (hoy/ayer) o datos recién cambiaron
 const INTERVAL_IDLE   = 30_000;  // 30s  - sin actividad reciente
 
