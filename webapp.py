@@ -1732,8 +1732,9 @@ def _batch_read_player_tabs(sh, players: list, last_row: int) -> dict:
 
 
 def _compute_probabilities():
-    """Placeholder — probabilidades no implementadas aún."""
-    return {}
+    """Cálculo de probabilidades (Monte Carlo del bracket). Usado para
+    precalentar el caché desde el updater y al arranque."""
+    return _build_probabilities()
 
 
 def _update_standings():
@@ -3934,7 +3935,19 @@ def _compute_compare_picks() -> dict:
 
 @app.get("/api/probabilities")
 async def get_probabilities():
-    """Distribucion de picks + standings para pantalla Probabilidades."""
+    """Probabilidades (Monte Carlo del bracket) + distribución de picks."""
+    now = time.time()
+    if _cache.get("prob") is not None and now - _cache.get("prob_ts", 0) < PROB_TTL:
+        return _cache["prob"]
+    loop   = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _build_probabilities)
+    _cache["prob"]    = result
+    _cache["prob_ts"] = time.time()
+    return result
+
+
+def _build_probabilities():
+    """Cálculo pesado (corre en executor): Monte Carlo + distribución de picks."""
     games, _ = _get_games_cache()
     cfg = state.get("cfg", {})
 
@@ -3962,91 +3975,43 @@ async def get_probabilities():
             "pct_eq2": round(c2/total*100) if total else 0,
         })
 
-    # Probabilidades por jugador con MAX REALISTA + equipos con vida
-    prob_data = _db.db_compute_probabilities(cfg)
-    if not prob_data:
-        return {"players": [], "fixed_games": len(fixed_games),
-                "pending_games": len(prog_games), "games": game_dist}
+    # Probabilidades por jugador con Monte Carlo del bracket (16.12).
+    mc = _db.db_compute_probabilities_mc(cfg)
+    # Conservar info de "equipos con vida / por cobrar" (cálculo realista barato),
+    # fusionada por nombre en los jugadores del Monte Carlo.
+    try:
+        extra = {e["nombre"]: e for e in _db.db_compute_probabilities(cfg)}
+        for p in mc.get("players", []):
+            e = extra.get(p["name"])
+            if e:
+                p["equipos_vivos"]    = e.get("equipos_vivos", 0)
+                p["equipos_lista"]    = e.get("equipos_lista", [])
+                p["por_cobrar"]       = e.get("por_cobrar", 0)
+                p["por_cobrar_lista"] = e.get("por_cobrar_lista", [])
+    except Exception as _ex:
+        print(f"[prob] merge equipos_vivos: {_ex}")
+    mc["games"] = game_dist
+    return mc
 
-    pending_count = len(prog_games)
-    lider_pts     = prob_data[0]["pts"] if prob_data else 0
-    segundo_pts   = prob_data[1]["pts"] if len(prob_data) > 1 else lider_pts
 
-    # Peso de cada jugador: combina puntos actuales y techo realista (favorece a
-    # quien va arriba Y a quien tiene mas potencial por cobrar).
-    def _peso(pp): return pp["pts"] + pp["max_realista"]
+@app.get("/api/universos")
+async def get_universos():
+    """Vista de 'universos' (proyección perfecta por jugador) derivada del
+    mismo cálculo de probabilidades."""
+    data = await get_probabilities()
+    estado_es = {"opcion_1": "puede_1", "solo_2": "solo_2", "eliminado": "eliminado"}
+    out = []
+    for p in data.get("players", []):
+        out.append({"nombre": p.get("name"), "pts": p.get("current_pts"),
+                    "techo": p.get("techo"), "univ_1ro": p.get("univ_win"),
+                    "univ_top2": p.get("univ_top2"),
+                    "dif_2do_en_su_universo": p.get("univ_dif2"),
+                    "estado": estado_es.get(p.get("chance"), p.get("chance"))})
+    out.sort(key=lambda x: (-(x["univ_top2"] or 0), -(x["univ_1ro"] or 0), -(x["pts"] or 0)))
+    return {"universos": len(data.get("players", [])),
+            "fixed_games": data.get("fixed_games"),
+            "pending_games": data.get("pending_games"), "jugadores": out}
 
-    # Candidatos por POSICIÓN alcanzable:
-    #  - cand_1ro: su max realista alcanza al lider (pueden ser 1ro).
-    #  - cand_pod: su max realista alcanza al 2do actual (pueden entrar al top-2).
-    cand_1ro = [pp for pp in prob_data if pp["max_realista"] >= lider_pts]
-    cand_pod = [pp for pp in prob_data if pp["max_realista"] >= segundo_pts]
-    _ids_1ro = {pp["jugador_id"] for pp in cand_1ro}
-    _ids_pod = {pp["jugador_id"] for pp in cand_pod}
-    W1 = sum(_peso(pp) for pp in cand_1ro) or 1
-    Wp = sum(_peso(pp) for pp in cand_pod) or 1
-
-    def _p1(pp):
-        # Prob de quedar 1ro: peso normalizado entre candidatos a 1ro.
-        return (_peso(pp) / W1) if pp["jugador_id"] in _ids_1ro else 0.0
-
-    def _p2(pp):
-        # Prob de quedar 2do (modelo de ranking Plackett-Luce): el 1ro lo gana
-        # alguien de cand_1ro y pp queda 2do si es el mejor de los restantes del
-        # podio. Asi P(1ro) y P(2do) son complementarias (no se duplican).
-        if pp["jugador_id"] not in _ids_pod:
-            return 0.0
-        wi = _peso(pp); s = 0.0
-        for j in cand_1ro:
-            if j["jugador_id"] == pp["jugador_id"]:
-                continue
-            denom = Wp - _peso(j)
-            if denom > 0:
-                s += (_peso(j) / W1) * (wi / denom)
-        return s
-
-    players_out = []
-    _prev_pts = None; _rank = 0
-    for rank_i, p in enumerate(prob_data):
-        # rank con empates: mismos puntos → misma posición (1,1,3,...), para que la
-        # medalla 🥇/🥈 (Bloque 13) cubra a TODOS los empatados en 1° y 2°.
-        if p["pts"] != _prev_pts:
-            _rank = rank_i + 1
-            _prev_pts = p["pts"]
-        cur_pts      = p["pts"]
-        max_possible = p["max_realista"]
-        if pending_count == 0:
-            prob_1st = 100.0 if rank_i == 0 else 0.0
-            univ_1st = 100 if rank_i == 0 else 0
-            univ_2nd = 100 if rank_i == 1 else 0
-        else:
-            prob_1st = round(_p1(p) * 100, 1)
-            univ_1st = round(prob_1st)
-            univ_2nd = round(_p2(p) * 100)
-        players_out.append({
-            "name":          p["nombre"],
-            "rank":          _rank,
-            "current_pts":   cur_pts,
-            "max_possible":  max_possible,
-            "equipos_vivos": p["equipos_vivos"],
-            "equipos_lista": p["equipos_lista"],
-            "por_cobrar":    p["por_cobrar"],
-            "por_cobrar_lista": p["por_cobrar_lista"],
-            "prob_1st":      prob_1st,
-            "univ_1st":      univ_1st,
-            "univ_2nd":      univ_2nd,
-            "pts_breakdown": p.get("pts_breakdown", {}),
-        })
-
-    _vL = int(cfg.get("PTS_LOGRO", 1) or 1); _vG = int(cfg.get("PTS_GAN", 2) or 2)
-    _v1 = int(cfg.get("PTS_GOL1", 1) or 1); _v2 = int(cfg.get("PTS_GOL2", 1) or 1)
-    return {
-        "players":      players_out,
-        "fixed_games":  len(fixed_games),
-        "pending_games": pending_count,
-        "games":        game_dist,
-        "max_pts":      _vL + _vG + _v1 + _v2,   # 16.10: máximo por partido (logro+gan+gol1+gol2)
-    }
 
 @app.get("/api/compare-picks")
 async def get_compare_picks_all():

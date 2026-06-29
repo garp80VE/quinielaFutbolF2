@@ -988,6 +988,302 @@ def db_compute_probabilities(cfg: dict = None) -> list:
     finally:
         conn.close()
 
+
+def db_compute_probabilities_mc(cfg: dict = None, n_sims: int = 1500) -> dict:
+    """Probabilidades por simulación de Monte Carlo, ADAPTADO al bracket de F2.
+
+    A diferencia de la fase de grupos (partidos independientes), aquí cada
+    partido pendiente de ronda superior NO tiene equipos fijos: dependen de
+    quién avance. Por eso cada simulación recorre el cuadro REAL hacia adelante
+    (R32 → R16 → … → FINAL) propagando ganadores simulados, y luego puntúa los
+    picks de cada jugador (logro/ganador/goles/campeón, con inferencia de
+    bracket) contra ese universo simulado.
+
+    Devuelve por jugador: rank, current_pts, techo, dist_1, prob_1st, prob_top2,
+    trend, estado/chance (opcion_1|solo_2|eliminado), univ_win/univ_top2/
+    univ_dif2/univ_total y pts_breakdown.
+    """
+    import random as _rnd, math as _math
+    cfg = cfg or {}
+    vL = int(cfg.get("PTS_LOGRO",   1) or 1)
+    vG = int(cfg.get("PTS_GAN",     2) or 2)
+    v1 = int(cfg.get("PTS_GOL1",    1) or 1)
+    v2 = int(cfg.get("PTS_GOL2",    1) or 1)
+    vC = int(cfg.get("PTS_CAMPEON", 0) or 0)
+    MAXG = vL + vG + v1 + v2
+
+    conn = get_conn()
+    try:
+        games = [dict(r) for r in conn.execute(
+            "SELECT jgo,grupo,eq1,eq2,gol1,gol2,ganador,estado,espn_id FROM horarios").fetchall()]
+        jus = conn.execute(
+            "SELECT id,nombre FROM jugadores WHERE COALESCE(excluido,0)=0 ORDER BY num,id").fetchall()
+        jugadores = [dict(j) for j in jus if (j["nombre"] or "").strip()]
+        picks_by_player = {}
+        for j in jugadores:
+            rows = conn.execute(
+                "SELECT jgo,g1_pick,g2_pick,gan_pick,eq1_pick,eq2_pick "
+                "FROM picks WHERE jugador_id=?", (j["id"],)).fetchall()
+            picks_by_player[j["id"]] = {
+                str(r["jgo"]): {"g1": r["g1_pick"], "g2": r["g2_pick"],
+                                "gan": r["gan_pick"], "eq1": r["eq1_pick"] or "",
+                                "eq2": r["eq2_pick"] or ""} for r in rows}
+    finally:
+        conn.close()
+
+    by_jgo, by_ronda = build_bracket_index(games)
+    games_sorted = sorted(games, key=lambda g: int(g["jgo"]) if str(g["jgo"]).isdigit() else 0)
+    games_map    = {str(g["jgo"]): g for g in games_sorted}
+
+    def _isfin(g): return bool(g.get("estado")) and g["estado"] != "PROG"
+    def _num(x):
+        try: return int(str(x).strip())
+        except (ValueError, TypeError): return None
+
+    fixed     = [g for g in games_sorted if _isfin(g)]
+    pending   = [g for g in games_sorted if not _isfin(g)]
+    pend_jgos = [str(g["jgo"]) for g in pending]
+
+    base = {"players": [], "fixed_games": len(fixed), "pending_games": len(pending),
+            "max_pts": MAXG, "last_game": ""}
+    if not jugadores:
+        return base
+
+    names = {j["id"]: j["nombre"] for j in jugadores}
+    ids   = list(names.keys())
+
+    # ── Fuerza de cada equipo a partir de resultados (ataque/defensa, Poisson) ──
+    gf, ga, pj, nfin = {}, {}, {}, 0
+    for g in fixed:
+        ra, rb = _num(g.get("gol1")), _num(g.get("gol2"))
+        e1 = (g.get("eq1") or "").strip(); e2 = (g.get("eq2") or "").strip()
+        if ra is None or rb is None or not e1 or not e2:
+            continue
+        nfin += 1
+        for t in (e1, e2):
+            gf.setdefault(t, 0); ga.setdefault(t, 0); pj.setdefault(t, 0)
+        gf[e1] += ra; ga[e1] += rb; pj[e1] += 1
+        gf[e2] += rb; ga[e2] += ra; pj[e2] += 1
+    mu = (sum(gf.values()) / (2 * nfin)) if nfin else 1.3
+    Kf = 4.0
+    att  = {t: ((gf[t] + Kf * mu) / (pj[t] + Kf)) / mu for t in pj}
+    deff = {t: ((ga[t] + Kf * mu) / (pj[t] + Kf)) / mu for t in pj}
+
+    def _lam(e1, e2):
+        l1 = mu * att.get(e1, 1.0) * deff.get(e2, 1.0)
+        l2 = mu * att.get(e2, 1.0) * deff.get(e1, 1.0)
+        return max(0.15, l1), max(0.15, l2)
+
+    def _pois(rng, lam):
+        L = _math.exp(-lam); k, p = 0, 1.0
+        while True:
+            k += 1; p *= rng.random()
+            if p <= L:
+                return min(k - 1, 9)
+
+    # ── Predicción resuelta de cada jugador por partido (precálculo) ───────────
+    # pred[id][jgo] = (eq1_pred, eq2_pred, gan_pred, g1_pred, g2_pred)
+    pred = {}
+    for pid in ids:
+        pp = picks_by_player[pid]; d = {}
+        for g in games_sorted:
+            js = str(g["jgo"]); pk = pp.get(js)
+            if not pk:
+                continue
+            e1p = _disp_team(g, "eq1", by_jgo, by_ronda, pp)
+            e2p = _disp_team(g, "eq2", by_jgo, by_ronda, pp)
+            raw = (pk.get("gan") or "").strip()
+            ganp = _resolve_team_name(raw, by_jgo, by_ronda, pp) or raw
+            d[js] = (e1p, e2p, ganp, _num(pk.get("g1")), _num(pk.get("g2")))
+        pred[pid] = d
+
+    # ── Puntos actuales (partidos jugados) + desglose ──────────────────────────
+    cur, brk = {}, {}
+    for pid in ids:
+        tot = 0; b = {}
+        for g in fixed:
+            pk = picks_by_player[pid].get(str(g["jgo"]))
+            if not pk:
+                continue
+            _, _, _, _, pt = calc_pts_inferred(g, pk, by_jgo, by_ronda,
+                                               picks_by_player[pid], vL, vG, v1, v2, vC)
+            tot += pt; b[pt] = b.get(pt, 0) + 1
+        cur[pid] = tot; brk[pid] = b
+
+    FINAL_JS = {str(g["jgo"]) for g in games_sorted
+                if (g.get("ronda") or g.get("grupo") or "").upper() == "FINAL"}
+
+    def _pts_pending(pid, real, jgos):
+        """Puntos del jugador en los partidos `jgos` contra el universo `real`
+        (mismas reglas que _calc_pts, con equipos predichos ya resueltos)."""
+        s = 0; predp = pred[pid]
+        for js in jgos:
+            pr = predp.get(js)
+            if not pr:
+                continue
+            rs = real.get(js)
+            if not rs:
+                continue
+            e1p, e2p, ganp, g1p, g2p = pr
+            e1r = rs["eq1"]; e2r = rs["eq2"]; ar = rs["g1"]; br = rs["g2"]; ganr = rs["gan"]
+            # teamAlive: al menos un equipo predicho debe jugar el partido real
+            pt = {t for t in (e1p, e2p, ganp) if t and not t.startswith("Gan. ")}
+            if e1r and e2r and pt and not (pt & {e1r, e2r}):
+                continue
+            # logro: empate vs no-empate a los 90'
+            if None not in (g1p, g2p, ar, br) and (ar == br) == (g1p == g2p):
+                s += vL
+            # ganador (equipo que avanza)
+            hit_gan = bool(ganp and ganr and ganp == ganr)
+            if hit_gan:
+                s += vG
+            # goles por NOMBRE de equipo
+            gp1 = g1p if e1p == e1r else (g2p if e2p == e1r else None)
+            gp2 = g1p if e1p == e2r else (g2p if e2p == e2r else None)
+            if gp1 is not None and ar is not None and gp1 == ar:
+                s += v1
+            if gp2 is not None and br is not None and gp2 == br:
+                s += v2
+            # campeón
+            if vC and hit_gan and js in FINAL_JS:
+                s += vC
+        return s
+
+    def _simulate(rng, pend_set):
+        """Recorre el cuadro real propagando ganadores. Los partidos FINAL que no
+        estén en pend_set usan su resultado real; el resto se simula."""
+        real = {}
+        for g in games_sorted:
+            js = str(g["jgo"])
+            if _isfin(g) and js not in pend_set:
+                real[js] = {"eq1": (g.get("eq1") or "").strip(),
+                            "eq2": (g.get("eq2") or "").strip(),
+                            "g1": _num(g.get("gol1")), "g2": _num(g.get("gol2")),
+                            "gan": (g.get("ganador") or "").strip()}
+                continue
+            e1 = _disp_team(g, "eq1", by_jgo, by_ronda, real)
+            e2 = _disp_team(g, "eq2", by_jgo, by_ronda, real)
+            l1, l2 = _lam(e1, e2)
+            a, b = _pois(rng, l1), _pois(rng, l2)
+            if a > b:   gan = e1
+            elif b > a: gan = e2
+            else:       gan = e1 if rng.random() < l1 / (l1 + l2) else e2
+            real[js] = {"eq1": e1, "eq2": e2, "g1": a, "g2": b, "gan": gan}
+        return real
+
+    def _run_mc(cur_map, pend_set, n):
+        """Devuelve (prob_1st, prob_top2) en % por jugador."""
+        p1 = {pid: 0.0 for pid in ids}; p2 = {pid: 0.0 for pid in ids}
+        plist = [str(g["jgo"]) for g in games_sorted if str(g["jgo"]) in pend_set]
+        if not plist:
+            order2 = sorted(ids, key=lambda pid: -cur_map[pid])
+            top = cur_map[order2[0]]
+            second = sorted({cur_map[pid] for pid in ids}, reverse=True)
+            mx2 = second[1] if len(second) > 1 else second[0]
+            champs = [pid for pid in ids if cur_map[pid] == top]
+            for pid in champs: p1[pid] = 100.0 / len(champs)
+            for pid in ids:
+                if cur_map[pid] >= mx2: p2[pid] = 100.0
+            return p1, p2
+        rng = _rnd.Random(20260628)
+        for _ in range(n):
+            real = _simulate(rng, pend_set)
+            scores = [(cur_map[pid] + _pts_pending(pid, real, plist), pid) for pid in ids]
+            vals = sorted({s for s, _ in scores}, reverse=True)
+            mx1 = vals[0]; mx2 = vals[1] if len(vals) > 1 else vals[0]
+            champs = [pid for s, pid in scores if s == mx1]
+            for pid in champs: p1[pid] += 1.0 / len(champs)
+            for s, pid in scores:
+                if s >= mx2: p2[pid] += 1.0
+        for pid in ids:
+            p1[pid] = 100.0 * p1[pid] / n
+            p2[pid] = 100.0 * p2[pid] / n
+        return p1, p2
+
+    pend_set = set(pend_jgos)
+    if pending:
+        now_p1, now_p2 = _run_mc(cur, pend_set, n_sims)
+    else:
+        now_p1, now_p2 = _run_mc(cur, pend_set, 1)  # determinista
+
+    # ── Ranking por puntos actuales (empates = misma posición) ─────────────────
+    order = sorted(ids, key=lambda pid: (-cur[pid], names[pid].lower()))
+    rank = {}; prev = None; r = 0
+    for i, pid in enumerate(order):
+        if cur[pid] != prev:
+            r = i + 1; prev = cur[pid]
+        rank[pid] = r
+    lider = cur[order[0]] if order else 0
+
+    # ── Proyección por "universo perfecto" de cada jugador → estado + universos ─
+    univ_win = {pid: 0.0 for pid in ids}; univ_top2 = {pid: 0 for pid in ids}
+    chance, univ_dif2, techo = {}, {}, {}
+    for P in ids:
+        realP = {}
+        for js in pend_jgos:
+            pr = pred[P].get(js)
+            if not pr:
+                continue
+            e1p, e2p, ganp, g1p, g2p = pr
+            realP[js] = {"eq1": e1p, "eq2": e2p, "g1": g1p, "g2": g2p, "gan": ganp}
+        scoresP = {X: cur[X] + _pts_pending(X, realP, pend_jgos) for X in ids}
+        pscore = scoresP[P]
+        techo[P] = pscore
+        n_above = sum(1 for x in ids if x != P and scoresP[x] > pscore)
+        if not pending:
+            chance[P] = "opcion_1" if rank[P] == 1 else ("solo_2" if rank[P] == 2 else "eliminado")
+        else:
+            chance[P] = "opcion_1" if n_above == 0 else ("solo_2" if n_above == 1 else "eliminado")
+        otros = [sc for x, sc in scoresP.items() if x != P]
+        univ_dif2[P] = pscore - (max(otros) if otros else 0)
+        mx1 = max(scoresP.values())
+        champs = [x for x, sc in scoresP.items() if sc == mx1]
+        for x in champs: univ_win[x] += 1.0 / len(champs)
+        vals = sorted(set(scoresP.values()), reverse=True)
+        mx2 = vals[1] if len(vals) > 1 else vals[0]
+        for x, sc in scoresP.items():
+            if sc >= mx2: univ_top2[x] += 1
+
+    # ── Tendencia ▲▼: prob_1st antes vs después del último partido finalizado ──
+    before_p1 = dict(now_p1)
+    if fixed and pending:
+        last_final = max((str(g["jgo"]) for g in fixed),
+                         key=lambda x: int(x) if str(x).isdigit() else -1)
+        lg = games_map[last_final]
+        before_cur = dict(cur)
+        for pid in ids:
+            pk = picks_by_player[pid].get(last_final)
+            if pk:
+                _, _, _, _, earned = calc_pts_inferred(lg, pk, by_jgo, by_ronda,
+                                                       picks_by_player[pid], vL, vG, v1, v2, vC)
+                before_cur[pid] = cur[pid] - earned
+        before_p1, _ = _run_mc(before_cur, pend_set | {last_final}, n_sims)
+
+    last_game = ""
+    if fixed:
+        lg = games_map[max((str(g["jgo"]) for g in fixed),
+                           key=lambda x: int(x) if str(x).isdigit() else -1)]
+        last_game = f"{lg.get('eq1','')} vs {lg.get('eq2','')}"
+
+    players = []
+    for pid in order:
+        prob1 = round(now_p1.get(pid, 0.0), 5)
+        ptop  = round(now_p2.get(pid, 0.0), 5)
+        players.append({
+            "name": names[pid], "rank": rank[pid], "current_pts": cur[pid],
+            "max_possible": techo[pid], "techo": techo[pid],
+            "dist_1": max(0, lider - cur[pid]),
+            "prob_1st": prob1, "prob_top2": ptop,
+            "univ_1st": prob1, "univ_2nd": round(max(0.0, ptop - prob1), 5),
+            "trend": round(prob1 - before_p1.get(pid, prob1), 1),
+            "estado": chance[pid], "chance": chance[pid],
+            "univ_win": round(univ_win[pid], 2), "univ_top2": univ_top2[pid],
+            "univ_dif2": univ_dif2[pid], "univ_total": len(ids),
+            "pts_breakdown": brk[pid],
+        })
+    return {"players": players, "fixed_games": len(fixed), "pending_games": len(pending),
+            "max_pts": MAXG, "last_game": last_game}
+
 # == Ligas =====================================================================
 
 def db_get_ligas() -> list:

@@ -3966,6 +3966,17 @@ async function loadProbabilidades(force=false) {
       return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:8px">${chips}</div>`;
     }
 
+    // Tendencia ▲▼ de la prob. de 1° respecto a ANTES del último partido jugado.
+    function trendBadge(p) {
+      if (!data.fixed_games) return '';
+      const d = p.trend || 0;
+      if (Math.abs(d) < 0.3)
+        return `<div style="margin-top:8px"><span style="font-size:10px;color:#94a3b8;font-weight:700">— sin cambio tras el últ. juego</span></div>`;
+      if (d > 0)
+        return `<div style="margin-top:8px"><span style="font-size:10px;color:#15803d;background:#dcfce7;border-radius:6px;padding:2px 7px;font-weight:800">▲ +${d.toFixed(1)}% tras el últ. juego</span></div>`;
+      return `<div style="margin-top:8px"><span style="font-size:10px;color:#b91c1c;background:#fee2e2;border-radius:6px;padding:2px 7px;font-weight:800">▼ ${d.toFixed(1)}% tras el últ. juego</span></div>`;
+    }
+
     function playerCard(p, idx) {
       const isLeader = p.rank === 1;
       // La 🚑/🥈 de 2do solo aplica si la categoría reparte 2do premio (B/C).
@@ -4016,6 +4027,7 @@ async function loadProbabilidades(force=false) {
             <span style="font-size:13px;font-weight:800;color:${eliminado?'#94a3b8':barColor2}">${fmtPct(p.univ_2nd)}</span>
           </div>
           ${barHtml(p.univ_2nd, eliminado?'#cbd5e1':barColor2)}
+          ${trendBadge(p)}
         </div>` : '';
 
       return `
@@ -4045,8 +4057,8 @@ async function loadProbabilidades(force=false) {
       </div>`;
 
     const legend = `
-      <div style="font-size:10px;color:#94a3b8;text-align:center;padding:8px 0 4px">
-        % basado en universos: los picks de cada jugador como resultado hipotético de los partidos pendientes
+      <div style="font-size:10px;color:#94a3b8;text-align:center;padding:8px 0 4px;line-height:1.5">
+        Probabilidad por simulación (Monte Carlo) de los ${data.pending_games} partidos que faltan, avanzando el cuadro con los picks reales de cada jugador.${data.last_game ? `<br>Tendencia ▲▼ vs antes del último juego: <b>${data.last_game}</b>.` : ''}
       </div>`;
 
     const _html = `
