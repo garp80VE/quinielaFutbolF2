@@ -221,6 +221,17 @@ def parse_score(data):
     except (ValueError, AttributeError):
         s0, s1 = 0, 0
 
+    # Marcador de la tanda de penales (shootoutScore) — solo si ESPN lo trae
+    def _pen(ci):
+        v = ci.get("shootoutScore")
+        if v in (None, ""):
+            return None
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
+    pen0 = _pen(competitors[0]); pen1v = _pen(competitors[1])
+
     en_juego = estado in {"FINAL", "EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"}
 
     # F2: ganador es nombre del equipo (no "1"/"2"/"E") — nunca hay empate final
@@ -239,7 +250,9 @@ def parse_score(data):
 
     return {"estado": estado, "gol1": str(s0) if en_juego else "",
             "gol2": str(s1) if en_juego else "", "ganador": ganador, "minuto": minuto,
-            "eq1": eq1_name, "eq2": eq2_name}
+            "eq1": eq1_name, "eq2": eq2_name,
+            "pen1": ("" if pen0 is None else str(pen0)),
+            "pen2": ("" if pen1v is None else str(pen1v))}
 
 def col_idx(letter):
     r = 0
@@ -1958,6 +1971,18 @@ def _updater_loop():
                             "tipo": "medio_tiempo", "eq1": eq1, "eq2": eq2,
                             "gol1": sc["gol1"], "gol2": sc["gol2"],
                         })
+                    # Inicio de TIEMPO EXTRA (prórroga) — una sola vez
+                    if sc["estado"] == "PRORROGA" and estado_prev != "PRORROGA":
+                        _pending_notifs.append({
+                            "tipo": "prorroga", "eq1": eq1, "eq2": eq2,
+                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                        })
+                    # Inicio de la TANDA DE PENALES — una sola vez
+                    if sc["estado"] == "PENALES" and estado_prev != "PENALES":
+                        _pending_notifs.append({
+                            "tipo": "penales", "eq1": eq1, "eq2": eq2,
+                            "gol1": sc["gol1"], "gol2": sc["gol2"],
+                        })
                 elif sc["estado"] == "FINAL" and estado_prev != "FINAL":
                     if sc["gol1"] != game.get("gol1", "") or sc["gol2"] != game.get("gol2", ""):
                         _pending_notifs.append({
@@ -1970,6 +1995,7 @@ def _updater_loop():
                         "tipo": "final", "eq1": eq1, "eq2": eq2,
                         "gol1": sc["gol1"], "gol2": sc["gol2"],
                         "ganador": sc["ganador"], "gan_eq": gan_eq,
+                        "pen1": sc.get("pen1", ""), "pen2": sc.get("pen2", ""),
                     })
 
                 _prev_states[espn_id] = {
@@ -2070,27 +2096,56 @@ def _updater_loop():
                                     f"\u23f8\ufe0f MEDIO TIEMPO: {b1n} {g1} \u2013 {g2} {b2n}"})
                             except Exception as e:
                                 print(f"[WA] Error MT: {e}")
+                        elif notif["tipo"] == "prorroga":
+                            b1n, b2n = _eq(notif["eq1"]), _eq(notif["eq2"])
+                            g1, g2   = notif["gol1"], notif["gol2"]
+                            _tg_send(f"\u23f1\ufe0f <b>TIEMPO EXTRA:</b> {b1n} {g1} \u2013 {g2} {b2n}\n"
+                                     f"Empate a los 90' \u2014 se juega pr\u00f3rroga.")
+                            _send_push_all("\u23f1\ufe0f Tiempo extra",
+                                f"{b1n} {g1} \u2013 {g2} {b2n} \u00b7 pr\u00f3rroga",
+                                {"tipo": "prorroga", "eq1": notif["eq1"], "eq2": notif["eq2"]})
+                            try:
+                                _wa("POST", "/send", json={"message":
+                                    f"\u23f1\ufe0f TIEMPO EXTRA: {b1n} {g1} \u2013 {g2} {b2n}\nEmpate a los 90', se juega pr\u00f3rroga."})
+                            except Exception as e:
+                                print(f"[WA] Error pr\u00f3rroga: {e}")
+                        elif notif["tipo"] == "penales":
+                            b1n, b2n = _eq(notif["eq1"]), _eq(notif["eq2"])
+                            g1, g2   = notif["gol1"], notif["gol2"]
+                            _tg_send(f"\U0001f945 <b>PENALES:</b> {b1n} {g1} \u2013 {g2} {b2n}\n"
+                                     f"Se define en la tanda de penales.")
+                            _send_push_all("\U0001f945 Tanda de penales",
+                                f"{b1n} vs {b2n} \u00b7 se define en penales",
+                                {"tipo": "penales", "eq1": notif["eq1"], "eq2": notif["eq2"]})
+                            try:
+                                _wa("POST", "/send", json={"message":
+                                    f"\U0001f945 PENALES: {b1n} {g1} \u2013 {g2} {b2n}\nSe define en la tanda de penales."})
+                            except Exception as e:
+                                print(f"[WA] Error penales: {e}")
                         elif notif["tipo"] == "final":
                             eq1n, eq2n = notif["eq1"], notif["eq2"]
                             b1n, b2n   = _eq(eq1n), _eq(eq2n)
                             g1, g2     = notif["gol1"], notif["gol2"]
                             gan        = notif["ganador"]
                             gan_eq_n   = notif["gan_eq"]
-                            # F2: ganador es nombre real del equipo (no "1"/"2")
-                            gan_txt    = (f"\U0001f3c5 Gana <b>{_eq(gan_eq_n)}</b>"
+                            _p1n, _p2n = notif.get("pen1", ""), notif.get("pen2", "")
+                            pen_txt    = (f" (penales {_p1n}-{_p2n})"
+                                          if _p1n != "" and _p2n != "" else "")
+                            # F2: en eliminatorias siempre AVANZA un equipo (no "1"/"2")
+                            gan_txt    = (f"\U0001f3c5 Avanza <b>{_eq(gan_eq_n)}</b>{pen_txt}"
                                           if gan else "\U0001f91d <b>Empate</b>")
                             _tg_send(
                                 f"\U0001f3c1 <b>FINAL:</b> {b1n} {g1} \u2013 {g2} {b2n}\n"
                                 f"{gan_txt}\n"
                                 + (f"\n\U0001f3c6 <b>1\u00b0 y 2\u00b0 lugar:</b>\n{top}" if top else "")
                             )
-                            push_body = f"{b1n} {g1} \u2013 {g2} {b2n} \u00b7 {gan_eq_n}"
+                            push_body = f"{b1n} {g1} \u2013 {g2} {b2n} \u00b7 {gan_eq_n}{pen_txt}"
                             if top3: push_body += f"\n\U0001f3c6 {top3}"
                             _send_push_all("\U0001f3c1 Partido finalizado", push_body,
                                 {"tipo": "final", "eq1": eq1n, "eq2": eq2n,
                                  "gol1": g1, "gol2": g2, "ganador": gan})
                             try:
-                                gan_wa = f"\U0001f3c5 Gana {_eq(gan_eq_n)}" if gan else "\U0001f91d Empate"
+                                gan_wa = f"\U0001f3c5 Avanza {_eq(gan_eq_n)}{pen_txt}" if gan else "\U0001f91d Empate"
                                 wa_msg = f"\U0001f3c1 FINAL: {b1n} {g1} \u2013 {g2} {b2n}\n{gan_wa}"
                                 if top3: wa_msg += f"\n\n\U0001f3c6 1° y 2°:\n{top3}"
                                 _wa("POST", "/send", json={"message": wa_msg})
