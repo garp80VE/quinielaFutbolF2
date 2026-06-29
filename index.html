@@ -5054,7 +5054,7 @@ async function loadApuestasDetail(game, silent=false) {
   }
   const detEq1 = resolveTeamName(game.eq1) || game.eq1 || '?';
   const detEq2 = resolveTeamName(game.eq2) || game.eq2 || '?';
-  title.textContent     = `${detEq1} vs ${detEq2}`;
+  title.textContent     = 'Apuestas';   // el header siempre dice Apuestas
 
   try {
     const r = await api('GET', `/api/game-picks?jgo=${game.jgo}`);
