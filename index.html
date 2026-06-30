@@ -3835,8 +3835,10 @@ async function loadTabla(force=false) {
       // no pueda 1ro/2do). Tiene prioridad sobre el estado de eliminacion.
       const _esSorteo = !!prizeBadge[`sorteo:${nombre.trim().toLowerCase()}`];
       let elim   = _esSorteo ? 'bronce' : getElimStatus(nombre);
-      // El 1er lugar actual lleva medalla de oro 🥇 (indicador de posición).
+      // El 1er lugar actual lleva 🥇 (indicador de posición). El 2° lleva 🥈
+      // SOLO si la categoría reparte 2° premio (Cat B/C) — coordinado con el Info.
       if (!_esSorteo && pos === 1 && probHasData && elim === 'vivo') elim = 'lider';
+      else if (!_esSorteo && pos === 2 && has2ndPrize && probHasData && elim === 'vivo') elim = 'segundo';
 
       // Badge de premio: solo mostrar cuando está matemáticamente garantizado
       // (univ_1st>=99 para 1ro, univ_2nd>=99 para 2do, sorteo siempre)
@@ -3858,6 +3860,7 @@ async function loadTabla(force=false) {
         eliminado:      { rowBg: '#fef2f2', nameBg: '#fee2e2', nameColor: '#991b1b', icon: '†'  },
         solo2do:        { rowBg: '#fff7ed', nameBg: '#fed7aa', nameColor: '#92400e', icon: '🚑' },
         garantizado2do: { rowBg: '#f0fdf4', nameBg: '#bbf7d0', nameColor: '#166534', icon: '🥈' },
+        segundo:        { rowBg: '#f1f5f9', nameBg: '#e2e8f0', nameColor: '#475569', icon: '🥈' },
         bronce:         { rowBg: '#fffbeb', nameBg: '#fde68a', nameColor: '#92400e', icon: null  },
         vivo:           { rowBg: null,      nameBg: null,       nameColor: null,      icon: null  },
       };
