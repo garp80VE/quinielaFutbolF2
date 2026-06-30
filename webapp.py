@@ -190,7 +190,28 @@ def parse_score(data):
         return None
     status     = comp.get("status", {})
     status_type = status.get("type", {})
-    estado = STATUS_MAP.get(status_type.get("name", ""), "")
+    _name  = status_type.get("name", "") or ""
+    estado = STATUS_MAP.get(_name, "")
+    # Respaldo robusto: muchos status de eliminatorias NO están en el mapa
+    # (STATUS_FINAL_PEN, STATUS_FINAL_AET, etc.). Se deduce por palabras clave y,
+    # como último recurso, por el campo `state` de ESPN (pre / in / post).
+    if not estado:
+        _nm = _name.upper()
+        _st = (status_type.get("state", "") or "").lower()   # pre | in | post
+        if "FINAL" in _nm or "FULL_TIME" in _nm or "FULLTIME" in _nm or _nm.endswith("_FT"):
+            estado = "FINAL"
+        elif "PEN" in _nm or "SHOOT" in _nm:
+            estado = "PENALES"
+        elif "OVERTIME" in _nm or "EXTRA" in _nm:
+            estado = "PRORROGA"
+        elif "HALFTIME" in _nm or ("HALF" in _nm and "TIME" in _nm):
+            estado = "MEDIO TIEMPO"
+        elif _st == "post":
+            estado = "FINAL"
+        elif _st == "in":
+            estado = "EN VIVO"
+        elif _st == "pre":
+            estado = "PROG"
 
     # Minuto del partido (displayClock = "45:00+", "90+2", etc.)
     clock_raw = status.get("displayClock", "") or status_type.get("shortDetail", "")
@@ -1913,6 +1934,10 @@ def _updater_loop():
                     return
                 sc = parse_score(data)
                 if not sc:
+                    return
+                # Estado desconocido → NO sobrescribir el partido con vacío
+                # (esto fue lo que reseteaba juegos decididos por penales/prórroga).
+                if not sc.get("estado"):
                     return
 
                 nuevo_minuto = sc.get("minuto", "")
