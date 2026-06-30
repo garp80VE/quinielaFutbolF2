@@ -4369,13 +4369,29 @@ def _compute_upcoming_picks() -> dict:
     if not upcoming:
         return {"games": []}
 
+    # Resolver los equipos reales de rondas superiores con la inferencia correcta
+    # (_WC2026_MAP) y los ganadores reales: así el cruce mostrado es el verdadero
+    # (no el placeholder crudo, que el frontend resolvía mal).
+    by_jgo, by_ronda = _db.build_bracket_index(games)
+    real = {}
+    for g in games:
+        est = (g.get("estado") or "").strip()
+        if est and est != "PROG":
+            real[str(g["jgo"])] = {"gan": (g.get("ganador") or "").strip(),
+                                   "eq1": (g.get("eq1") or "").strip(),
+                                   "eq2": (g.get("eq2") or "").strip()}
+    def _is_def(name):
+        n = (name or "").strip()
+        return (n and not _db._is_placeholder(n)
+                and not n.startswith("Gan. ") and not n.startswith("Perdedor "))
+
     result_games = []
     for game in upcoming:
         jgo_str = str(game.get("jgo", ""))
-        eq1     = game.get("eq1", "")
-        eq2     = game.get("eq2", "")
-        # Saltar si equipos aun no definidos (placeholder)
-        if not eq1 or not eq2 or eq1.startswith("Gan.") or eq2.startswith("Gan."):
+        eq1 = _db._disp_team(game, "eq1", by_jgo, by_ronda, real)
+        eq2 = _db._disp_team(game, "eq2", by_jgo, by_ronda, real)
+        # Solo mostrar cruces YA definidos (ambos equipos reales conocidos).
+        if not _is_def(eq1) or not _is_def(eq2):
             continue
 
         all_picks = _db.db_get_all_picks_for_game(jgo_str)
