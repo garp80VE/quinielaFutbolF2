@@ -1018,6 +1018,10 @@ _aviso1pago:  set  = set()  # 16.4: recordatorio de pago (~1-3 min antes, 2da mi
 _aviso_cierre: set = set()  # aviso ~15 min antes del ÚLTIMO 16vo (cierra toda la quiniela)
 _live_clocks: dict = {}   # {espn_id: "45'"} — minuto actual de partidos en vivo
 _pending_notifs: list = []   # notificaciones de gol/final pendientes hasta tener standings frescos
+_prorroga_notif:  set  = set()  # espn_id que ya recibieron aviso de TIEMPO EXTRA (1 sola vez)
+_penales_notif:   set  = set()  # espn_id que ya recibieron aviso de PENALES (1 sola vez)
+_post90_games:    set  = set()  # espn_id que YA pasaron de los 90' → marcador congelado fijo
+                                # (ESPN oscila EN VIVO↔PRÓRROGA; esto evita re-disparos)
 _day_end_notified:     set  = set()  # fechas "YYYY-MM-DD" que ya recibieron notif de fin de día
 _quiniela_end_notified: bool = False  # si ya se envió la notificación de fin de quiniela
 
@@ -1961,10 +1965,14 @@ def _updater_loop():
                 )
 
                 # ── REGLA F2: tras los 90', los goles YA NO CUENTAN; solo se
-                # define quién avanza. Congelamos el marcador a los 90' (el que ya
-                # está en la BD) durante prórroga/penales y al finalizar tras ellas.
-                _post90 = (sc["estado"] in ("PRORROGA", "PENALES") or
-                           (sc["estado"] == "FINAL" and estado_prev in ("PRORROGA", "PENALES")))
+                # define quién avanza. Congelamos el marcador a los 90'. Es
+                # PEGAJOSO: una vez visto prórroga/penales, el partido queda
+                # congelado el resto del juego aunque ESPN parpadee a "EN VIVO".
+                if sc["estado"] in ("PRORROGA", "PENALES"):
+                    _post90_games.add(espn_id)
+                _post90 = (espn_id in _post90_games
+                           or estado_prev in ("PRORROGA", "PENALES")
+                           or sc["estado"] in ("PRORROGA", "PENALES"))
                 if _post90 and game.get("gol1") not in (None, "") and game.get("gol2") not in (None, ""):
                     sc_g1, sc_g2 = str(game.get("gol1")), str(game.get("gol2"))
                 else:
@@ -2036,15 +2044,17 @@ def _updater_loop():
                             "tipo": "medio_tiempo", "eq1": eq1, "eq2": eq2,
                             "gol1": sc_g1, "gol2": sc_g2,
                         })
-                    # Inicio de TIEMPO EXTRA (prórroga) — una sola vez. Muestra el
-                    # marcador a los 90' (sc_g1/sc_g2 congelado).
-                    if sc["estado"] == "PRORROGA" and estado_prev != "PRORROGA":
+                    # Inicio de TIEMPO EXTRA (prórroga) — UNA sola vez por partido
+                    # (a prueba de que ESPN oscile el estado).
+                    if sc["estado"] == "PRORROGA" and espn_id not in _prorroga_notif:
+                        _prorroga_notif.add(espn_id)
                         _pending_notifs.append({
                             "tipo": "prorroga", "eq1": eq1, "eq2": eq2,
                             "gol1": sc_g1, "gol2": sc_g2,
                         })
-                    # Inicio de la TANDA DE PENALES — una sola vez
-                    if sc["estado"] == "PENALES" and estado_prev != "PENALES":
+                    # Inicio de la TANDA DE PENALES — UNA sola vez por partido
+                    if sc["estado"] == "PENALES" and espn_id not in _penales_notif:
+                        _penales_notif.add(espn_id)
                         _pending_notifs.append({
                             "tipo": "penales", "eq1": eq1, "eq2": eq2,
                             "gol1": sc_g1, "gol2": sc_g2,
