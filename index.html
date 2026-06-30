@@ -3536,7 +3536,7 @@ function _renderPozo(prize) {
   const prizeCat  = document.getElementById('info-prize-cat');
   if (!prizeCard) return;
   if (!(prize && prize.paid > 0)) { prizeCard.style.display = 'none'; _pozoSig = ''; return; }
-  const sig = JSON.stringify([prize.total, prize.paid, prize.categoria, prize.costo,
+  const sig = JSON.stringify([prize.total, prize.paid, prize.inscritos, prize.categoria, prize.costo,
                               prize.dist, prize.sorteo_ganador_1, prize.sorteo_ganador_2]);
   if (sig === _pozoSig && prizeCard.style.display !== 'none') return;
   _pozoSig = sig;
@@ -3559,7 +3559,7 @@ function _renderPozo(prize) {
   prizeBody.innerHTML = `
         <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:12px">
           <span style="font-size:26px;font-weight:900;color:#002868">$${prize.total.toFixed(2)}</span>
-          <span style="font-size:12px;color:#94a3b8">${prize.paid} jugadores · $${(prize.costo||0).toFixed(2)} c/u</span>
+          <span style="font-size:12px;color:#94a3b8">${prize.paid} pagados${prize.inscritos!=null?` de ${prize.inscritos} inscritos`:''} · $${(prize.costo||0).toFixed(2)} c/u</span>
         </div>
         ${distHtml}`;
 }

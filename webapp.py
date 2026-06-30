@@ -4831,6 +4831,7 @@ async def admin_prize_and_players(ql_admin: str = Cookie(default="")):
                             tie_1st=tie_1st, tie_2nd=tie_2nd,
                             fee_pct=fee_pct)
         prize["costo"] = cost
+        prize["inscritos"] = sum(1 for j in _jdb if j.get("aprobado", 1) and not j.get("excluido"))
         prize["stripe_activo"] = cfg.get("STRIPE_ACTIVO", "0") == "1"
         prize["torneo_activo"] = _torneo_activo().get("activo", False)
         return {"prize": prize, "players": players, "aprobados": aprobados}
@@ -4988,16 +4989,18 @@ async def admin_prize(ql_admin: str = Cookie(default="")):
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2")  or "2"))
     fee_pct     = float(cfg.get("FEE_PCT",          "0") or "0")
     ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
-    # Mismo criterio que el Pozo público: cuenta aprobados no excluidos.
-    paid = sum(1 for j in _db.db_get_jugadores()
-               if j.get("aprobado", 1) and not j.get("excluido"))
+    # Mismo criterio que el Pozo público: el reparto se calcula con los PAGADOS.
+    _jdb = _db.db_get_jugadores()
+    paid      = sum(1 for j in _jdb if j.get("pagado") and not j.get("excluido"))
+    inscritos = sum(1 for j in _jdb if j.get("aprobado", 1) and not j.get("excluido"))
     tie_1st, tie_2nd = _get_tie_counts()
     result = _calc_prize(paid, cost, cat_a_max=cat_a, cat_b_max=cat_b,
                          pct_1=pct_1, sorteo_cant=sorteo_cant,
                          sorteo_ganadores=ganadores,
                          tie_1st=tie_1st, tie_2nd=tie_2nd,
                          fee_pct=fee_pct)
-    result["costo"] = cost
+    result["costo"]     = cost
+    result["inscritos"] = inscritos
     return result
 
 
@@ -5070,18 +5073,20 @@ async def prize_info():
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2")  or "2"))
     fee_pct     = float(cfg.get("FEE_PCT",          "0") or "0")
     ganadores   = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
-    # El pozo cuenta a los jugadores APROBADOS y no excluidos: como el acceso ya
-    # se controla por invitador/aprobación, entrar = estar en el pozo (en F2 no
-    # hay cobro automático que marque "pagado").
-    paid = sum(1 for j in _db.db_get_jugadores()
-               if j.get("aprobado", 1) and not j.get("excluido"))
+    # El POZO y el reparto (categoría, 1°/2°, sorteo) se calculan con los
+    # jugadores que PAGARON (como en F1). Los inscritos (aprobados no excluidos)
+    # se muestran aparte como referencia.
+    _jdb = _db.db_get_jugadores()
+    paid      = sum(1 for j in _jdb if j.get("pagado") and not j.get("excluido"))
+    inscritos = sum(1 for j in _jdb if j.get("aprobado", 1) and not j.get("excluido"))
     tie_1st, tie_2nd = _get_tie_counts()
     result = _calc_prize(paid, cost, cat_a_max=cat_a, cat_b_max=cat_b,
                          pct_1=pct_1, sorteo_cant=sorteo_cant,
                          sorteo_ganadores=ganadores,
                          tie_1st=tie_1st, tie_2nd=tie_2nd,
                          fee_pct=fee_pct)
-    result["costo"] = cost
+    result["costo"]     = cost
+    result["inscritos"] = inscritos
     result["torneo_activo"] = _torneo_activo().get("activo", False)
     # quiniela_cerrada: la quiniela se cierra al arrancar el ÚLTIMO 16vo (R32).
     # El frontend lo usa para ocultar Comparar/Probabilidades/Sorteo y el botón
