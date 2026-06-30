@@ -4557,6 +4557,7 @@ function navTo(tab, dir) {
 // ─── Mis Puntos ───────────────────────────────────────────────────
 let puntosLoaded = false;
 let _puntosFetching = false;
+let _puntosSig = '';
 
 async function loadPuntos(force=false) {
   if ((puntosLoaded && !force) || _puntosFetching) return;
@@ -4568,6 +4569,11 @@ async function loadPuntos(force=false) {
     puntosLoaded = true;
     loadingEl.style.display = 'none';
     contentEl.style.display = 'block';
+    // Guard de firma: si los datos no cambiaron, NO re-dibujar (así no se
+    // colapsa lo que el usuario tenga abierto durante el refresco automático).
+    const sig = JSON.stringify(r);
+    if (sig === _puntosSig && contentEl.innerHTML.trim()) return;
+    _puntosSig = sig;
     contentEl.innerHTML = '';
 
     // Total
