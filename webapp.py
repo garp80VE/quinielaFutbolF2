@@ -1896,21 +1896,24 @@ def _updater_loop():
                 continue
 
             n = 0
-            for game in games:
+            # Procesa UN partido. Aislado: si lanza una excepción, el llamador la
+            # captura y sigue con los demás (un error en un juego no detiene todo).
+            def _proc(game):
+                nonlocal n
                 jgo         = str(game.get("jgo", ""))
                 espn_id     = game.get("espn_id", "")
                 estado_prev = game.get("estado", "PROG")
 
                 if not espn_id or estado_prev == "FINAL":
-                    continue
+                    return
 
                 data = espn_get(_espn_summary_url(), {"event": espn_id}) or \
                        espn_get(ESPN_FALLBACK,       {"event": espn_id})
                 if not data:
-                    continue
+                    return
                 sc = parse_score(data)
                 if not sc:
-                    continue
+                    return
 
                 nuevo_minuto = sc.get("minuto", "")
                 if nuevo_minuto:
@@ -1937,8 +1940,8 @@ def _updater_loop():
                 # está en la BD) durante prórroga/penales y al finalizar tras ellas.
                 _post90 = (sc["estado"] in ("PRORROGA", "PENALES") or
                            (sc["estado"] == "FINAL" and estado_prev in ("PRORROGA", "PENALES")))
-                if _post90 and game.get("gol1", "") != "" and game.get("gol2", "") != "":
-                    sc_g1, sc_g2 = game.get("gol1", ""), game.get("gol2", "")
+                if _post90 and game.get("gol1") not in (None, "") and game.get("gol2") not in (None, ""):
+                    sc_g1, sc_g2 = str(game.get("gol1")), str(game.get("gol2"))
                 else:
                     sc_g1, sc_g2 = sc["gol1"], sc["gol2"]
 
@@ -1948,7 +1951,7 @@ def _updater_loop():
                         sc["ganador"] == game.get("ganador", "") and
                         not teams_changed):
                     time.sleep(0.3)
-                    continue
+                    return
 
                 eq1  = eq1_sheet or eq1_espn
                 eq2  = eq2_sheet or eq2_espn
@@ -2085,6 +2088,15 @@ def _updater_loop():
                 _invalidate_games()
                 n += 1
                 time.sleep(0.3)
+
+            for game in games:
+                try:
+                    _proc(game)
+                except Exception as _ge:
+                    import traceback
+                    print(f"[updater] ERROR procesando juego {game.get('jgo','?')} "
+                          f"({game.get('eq1','')} vs {game.get('eq2','')}): {_ge}")
+                    traceback.print_exc()
 
             if n > 0:
                 print(f"[updater] {n} partido(s) actualizados en SQLite")
