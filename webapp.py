@@ -529,156 +529,63 @@ def _invalidate_players():
 
 
 def _propagate_bracket() -> list:
-    """
-    Lee HORARIOS desde SQLite y actualiza EQ1/EQ2 de juegos futuros cuyo nombre
-    sea un placeholder de bracket resoluble con los GANADOR actuales.
-    """
-    cfg      = state.get("cfg", {})
-    horarios = _db.db_get_horarios()
+    """Actualiza EQ1/EQ2 de las rondas superiores (R16/QF/SF/3ER/FINAL) con los
+    ganadores REALES, usando la MISMA inferencia de bracket que los picks
+    (_WC2026_MAP). Recompute siempre los cruces de juegos aun no jugados (corrige
+    valores viejos/corruptos) y, si un cruce aun no es resoluble pero quedo con un
+    equipo real corrupto, lo regresa a placeholder."""
+    games = _db.db_get_horarios()
+    by_jgo, by_ronda = _db.build_bracket_index(games)
 
-    all_games   = []
-    ronda_games = {}
+    # "Picks reales": ganador de cada juego ya finalizado (alimenta la inferencia).
+    real = {}
+    for g in games:
+        est = (g.get("estado") or "").strip()
+        if est and est != "PROG":
+            real[str(g["jgo"])] = {
+                "gan": (g.get("ganador") or "").strip(),
+                "eq1": (g.get("eq1") or "").strip(),
+                "eq2": (g.get("eq2") or "").strip(),
+            }
 
-    for h in horarios:
-        jgo = str(h["jgo"])
-        if not jgo:
+    UPPER = ("R16", "QF", "SF", "3ER", "FINAL")
+    def _real_team(name):
+        n = (name or "").strip()
+        return (n and not _db._is_placeholder(n)
+                and not n.startswith("Gan. ") and not n.startswith("Perdedor "))
+
+    db_updates, changes = [], []
+    for g in games:
+        ronda = (g.get("ronda") or g.get("grupo") or "")
+        if ronda not in UPPER:
             continue
-        game = {
-            "jgo":     jgo,
-            "ronda":   h.get("grupo", ""),
-            "eq1":     h.get("eq1", ""),
-            "eq2":     h.get("eq2", ""),
-            "estado":  h.get("estado", "PROG"),
-            "gol1":    h.get("gol1", ""),
-            "gol2":    h.get("gol2", ""),
-            "ganador": h.get("ganador", ""),
-        }
-        all_games.append(game)
-        ronda_games.setdefault(h.get("grupo", ""), []).append(game)
-
-    for k in ronda_games:
-        ronda_games[k].sort(key=lambda g: int(g["jgo"]) if g["jgo"].isdigit() else 0)
-
-    # Mapas verificados por Gio contra excel template WC2026
-    # R32: slot secuencial N → slot real del juego R32 (1-16)
-    _WC2026_R32 = {
-        1:1,  2:4,  3:3,  4:6,
-        5:2,  6:5,  7:7,  8:8,
-        9:12, 10:11, 11:10, 12:9,
-        13:15, 14:14, 15:13, 16:16
-    }
-    # R16: slot secuencial N → slot real del juego R16 (1-8)
-    _WC2026_R16 = {1:1, 2:2, 3:5, 4:6, 5:3, 6:4, 7:7, 8:8}
-    _use_wc2026 = (
-        "fifa"  in cfg.get("ESPN_LEAGUE", "").lower() or
-        "world" in cfg.get("ESPN_LEAGUE", "").lower() or
-        cfg.get("BRACKET_SLOT_MAP", "").strip().upper() == "WC2026"
-    )
-
-    def resolve(name, depth=0):
-        if not name or depth > 8:
-            return name
-        ref = _parse_bracket_ref(name)
-        if not ref:
-            return name
-        lst = ronda_games.get(ref["ronda"], [])
-        nth = ref["nth"]
-        if ref["ronda"] == "R32" and _use_wc2026 and len(lst) == 16:
-            nth = _WC2026_R32.get(nth, nth)
-        elif ref["ronda"] == "R16" and _use_wc2026 and len(lst) == 8:
-            nth = _WC2026_R16.get(nth, nth)
-        idx = nth - 1
-        if idx < 0 or idx >= len(lst):
-            return name
-        g = lst[idx]
-        if not g["ganador"]:
-            return name
-        if ref["type"] == "loser":
-            eq1 = resolve(g["eq1"], depth + 1)
-            eq2 = resolve(g["eq2"], depth + 1)
-            if g["ganador"] == eq1:
-                return eq2 or name
-            if g["ganador"] == eq2:
-                return eq1 or name
-            return name
-        return resolve(g["ganador"], depth + 1)
-
-    db_updates      = []
-    changes         = []
-    placeholder_map = {}
-
-    # Paso 1: resolver placeholders en EQ1/EQ2 de juegos futuros
-    for game in all_games:
+        if (g.get("estado") or "") not in ("", "PROG"):
+            continue  # no tocar partidos ya jugados
         for slot in ("eq1", "eq2"):
-            val = game[slot]
-            if not val or not _parse_bracket_ref(val):
+            inf = _db._infer_bracket_slot(g, slot, by_jgo, by_ronda, real)
+            if inf is None:
                 continue
-            resolved = resolve(val)
-            if resolved and resolved != val:
-                if game["estado"] in ("", "PROG"):
-                    db_updates.append((game["jgo"], slot, resolved))
-                    placeholder_map[val] = resolved
-                    changes.append(
-                        f"JGO {game['jgo']} {slot.upper()}: {val!r} -> {resolved!r}"
-                    )
-                    game[slot] = resolved
-
-    # Paso 2: SF -> FINAL (ganadores) y SF -> 3ER (perdedores)
-    def sorted_by_jgo(lst):
-        return sorted(lst, key=lambda g: int(g["jgo"]) if str(g["jgo"]).isdigit() else 0)
-
-    sf_lst  = sorted_by_jgo(ronda_games.get("SF",    []))
-    fin_lst = sorted_by_jgo(ronda_games.get("FINAL", []))
-    ter_lst = sorted_by_jgo(ronda_games.get("3ER",   []))
-
-    for si, slot in enumerate(("eq1", "eq2")):
-        if si >= len(sf_lst):
-            continue
-        sf_g = sf_lst[si]
-        gan  = sf_g["ganador"]
-        if not gan or _parse_bracket_ref(gan):
-            continue
-        if fin_lst and fin_lst[0][slot] != gan:
-            if fin_lst[0][slot] and _parse_bracket_ref(fin_lst[0][slot]):
-                placeholder_map[fin_lst[0][slot]] = gan
-            db_updates.append((fin_lst[0]["jgo"], slot, gan))
-            changes.append(
-                f"JGO {fin_lst[0]['jgo']} {slot.upper()} (FINAL): "
-                f"{fin_lst[0][slot]!r} -> {gan!r}"
-            )
-            fin_lst[0][slot] = gan
-        if ter_lst:
-            eq1_sf = resolve(sf_g["eq1"])
-            eq2_sf = resolve(sf_g["eq2"])
-            loser  = eq2_sf if gan == eq1_sf else (eq1_sf if gan == eq2_sf else None)
-            # Siempre actualizar 3ER con el perdedor (igual que FINAL con el ganador)
-            # La condicion anterior "not ter_lst[0][slot]" era incorrecta: si el slot
-            # ya tenia un valor incorrecto (ej. el ganador), nunca se corregía.
-            if loser and not _parse_bracket_ref(loser) and ter_lst[0][slot] != loser:
-                if ter_lst[0][slot] and _parse_bracket_ref(ter_lst[0][slot]):
-                    placeholder_map[ter_lst[0][slot]] = loser
-                db_updates.append((ter_lst[0]["jgo"], slot, loser))
-                changes.append(
-                    f"JGO {ter_lst[0]['jgo']} {slot.upper()} (3ER-loser): "
-                    f"{ter_lst[0][slot]!r} -> {loser!r}"
-                )
-                ter_lst[0][slot] = loser
+            cur = (g.get(slot) or "").strip()
+            if _real_team(inf):
+                if inf != cur:
+                    db_updates.append((str(g["jgo"]), slot, inf))
+                    changes.append(f"JGO {g['jgo']} {slot.upper()}: {cur!r} -> {inf!r}")
+            else:
+                # Cruce aun no resoluble: el slot debe ser placeholder. Si quedo un
+                # equipo real (corrupto de un bug previo), regresarlo a placeholder.
+                if cur and _real_team(cur):
+                    db_updates.append((str(g["jgo"]), slot, inf))
+                    changes.append(f"JGO {g['jgo']} {slot.upper()} (limpiar): {cur!r} -> {inf!r}")
 
     if db_updates:
         conn = _db.get_conn()
         with conn:
             for jgo_u, col_u, val_u in db_updates:
-                if col_u == "eq1":
-                    conn.execute("UPDATE horarios SET eq1=? WHERE jgo=?", (val_u, str(jgo_u)))
-                else:
-                    conn.execute("UPDATE horarios SET eq2=? WHERE jgo=?", (val_u, str(jgo_u)))
+                conn.execute(f"UPDATE horarios SET {col_u}=? WHERE jgo=?", (val_u, str(jgo_u)))
         conn.close()
         _invalidate_games()
-        print(f"[propagate-bracket] {len(changes)} cambios SQLite: {changes}")
-
-    # Paso 3: PICK_COLS = [] -- picks del jugador intocables
+        print(f"[propagate-bracket] {len(changes)} cambios: {changes}")
     return changes
-
 
 def _sheets_retry(fn, retries=4, base_delay=15):
     """Ejecuta fn() con reintentos exponenciales ante error 429 de Sheets."""
@@ -1878,6 +1785,15 @@ def _updater_loop():
 
             _invalidate_games()
             games, _ = _get_games_cache()
+
+            # Propagar el bracket cada ciclo (barato; solo escribe si hay cambios):
+            # corrige cruces de rondas superiores con la inferencia real, incluso
+            # si no cambió ningún partido este tick (auto-sana cruces corruptos).
+            try:
+                if _propagate_bracket():
+                    games, _ = _get_games_cache()   # recargar tras propagar
+            except Exception as _pe:
+                print(f"[updater] propagate (tick): {_pe}")
 
             # Polling acelerado SOLO cuando hay algún partido en vivo: consulta
             # ESPN cada ~12s en vez de 60s para detectar goles cuanto antes.
