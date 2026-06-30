@@ -1916,21 +1916,27 @@ def _updater_loop():
                             try: return int(str(x).strip())
                             except (ValueError, TypeError): return None
                         n1 = ne = n2 = 0
+                        ne1 = ne2 = 0   # empate a 90' pero \u00bfqui\u00e9n avanza?
                         for _p in _db.db_get_all_picks_for_game(jgo):
                             g1p, g2p = _ni(_p.get("g1_pick")), _ni(_p.get("g2_pick"))
                             if g1p is None or g2p is None:
                                 continue
+                            gn = (_p.get("gan_pick") or "").strip()
                             if g1p == g2p:
                                 ne += 1
+                                if gn == eq1:   ne1 += 1
+                                elif gn == eq2: ne2 += 1
                             else:
-                                gn = (_p.get("gan_pick") or "").strip()
                                 if gn == eq1:   n1 += 1
                                 elif gn == eq2: n2 += 1
                                 elif g1p > g2p: n1 += 1
                                 else:           n2 += 1
                         tot = n1 + ne + n2
                         if tot:
-                            dist_txt = f"\n{tot} apuestas \u00b7 {n1} {_b1} \u00b7 {ne} empate \u00b7 {n2} {_b2}"
+                            _emp = f"{ne} empate"
+                            if ne1 or ne2:   # desglose del empate por qui\u00e9n avanza
+                                _emp += f" (avanza {ne1} {_b1} \u00b7 {ne2} {_b2})"
+                            dist_txt = f"\n{tot} apuestas \u00b7 {n1} {_b1} \u00b7 {_emp} \u00b7 {n2} {_b2}"
                     except Exception as _de:
                         print(f"[updater] dist inicio: {_de}")
                     _tg_send(f"\U0001f7e1 <b>INICIO:</b> {_b1} vs {_b2}{dist_txt}")
