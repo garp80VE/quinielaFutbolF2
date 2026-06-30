@@ -929,6 +929,7 @@ _prorroga_notif:  set  = set()  # espn_id que ya recibieron aviso de TIEMPO EXTR
 _penales_notif:   set  = set()  # espn_id que ya recibieron aviso de PENALES (1 sola vez)
 _post90_games:    set  = set()  # espn_id que YA pasaron de los 90' → marcador congelado fijo
                                 # (ESPN oscila EN VIVO↔PRÓRROGA; esto evita re-disparos)
+_round_announced: set  = set()  # rondas cuyo resumen de "campeones" ya se envió (1 vez)
 _day_end_notified:     set  = set()  # fechas "YYYY-MM-DD" que ya recibieron notif de fin de día
 _quiniela_end_notified: bool = False  # si ya se envió la notificación de fin de quiniela
 
@@ -1772,9 +1773,107 @@ def _resolver_empates_sin_ganador(games) -> int:
     return cambiado
 
 
+# Etiquetas legibles de ronda (para el resumen de campeones).
+_RONDA_LABEL_NOTIF = {"R32": "los Dieciseisavos", "R16": "los Octavos",
+                      "QF": "los Cuartos", "SF": "las Semifinales"}
+
+def _announce_champions(round_key: str, games: list):
+    """Tras cerrar una ronda (no 3ER/FINAL): envía cuántos jugadores tienen cada
+    CAMPEÓN predicho (pick de la Final), agrupado, con vivo/sin vida."""
+    try:
+        by_jgo, by_ronda = _db.build_bracket_index(games)
+        # Equipos eliminados = perdedores de partidos ya jugados.
+        eliminados = set()
+        for g in games:
+            est = (g.get("estado") or "").strip()
+            if est and est != "PROG":
+                e1 = (g.get("eq1") or "").strip(); e2 = (g.get("eq2") or "").strip()
+                gan = (g.get("ganador") or "").strip()
+                if e1 and e2 and gan:
+                    loser = e2 if gan == e1 else (e1 if gan == e2 else "")
+                    if loser:
+                        eliminados.add(loser)
+        # Juego de la FINAL (el campeón predicho = su pick de la final).
+        fin = [g for g in games if (g.get("grupo") or g.get("ronda") or "").upper() == "FINAL"]
+        if not fin:
+            return
+        final_jgo = str(fin[0]["jgo"])
+
+        counts = {}
+        for j in _db.db_get_jugadores():
+            if j.get("excluido"):
+                continue
+            picks = _db.db_get_picks(j["id"])
+            pk = picks.get(final_jgo)
+            if not pk:
+                continue
+            raw = (pk.get("gan") or "").strip()
+            champ = _db._resolve_team_name(raw, by_jgo, by_ronda, picks) or raw
+            champ = (champ or "").strip()
+            if not champ or _db._is_placeholder(champ) or champ.startswith("Gan. "):
+                continue
+            counts[champ] = counts.get(champ, 0) + 1
+        if not counts:
+            return
+
+        # Vivos primero, luego por cantidad desc, luego alfabético.
+        items = sorted(counts.items(),
+                       key=lambda kv: (kv[0] in eliminados, -kv[1], kv[0].lower()))
+        lines = []
+        for team, c in items:
+            vivo = team not in eliminados
+            estado = "Con vida" if vivo else "Sin vida"
+            mark = "🟢" if vivo else "🔴"
+            lines.append(f"{mark} {_eq(team)}: {c} ({estado})")
+
+        label = _RONDA_LABEL_NOTIF.get(round_key, round_key)
+        cuerpo = "\n".join(lines)
+        tg_msg = (f"\U0001f3c6 <b>CAMPEONES DE LA QUINIELA</b>\n"
+                  f"Tras {label}, así van los campeones que eligió cada quien:\n\n{cuerpo}")
+        try: _tg_send(tg_msg)
+        except Exception as e: print(f"[champions] TG: {e}")
+        wa_body = "\n".join(f"{'🟢' if t not in eliminados else '🔴'} {_eq(t)}: {c} "
+                            f"({'Con vida' if t not in eliminados else 'Sin vida'})"
+                            for t, c in items)
+        try:
+            _wa("POST", "/send", json={"message":
+                f"\U0001f3c6 CAMPEONES DE LA QUINIELA\nTras {label}:\n\n{wa_body}"})
+        except Exception as e: print(f"[champions] WA: {e}")
+        try:
+            _send_push_all("\U0001f3c6 Campeones de la quiniela",
+                           f"Tras {label} · {len(items)} equipos con seguidores",
+                           {"tipo": "campeones"})
+        except Exception as e: print(f"[champions] push: {e}")
+        print(f"[champions] resumen enviado tras {round_key}")
+    except Exception as e:
+        print(f"[champions] error: {e}")
+
+
+def _check_round_complete(games: list):
+    """Si una ronda (R32/R16/QF/SF) acaba de completarse (todos FINAL), envía el
+    resumen de campeones una sola vez. Se omiten 3ER y FINAL."""
+    for rk in ("R32", "R16", "QF", "SF"):
+        if rk in _round_announced:
+            continue
+        rg = [g for g in games if (g.get("grupo") or g.get("ronda") or "") == rk]
+        if rg and all((g.get("estado") or "") == "FINAL" for g in rg):
+            _round_announced.add(rk)
+            _announce_champions(rk, games)
+
+
 def _updater_loop():
     """Loop de actualizacion de scores desde ESPN. Lee/escribe en SQLite."""
     print("[updater] Iniciando en segundo plano")
+    # Pre-marcar rondas YA completas al arrancar: así un deploy no re-anuncia el
+    # resumen de campeones de rondas pasadas.
+    try:
+        _g0, _ = _get_games_cache()
+        for _rk in ("R32", "R16", "QF", "SF"):
+            _rg = [g for g in _g0 if (g.get("grupo") or g.get("ronda") or "") == _rk]
+            if _rg and all((g.get("estado") or "") == "FINAL" for g in _rg):
+                _round_announced.add(_rk)
+    except Exception as _e0:
+        print(f"[updater] pre-seed rondas: {_e0}")
     while True:
         try:
             t0          = time.time()
@@ -2172,6 +2271,14 @@ def _updater_loop():
                     except Exception as e:
                         print(f"[updater] notif-flush ERROR: {e}")
                 _pending_notifs.clear()
+
+            # ¿Se completó una ronda? → resumen de campeones, como mensaje APARTE,
+            # DESPUÉS del aviso de FINAL del último partido de la ronda.
+            try:
+                _games_fresh, _ = _get_games_cache()
+                _check_round_complete(_games_fresh)
+            except Exception as _rc:
+                print(f"[updater] check-round: {_rc}")
 
             global _standings_last_update
             time_since_last = time.time() - _standings_last_update
