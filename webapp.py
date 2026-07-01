@@ -3136,7 +3136,10 @@ def _pdf_todos_jugadores(games, cfg):
                 pdf.cell(col_w[2], 7, _lat(d_eq2)[:20], border=1, align="L", fill=True)
                 pdf.cell(col_w[3], 7, g1 if g1 else "-", border=1, align="C", fill=True)
                 pdf.cell(col_w[4], 7, g2 if g2 else "-", border=1, align="C", fill=True)
-                pdf.cell(col_w[5], 7, (_lat(gan)[:12] if gan else "-"), border=1, align="C", fill=True)
+                # Ganador: solo si es uno de los dos equipos del cruce resuelto.
+                # (Evita mostrar un pick obsoleto, p.ej. un finalista en el 3er lugar.)
+                _gan_ok = gan if (gan and gan.strip() in (str(d_eq1).strip(), str(d_eq2).strip())) else ""
+                pdf.cell(col_w[5], 7, (_lat(_gan_ok)[:12] if _gan_ok else "-"), border=1, align="C", fill=True)
                 pdf.ln(); fill = not fill
             pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "I", 9); pdf.ln(3)
             pdf.cell(0, 6, f"Picks completados: {llenos} / {total}", ln=True, align="R")
