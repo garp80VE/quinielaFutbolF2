@@ -1594,6 +1594,12 @@ def _jugador_picks_payload(player_id, nombre, telefono, email, games,
             llenos += 1
         eq1 = _db._disp_team(g, "eq1", by_jgo, by_ronda, picks) or g.get("eq1", "")
         eq2 = _db._disp_team(g, "eq2", by_jgo, by_ronda, picks) or g.get("eq2", "")
+        # Descartar ganador OBSOLETO: si ambos equipos del cruce ya están
+        # definidos y el ganador guardado no es ninguno de ellos (p.ej. quedó
+        # un finalista en el 3er puesto tras cambiar la semi), no se muestra.
+        if (gan and not _db._is_placeholder(eq1) and not _db._is_placeholder(eq2)
+                and gan.strip() not in (str(eq1).strip(), str(eq2).strip())):
+            gan = ""
         lista.append({
             "jgo": str(g.get("jgo", "")), "ronda": g.get("grupo", "") or g.get("ronda", ""),
             "eq1": eq1, "eq2": eq2,
