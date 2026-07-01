@@ -3954,6 +3954,12 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
             e2 = _db._disp_team(g, "eq2", by_jgo, by_ronda, picks)
             ganp = (_db._resolve_team_name((pk.get("gan") or "").strip(), by_jgo, by_ronda, picks)
                     or (pk.get("gan") or "").strip())
+            # Descartar ganador OBSOLETO: si ambos equipos del cruce ya están
+            # definidos y el ganador predicho no es ninguno de ellos (p.ej. quedó
+            # un finalista en el 3er puesto tras cambiar la semi), se ignora.
+            if (ganp and not _is_ph(ganp) and not _is_ph(e1) and not _is_ph(e2)
+                    and ganp not in (e1, e2)):
+                ganp = ""
             estado = g.get("estado", "")
             jugado = bool(estado) and estado != "PROG"
             real_gan = (g.get("ganador") or "").strip()
