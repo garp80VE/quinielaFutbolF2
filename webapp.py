@@ -1594,12 +1594,9 @@ def _jugador_picks_payload(player_id, nombre, telefono, email, games,
             llenos += 1
         eq1 = _db._disp_team(g, "eq1", by_jgo, by_ronda, picks) or g.get("eq1", "")
         eq2 = _db._disp_team(g, "eq2", by_jgo, by_ronda, picks) or g.get("eq2", "")
-        # Descartar ganador OBSOLETO: si ambos equipos del cruce ya están
-        # definidos y el ganador guardado no es ninguno de ellos (p.ej. quedó
-        # un finalista en el 3er puesto tras cambiar la semi), no se muestra.
-        if (gan and not _db._is_placeholder(eq1) and not _db._is_placeholder(eq2)
-                and gan.strip() not in (str(eq1).strip(), str(eq2).strip())):
-            gan = ""
+        # Ganador: pick válido, o inferido del marcador si quedó huérfano
+        # (p.ej. un finalista que quedó en el 3er puesto tras cambiar la semi).
+        gan = _gan_efectivo(gan, eq1, eq2, g1, g2)
         lista.append({
             "jgo": str(g.get("jgo", "")), "ronda": g.get("grupo", "") or g.get("ronda", ""),
             "eq1": eq1, "eq2": eq2,
@@ -3088,6 +3085,30 @@ _infer_bracket_slot = _db._infer_bracket_slot
 _disp_team_pdf      = _db._disp_team
 
 
+def _gan_efectivo(gan, d_eq1, d_eq2, g1, g2):
+    """Ganador a MOSTRAR para un cruce ya resuelto.
+    - Si el pick guardado es uno de los dos equipos del cruce, se usa tal cual.
+    - Si quedó HUÉRFANO (equipo que ya no está en este cruce, p.ej. un finalista
+      que quedó como ganador del 3er puesto tras cambiar una semi) y ambos
+      equipos ya están definidos, se infiere del MARCADOR que predijo el jugador
+      (2-1 -> gana el local). Si el marcador es empate/vacío, no hay ganador.
+    - Si algún equipo es placeholder, no se puede validar: se deja el pick.
+    """
+    e1, e2 = str(d_eq1 or "").strip(), str(d_eq2 or "").strip()
+    gg = str(gan or "").strip()
+    if gg and gg in (e1, e2):
+        return gg
+    if e1 and e2 and not _db._is_placeholder(e1) and not _db._is_placeholder(e2):
+        try:
+            n1, n2 = int(str(g1).strip()), int(str(g2).strip())
+        except (ValueError, TypeError):
+            return ""
+        if n1 > n2: return e1
+        if n2 > n1: return e2
+        return ""
+    return gg
+
+
 def _pdf_todos_jugadores(games, cfg):
     """Genera UN PDF con TODOS los jugadores y sus picks (uno por página).
     F2: g1/g2 = goles, gan = nombre del equipo ganador."""
@@ -3142,9 +3163,9 @@ def _pdf_todos_jugadores(games, cfg):
                 pdf.cell(col_w[2], 7, _lat(d_eq2)[:20], border=1, align="L", fill=True)
                 pdf.cell(col_w[3], 7, g1 if g1 else "-", border=1, align="C", fill=True)
                 pdf.cell(col_w[4], 7, g2 if g2 else "-", border=1, align="C", fill=True)
-                # Ganador: solo si es uno de los dos equipos del cruce resuelto.
-                # (Evita mostrar un pick obsoleto, p.ej. un finalista en el 3er lugar.)
-                _gan_ok = gan if (gan and gan.strip() in (str(d_eq1).strip(), str(d_eq2).strip())) else ""
+                # Ganador: pick válido, o inferido del marcador si quedó huérfano
+                # (p.ej. un finalista que quedó en el 3er lugar tras cambiar la semi).
+                _gan_ok = _gan_efectivo(gan, d_eq1, d_eq2, g1, g2)
                 pdf.cell(col_w[5], 7, (_lat(_gan_ok)[:12] if _gan_ok else "-"), border=1, align="C", fill=True)
                 pdf.ln(); fill = not fill
             pdf.set_text_color(0, 0, 0); pdf.set_font("Helvetica", "I", 9); pdf.ln(3)
@@ -3960,12 +3981,10 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
             e2 = _db._disp_team(g, "eq2", by_jgo, by_ronda, picks)
             ganp = (_db._resolve_team_name((pk.get("gan") or "").strip(), by_jgo, by_ronda, picks)
                     or (pk.get("gan") or "").strip())
-            # Descartar ganador OBSOLETO: si ambos equipos del cruce ya están
-            # definidos y el ganador predicho no es ninguno de ellos (p.ej. quedó
-            # un finalista en el 3er puesto tras cambiar la semi), se ignora.
-            if (ganp and not _is_ph(ganp) and not _is_ph(e1) and not _is_ph(e2)
-                    and ganp not in (e1, e2)):
-                ganp = ""
+            # Ganador: pick válido, o inferido del marcador que predijo el jugador
+            # si quedó huérfano (p.ej. un finalista en el 3er puesto tras cambiar
+            # la semi). Mantiene coherencia con el PDF y la pestaña Picks.
+            ganp = _gan_efectivo(ganp, e1, e2, pk.get("g1", ""), pk.get("g2", ""))
             estado = g.get("estado", "")
             jugado = bool(estado) and estado != "PROG"
             real_gan = (g.get("ganador") or "").strip()

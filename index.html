@@ -3102,10 +3102,21 @@ function renderGames(games) {
       }
     }
 
+    // Ganador EFECTIVO para resaltar el botón. Si el guardado quedó huérfano
+    // (equipo que ya no está en este cruce, p.ej. tras cambiar una semifinal)
+    // y el partido está bloqueado, reflejar la intención del jugador según el
+    // MARCADOR que predijo (2-1 -> gana el local). Solo afecta lo que se pinta,
+    // no toca lo guardado.
+    let ganDisp = rPGanBtn || p.ganador || '';
+    if (_peIsReal(pe1) && _peIsReal(pe2) && ganDisp !== pe1 && ganDisp !== pe2) {
+      const g1n = Number(p.gol1), g2n = Number(p.gol2);
+      ganDisp = (p.gol1 !== '' && p.gol2 !== '' && !isNaN(g1n) && !isNaN(g2n) && g1n !== g2n)
+        ? (g1n > g2n ? pe1 : pe2) : '';
+    }
     // ganSel: también verificar p.eq1/p.eq2 almacenados cuando pe1/pe2 son placeholders
-    const ganSel1 = !!(pe1 && (rPGanBtn === pe1 || p.ganador === pe1))
+    const ganSel1 = !!(pe1 && (ganDisp === pe1 || rPGanBtn === pe1 || p.ganador === pe1))
       || (!_peIsReal(pe1) && !!p.eq1 && (rPGanBtn === p.eq1 || p.ganador === p.eq1));
-    const ganSel2 = !!(pe2 && (rPGanBtn === pe2 || p.ganador === pe2))
+    const ganSel2 = !!(pe2 && (ganDisp === pe2 || rPGanBtn === pe2 || p.ganador === pe2))
       || (!_peIsReal(pe2) && !!p.eq2 && (rPGanBtn === p.eq2 || p.ganador === p.eq2));
     const ganCls1 = `btn-w flex-1 py-2.5 rounded-2xl text-xs font-bold ${ganSel1?'sel':''}`;
     const ganCls2 = `btn-w flex-1 py-2.5 rounded-2xl text-xs font-bold ${ganSel2?'sel':''}`;
