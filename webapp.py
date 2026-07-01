@@ -3094,6 +3094,10 @@ def _pdf_todos_jugadores(games, cfg):
     for g in games:
         if not g.get("ronda"):
             g["ronda"] = g.get("grupo", "") or ""
+    # Índices para resolver los cruces predichos por cada jugador (bracket real):
+    # en rondas superiores el placeholder crudo no sirve (p.ej. el 3er puesto son
+    # los PERDEDORES de semis, no el campeón). Se resuelve por jugador más abajo.
+    _by_jgo, _by_ronda = _db.build_bracket_index(games)
     col_w   = [12, 42, 42, 18, 18, 24]
     headers = ["#", "Local", "Visitante", "G.Loc", "G.Vis", "Ganador"]
     pdf = FPDF(); pdf.set_margins(15, 15, 15); pdf.set_auto_page_break(auto=True, margin=15)
@@ -3123,9 +3127,13 @@ def _pdf_todos_jugadores(games, cfg):
                 pdf.set_fill_color(240, 244, 255) if fill else pdf.set_fill_color(255, 255, 255)
                 pdf.set_font("Helvetica", "", 8)
                 pdf.set_text_color(0, 0, 0) if completo else pdf.set_text_color(180, 180, 180)
+                # Equipos que predijo ESTE jugador (resueltos por bracket):
+                # R32 = equipos reales; R16+ = su cruce inferido (3ER = perdedores).
+                d_eq1 = _db._disp_team(g, "eq1", _by_jgo, _by_ronda, picks) or g.get("eq1", "")
+                d_eq2 = _db._disp_team(g, "eq2", _by_jgo, _by_ronda, picks) or g.get("eq2", "")
                 pdf.cell(col_w[0], 7, str(g["jgo"]), border=1, align="C", fill=True)
-                pdf.cell(col_w[1], 7, _lat(g.get("eq1", ""))[:20], border=1, align="L", fill=True)
-                pdf.cell(col_w[2], 7, _lat(g.get("eq2", ""))[:20], border=1, align="L", fill=True)
+                pdf.cell(col_w[1], 7, _lat(d_eq1)[:20], border=1, align="L", fill=True)
+                pdf.cell(col_w[2], 7, _lat(d_eq2)[:20], border=1, align="L", fill=True)
                 pdf.cell(col_w[3], 7, g1 if g1 else "-", border=1, align="C", fill=True)
                 pdf.cell(col_w[4], 7, g2 if g2 else "-", border=1, align="C", fill=True)
                 pdf.cell(col_w[5], 7, (_lat(gan)[:12] if gan else "-"), border=1, align="C", fill=True)
