@@ -1594,6 +1594,18 @@
     Info<div class="bni-dot"></div>
   </button>
 </nav>
+<script>
+  // Si la quiniela ya cerró en una visita previa, mostrar Comp./Prob. de
+  // inmediato (evita el "parpadeo" en el que faltan tabs hasta que carga la
+  // red). _updateNavLock corregirá el estado real cuando lleguen los partidos.
+  try {
+    if (localStorage.getItem('ql_cerrada') === '1') {
+      var _c = document.getElementById('bni-comp'), _p = document.getElementById('bni-prob');
+      if (_c) _c.style.display = '';
+      if (_p) _p.style.display = '';
+    }
+  } catch (_) {}
+</script>
 
 </div><!-- /phone -->
 
@@ -4511,6 +4523,10 @@ function _quinielaCerrada() {
 }
 function _updateNavLock() {
   const cerrada = _quinielaCerrada();
+  // Recordar el cierre para mostrar Comp./Prob. al INSTANTE en la próxima
+  // apertura (sin esperar a que carguen los partidos por red). Una vez cerrada
+  // la quiniela ya no se reabre.
+  try { if (cerrada) localStorage.setItem('ql_cerrada', '1'); } catch (_) {}
   const comp = document.getElementById('bni-comp');
   const prob = document.getElementById('bni-prob');
   if (comp) comp.style.display = cerrada ? '' : 'none';
