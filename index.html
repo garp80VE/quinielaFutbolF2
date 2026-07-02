@@ -4080,11 +4080,9 @@ function _renderRecorrido(r) {
   const N = labels.length;
   let maxRank = 1;
   jugs.forEach(j => (j.posiciones || []).forEach(p => { if (p > maxRank) maxRank = p; }));
-  const rowH = 22, topPad = 16, botPad = 12, colW = 46, padX = 20;
+  const rowH = 22, topPad = 16, botPad = 12, MIN_COLW = 46, padX = 20;
   const H = topPad + maxRank * rowH + botPad;
-  const innerW = padX * 2 + Math.max(1, N - 1) * colW;
   const yFor = rank => topPad + (rank - 1) * rowH + 4;
-  const xFor = i => padX + i * colW;
   const colorFor = j => j.yo ? '#2563eb' : (j.rank_final === 1 ? '#e0a500' : (j.rank_final === 2 ? '#9aa3ad' : '#cbd5e1'));
   const z = j => j.yo ? 3 : (j.rank_final === 1 ? 2 : (j.rank_final === 2 ? 1 : 0));
   const order = [...jugs].sort((a, b) => z(a) - z(b));   // TÚ y top se dibujan encima
@@ -4095,22 +4093,30 @@ function _renderRecorrido(r) {
     axis += `<text x="29" y="${yFor(rk) + 3}" text-anchor="end" font-size="10" fill="#94a3b8" font-weight="700">${rk}°</text>`;
   axis += `</svg>`;
 
-  // Líneas + puntos
-  let lines = '';
-  for (const j of order) {
-    const pos = j.posiciones || []; if (!pos.length) continue;
-    const col = colorFor(j), sw = j.yo ? 3 : 1.6;
-    let d = '';
-    pos.forEach((p, i) => { d += (i === 0 ? 'M' : 'L') + xFor(i) + ',' + yFor(p); });
-    lines += `<path d="${d}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round" opacity="${j.yo ? 1 : .85}"/>`;
-    pos.forEach((p, i) => { lines += `<circle cx="${xFor(i)}" cy="${yFor(p)}" r="${j.yo ? 3 : 2}" fill="${col}"/>`; });
-    if (j.yo) pos.forEach((p, i) => {
-      lines += `<text x="${xFor(i)}" y="${yFor(p) - 6}" text-anchor="middle" font-size="9" font-weight="800" fill="#2563eb" stroke="#fff" stroke-width="2.5" paint-order="stroke">${p}</text>`;
-    });
+  // Construye el SVG del gráfico para un ancho de columna dado. Se recalcula
+  // tras insertar para ENSANCHAR las columnas y llenar el espacio disponible
+  // cuando hay pocos partidos (evita el hueco muerto a la derecha).
+  function buildChart(colW) {
+    const xFor = i => padX + i * colW;
+    const innerW = padX * 2 + Math.max(1, N - 1) * colW;
+    let lines = '';
+    for (const j of order) {
+      const pos = j.posiciones || []; if (!pos.length) continue;
+      const col = colorFor(j), sw = j.yo ? 3 : 1.6;
+      let d = '';
+      pos.forEach((p, i) => { d += (i === 0 ? 'M' : 'L') + xFor(i) + ',' + yFor(p); });
+      lines += `<path d="${d}" fill="none" stroke="${col}" stroke-width="${sw}" stroke-linejoin="round" stroke-linecap="round" opacity="${j.yo ? 1 : .85}"/>`;
+      pos.forEach((p, i) => { lines += `<circle cx="${xFor(i)}" cy="${yFor(p)}" r="${j.yo ? 3 : 2}" fill="${col}"/>`; });
+      if (j.yo) pos.forEach((p, i) => {
+        lines += `<text x="${xFor(i)}" y="${yFor(p) - 6}" text-anchor="middle" font-size="9" font-weight="800" fill="#2563eb" stroke="#fff" stroke-width="2.5" paint-order="stroke">${p}</text>`;
+      });
+    }
+    let xlabels = '';
+    labels.forEach((lb, i) => { xlabels += `<text x="${xFor(i)}" y="${H - 2}" text-anchor="middle" font-size="8" fill="#cbd5e1">${lb}</text>`; });
+    return { innerW, svg: `<svg width="${innerW}" height="${H}" style="display:block">${lines}${xlabels}</svg>` };
   }
-  let xlabels = '';
-  labels.forEach((lb, i) => { xlabels += `<text x="${xFor(i)}" y="${H - 2}" text-anchor="middle" font-size="8" fill="#cbd5e1">${lb}</text>`; });
-  const svg = `<svg width="${innerW}" height="${H}" style="display:block">${lines}${xlabels}</svg>`;
+  const chart0 = buildChart(MIN_COLW);
+  const svg = chart0.svg;
 
   // Agrupar por puesto final (para el panel de nombres y la lista de abajo)
   const byRank = {};
@@ -4155,12 +4161,24 @@ function _renderRecorrido(r) {
        <div id="recorrido-scroller" style="overflow-x:auto;flex:1">${svg}</div>
        ${rightPanel}
      </div>
-     <p style="font-size:10px;color:#94a3b8;text-align:center;margin:6px 0 0">👉 Desliza el gráfico para ver desde el primer partido</p>
+     <p id="recorrido-hint" style="font-size:10px;color:#94a3b8;text-align:center;margin:6px 0 0">👉 Desliza el gráfico para ver desde el primer partido</p>
      ${legend}
      <p style="font-size:11px;font-weight:800;color:#1e293b;margin:12px 0 2px">📋 Jugadores por puesto (todos)</p>
      <div>${lista}</div>`;
   const sc = document.getElementById('recorrido-scroller');
-  if (sc) sc.scrollLeft = sc.scrollWidth;   // arrancar en lo más reciente
+  if (sc) {
+    const avail = sc.clientWidth;
+    // Si el gráfico cabe con holgura, ensanchar columnas para llenar el ancho
+    // disponible (aprovecha el espacio a la derecha en vez de dejarlo vacío).
+    const hint = document.getElementById('recorrido-hint');
+    if (N > 1 && chart0.innerW < avail - 2) {
+      const colW2 = (avail - padX * 2) / (N - 1);
+      sc.innerHTML = buildChart(colW2).svg;
+      if (hint) hint.style.display = 'none';   // ya cabe entero: no hace falta deslizar
+    } else {
+      sc.scrollLeft = sc.scrollWidth;   // muchos partidos: arrancar en lo más reciente
+    }
+  }
 }
 
 async function loadProbabilidades(force=false) {
