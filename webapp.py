@@ -2010,42 +2010,44 @@ def _updater_loop():
 
                 if sc["estado"] != "PROG" and estado_prev == "PROG":
                     _b1, _b2 = _eq(eq1), _eq(eq2)
-                    # Distribuci\u00f3n de apuestas: cu\u00e1ntos predijeron cada equipo a
-                    # los 90' (1 / empate / 2). En empate a 90' avanza por penales.
-                    dist_txt = ""
+                    # Distribuci\u00f3n de apuestas al iniciar:
+                    #  - respaldo a cada equipo (qui\u00e9n creen que AVANZA)
+                    #  - cu\u00e1ntos predijeron victoria vs empate a los 90'
+                    adv1 = adv2 = victorias = empates = tot = 0
                     try:
                         def _ni(x):
                             try: return int(str(x).strip())
                             except (ValueError, TypeError): return None
-                        n1 = ne = n2 = 0
-                        ne1 = ne2 = 0   # empate a 90' pero \u00bfqui\u00e9n avanza?
                         for _p in _db.db_get_all_picks_for_game(jgo):
                             g1p, g2p = _ni(_p.get("g1_pick")), _ni(_p.get("g2_pick"))
                             if g1p is None or g2p is None:
                                 continue
                             gn = (_p.get("gan_pick") or "").strip()
+                            tot += 1
                             if g1p == g2p:
-                                ne += 1
-                                if gn == eq1:   ne1 += 1
-                                elif gn == eq2: ne2 += 1
+                                empates += 1
+                                if gn == eq1:   adv1 += 1
+                                elif gn == eq2: adv2 += 1
                             else:
-                                if gn == eq1:   n1 += 1
-                                elif gn == eq2: n2 += 1
-                                elif g1p > g2p: n1 += 1
-                                else:           n2 += 1
-                        tot = n1 + ne + n2
-                        if tot:
-                            _emp = f"{ne} empate"
-                            if ne1 or ne2:   # desglose del empate por qui\u00e9n avanza
-                                _emp += f" (avanza {ne1} {_b1} \u00b7 {ne2} {_b2})"
-                            dist_txt = f"\n{tot} apuestas \u00b7 {n1} {_b1} \u00b7 {_emp} \u00b7 {n2} {_b2}"
+                                victorias += 1
+                                if gn == eq1:   adv1 += 1
+                                elif gn == eq2: adv2 += 1
+                                elif g1p > g2p: adv1 += 1
+                                else:           adv2 += 1
                     except Exception as _de:
                         print(f"[updater] dist inicio: {_de}")
-                    _tg_send(f"\U0001f7e1 <b>INICIO:</b> {_b1} vs {_b2}{dist_txt}")
-                    _send_push_all("\u26bd Partido iniciado", f"{_b1} vs {_b2}{dist_txt}",
+                    if tot:
+                        cuerpo = (f"{_b1}: {adv1}\n{_b2}: {adv2}\n\n"
+                                  f"Victorias: {victorias}\nEmpates: {empates}")
+                        cuerpo_push = f"{_b1}: {adv1} \u00b7 {_b2}: {adv2}"
+                    else:
+                        cuerpo = f"{_b1} vs {_b2}"
+                        cuerpo_push = f"{_b1} vs {_b2}"
+                    _tg_send(f"\U0001f7e1 <b>INICIO:</b>\n{cuerpo}")
+                    _send_push_all("\u26bd Partido iniciado", cuerpo_push,
                                    {"tipo": "inicio", "eq1": eq1, "eq2": eq2})
                     try:
-                        _wa("POST", "/send", json={"message": f"\U0001f7e1 INICIO: {_b1} vs {_b2}{dist_txt}"})
+                        _wa("POST", "/send", json={"message": f"\U0001f7e1 INICIO:\n{cuerpo}"})
                     except Exception as e:
                         print(f"[WA] Error inicio: {e}")
                 elif sc["estado"] in ("EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"):
