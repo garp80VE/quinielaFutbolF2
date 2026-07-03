@@ -253,6 +253,21 @@ def parse_score(data):
             return None
     pen0 = _pen(competitors[0]); pen1v = _pen(competitors[1])
 
+    # Definición por PENALES. ESPN a veces reporta la tanda con un status ambiguo
+    # (p.ej. STATUS_END_OF_EXTRATIME, que contiene "EXTRA" y se clasificaría como
+    # PRÓRROGA) y mantiene state="in" un rato tras decidirse. Si hay shootoutScore
+    # para ambos y la tanda YA CONCLUYÓ (fin de prórroga/partido o state=post),
+    # tratarlo como FINAL y resolver el ganador por la tanda. Si la tanda sigue en
+    # curso, se deja en PENALES sin fijar ganador todavía (evita avisos prematuros).
+    _nm_up = _name.upper()
+    _st_low = (status_type.get("state", "") or "").lower()
+    _shootout_done = (pen0 is not None and pen1v is not None and pen0 != pen1v
+                      and ("END" in _nm_up or "FINAL" in _nm_up or _st_low == "post"))
+    if _shootout_done:
+        estado = "FINAL"
+    elif pen0 is not None and pen1v is not None and estado in ("PRORROGA", "EN VIVO", ""):
+        estado = "PENALES"
+
     en_juego = estado in {"FINAL", "EN VIVO", "MEDIO TIEMPO", "PRORROGA", "PENALES"}
 
     # F2: ganador es nombre del equipo (no "1"/"2"/"E") — nunca hay empate final
@@ -268,6 +283,10 @@ def parse_score(data):
                 if ci.get("winner"):
                     ganador = eq1_name if ci.get("homeAway") == "home" else eq2_name
                     break
+            # Respaldo: si la tanda ya concluyó pero ESPN aún no marca "winner",
+            # resolver por el marcador de penales (solo cuando está decidida).
+            if not ganador and _shootout_done:
+                ganador = eq1_name if pen0 > pen1v else eq2_name
 
     return {"estado": estado, "gol1": str(s0) if en_juego else "",
             "gol2": str(s1) if en_juego else "", "ganador": ganador, "minuto": minuto,
