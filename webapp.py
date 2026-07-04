@@ -5873,6 +5873,61 @@ async def admin_gan_obsoletos(key: str = Query(""), ql_admin: str = Cookie(defau
             "jugadores": out}
 
 
+@app.get("/api/admin/inicio-preview")
+async def admin_inicio_preview(jgo: str = Query(""), key: str = Query(""),
+                               ql_admin: str = Cookie(default="")):
+    """Vista previa del mensaje de INICIO de un partido (sin enviarlo). Cuenta solo
+    a los backers de equipos VIVOS, igual que el aviso real. Sin ?jgo, usa el
+    próximo partido no jugado. Uso: /api/admin/inicio-preview?jgo=18&key=TU_CLAVE."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    games = _db.db_get_horarios()
+    if jgo:
+        g = next((x for x in games if str(x.get("jgo", "")) == str(jgo)), None)
+    else:
+        prog = [x for x in games if (x.get("estado", "") or "") in ("", "PROG")]
+        prog.sort(key=lambda x: int(str(x.get("jgo", "0")) or 0))
+        g = prog[0] if prog else None
+    if not g:
+        raise HTTPException(404, "Juego no encontrado")
+    jg  = str(g.get("jgo", ""))
+    eq1 = (g.get("eq1", "") or "").strip(); eq2 = (g.get("eq2", "") or "").strip()
+    listos = bool(eq1 and eq2 and not _db._is_placeholder(eq1) and not _db._is_placeholder(eq2))
+    def _ni(x):
+        try: return int(str(x).strip())
+        except (ValueError, TypeError): return None
+    adv1 = adv2 = victorias = empates = tot = 0
+    muertos: dict = {}
+    if listos:
+        for _p in _db.db_get_all_picks_for_game(jg):
+            g1p, g2p = _ni(_p.get("g1_pick")), _ni(_p.get("g2_pick"))
+            if g1p is None or g2p is None:
+                continue
+            gn = (_p.get("gan_pick") or "").strip()
+            if gn == eq1:
+                adv1 += 1
+            elif gn == eq2:
+                adv2 += 1
+            else:
+                if gn:
+                    muertos[gn] = muertos.get(gn, 0) + 1
+                continue
+            tot += 1
+            if g1p == g2p: empates   += 1
+            else:          victorias += 1
+    _b1, _b2 = _eq(eq1), _eq(eq2)
+    cuerpo = f"{_b1}: {adv1}\n{_b2}: {adv2}\n\nVictorias: {victorias}\nEmpates: {empates}"
+    return {
+        "jgo": jg, "ronda": g.get("grupo", ""), "estado": g.get("estado", ""),
+        "equipos_definidos": listos, "eq1": eq1, "eq2": eq2,
+        "mensaje": f"\U0001f7e1 INICIO:\n{cuerpo}",
+        "conteo": {"eq1": adv1, "eq2": adv2, "victorias": victorias, "empates": empates,
+                   "contados_backers_vivos": tot,
+                   "excluidos_por_equipo_muerto": muertos},
+    }
+
+
 @app.get("/api/admin/all-player-points")
 async def admin_all_player_points(key: str = Query(""), q: str = Query(""),
                                   ql_admin: str = Cookie(default=""),
