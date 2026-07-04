@@ -3132,6 +3132,18 @@ def _gan_efectivo(gan, d_eq1, d_eq2, g1, g2):
     return gg
 
 
+def _guardado_coherente(stored, inferido):
+    """El equipo 'guardado' en el casillero de un jugador puede quedar OBSOLETO
+    (sobrante de un cuadro anterior, p.ej. 'Alemania' donde hoy va otro equipo).
+    Si no coincide con el equipo inferido real de su cuadro, se muestra el
+    inferido para que el JSON sea coherente. No afecta la puntuación."""
+    s   = (stored or "").strip()
+    inf = (inferido or "").strip()
+    if inf and not _db._is_placeholder(inf) and s != inf:
+        return inf
+    return s or inf
+
+
 def _pdf_todos_jugadores(games, cfg):
     """Genera UN PDF con TODOS los jugadores y sus picks (uno por página).
     F2: g1/g2 = goles, gan = nombre del equipo ganador."""
@@ -5768,9 +5780,11 @@ async def admin_player_points(q: str = Query(""), key: str = Query(""),
             "jgo": jgo_str, "ronda": h.get("grupo", ""),
             "eq1_real": h.get("eq1", ""), "eq2_real": h.get("eq2", ""),
             "marcador_real": f"{h.get('gol1','')}-{h.get('gol2','')}", "gan_real": h.get("ganador", ""),
-            "pick_marcador": f"{pk.get('g1','')}-{pk.get('g2','')}", "pick_gan": pk.get("gan", ""),
+            "pick_marcador": f"{pk.get('g1','')}-{pk.get('g2','')}",
+            "pick_gan": _gan_efectivo(pk.get("gan", ""), eq1_inf, eq2_inf, pk.get("g1", ""), pk.get("g2", "")),
             "eq1_pick_inferido": eq1_inf, "eq2_pick_inferido": eq2_inf,
-            "eq1_pick_guardado": pk.get("eq1", ""), "eq2_pick_guardado": pk.get("eq2", ""),
+            "eq1_pick_guardado": _guardado_coherente(pk.get("eq1", ""), eq1_inf),
+            "eq2_pick_guardado": _guardado_coherente(pk.get("eq2", ""), eq2_inf),
             "team_alive": team_alive,
             "pts_logro": pl, "pts_gan": pg, "pts_gol1": pg1, "pts_gol2": pg2, "pts_campeon": pc,
             "pts": total,
@@ -5916,9 +5930,11 @@ async def admin_all_player_points(key: str = Query(""), q: str = Query(""),
                 "jgo": jgo_str, "ronda": h.get("grupo", ""), "estado": estado,
                 "eq1_real": h.get("eq1", ""), "eq2_real": h.get("eq2", ""),
                 "marcador_real": f"{h.get('gol1','')}-{h.get('gol2','')}", "gan_real": h.get("ganador", ""),
-                "pick_marcador": f"{pk.get('g1','')}-{pk.get('g2','')}", "pick_gan": pk.get("gan", ""),
+                "pick_marcador": f"{pk.get('g1','')}-{pk.get('g2','')}",
+                "pick_gan": _gan_efectivo(pk.get("gan", ""), eq1_inf, eq2_inf, pk.get("g1", ""), pk.get("g2", "")),
                 "eq1_pick_inferido": eq1_inf, "eq2_pick_inferido": eq2_inf,
-                "eq1_pick_guardado": pk.get("eq1", ""), "eq2_pick_guardado": pk.get("eq2", ""),
+                "eq1_pick_guardado": _guardado_coherente(pk.get("eq1", ""), eq1_inf),
+                "eq2_pick_guardado": _guardado_coherente(pk.get("eq2", ""), eq2_inf),
                 "team_alive": team_alive,
                 "pts_logro": pl, "pts_gan": pg, "pts_gol1": pg1, "pts_gol2": pg2,
                 "pts_campeon": pc, "pts": total,
