@@ -2041,20 +2041,21 @@ def _updater_loop():
                             g1p, g2p = _ni(_p.get("g1_pick")), _ni(_p.get("g2_pick"))
                             if g1p is None or g2p is None:
                                 continue
-                            gn  = (_p.get("gan_pick") or "").strip()
-                            e1s = (_p.get("eq1_pick") or "").strip()  # equipo guardado en su cuadro
-                            e2s = (_p.get("eq2_pick") or "").strip()
+                            gn = (_p.get("gan_pick") or "").strip()
+                            # SOLO cuentan los que respaldan a un equipo VIVO (uno de los
+                            # dos que juegan de verdad). Quien eligió como ganador a un
+                            # equipo ya eliminado (de un cuadro viejo, p.ej. Países Bajos)
+                            # NO tiene opción de ganar y NO se cuenta en ninguna cifra.
+                            if gn == eq1:
+                                adv1 += 1
+                            elif gn == eq2:
+                                adv2 += 1
+                            else:
+                                continue
                             tot += 1
+                            # Victorias/Empates = solo entre los backers de equipos vivos.
                             if g1p == g2p: empates   += 1
                             else:          victorias += 1
-                            # Lado que respalda (avanza). Se reconoce por el nombre REAL o
-                            # por el guardado en SU cuadro, para no perder a quien tenga un
-                            # ganador obsoleto (p.ej. "Alemania" en el lado que hoy es
-                            # Marruecos); como respaldo, el marcador que predijo.
-                            if gn and gn in (eq1, e1s):   adv1 += 1
-                            elif gn and gn in (eq2, e2s): adv2 += 1
-                            elif g1p > g2p:               adv1 += 1
-                            elif g2p > g1p:               adv2 += 1
                     except Exception as _de:
                         print(f"[updater] dist inicio: {_de}")
                     if tot:
