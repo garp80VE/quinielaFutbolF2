@@ -2041,18 +2041,20 @@ def _updater_loop():
                             g1p, g2p = _ni(_p.get("g1_pick")), _ni(_p.get("g2_pick"))
                             if g1p is None or g2p is None:
                                 continue
-                            gn = (_p.get("gan_pick") or "").strip()
+                            gn  = (_p.get("gan_pick") or "").strip()
+                            e1s = (_p.get("eq1_pick") or "").strip()  # equipo guardado en su cuadro
+                            e2s = (_p.get("eq2_pick") or "").strip()
                             tot += 1
-                            if g1p == g2p:
-                                empates += 1
-                                if gn == eq1:   adv1 += 1
-                                elif gn == eq2: adv2 += 1
-                            else:
-                                victorias += 1
-                                if gn == eq1:   adv1 += 1
-                                elif gn == eq2: adv2 += 1
-                                elif g1p > g2p: adv1 += 1
-                                else:           adv2 += 1
+                            if g1p == g2p: empates   += 1
+                            else:          victorias += 1
+                            # Lado que respalda (avanza). Se reconoce por el nombre REAL o
+                            # por el guardado en SU cuadro, para no perder a quien tenga un
+                            # ganador obsoleto (p.ej. "Alemania" en el lado que hoy es
+                            # Marruecos); como respaldo, el marcador que predijo.
+                            if gn and gn in (eq1, e1s):   adv1 += 1
+                            elif gn and gn in (eq2, e2s): adv2 += 1
+                            elif g1p > g2p:               adv1 += 1
+                            elif g2p > g1p:               adv2 += 1
                     except Exception as _de:
                         print(f"[updater] dist inicio: {_de}")
                     if tot:
@@ -5814,6 +5816,46 @@ async def admin_picks_summary(key: str = Query(""), ql_admin: str = Cookie(defau
         })
     out.sort(key=lambda x: x["con_ganador"])  # los incompletos primero
     return {"n_jugadores": len(out), "jugadores": out}
+
+
+@app.get("/api/admin/gan-obsoletos")
+async def admin_gan_obsoletos(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Diagnóstico: jugadores con un GANADOR obsoleto — eligieron como ganador un
+    equipo que NO está en el cruce real de ese partido (p.ej. quedó un equipo de un
+    cuadro viejo tras cambiar una ronda previa). Uso: ?key=TU_CLAVE_ADMIN."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    games = _db.db_get_horarios()
+    reales = {}
+    for g in games:
+        e1 = (g.get("eq1", "") or "").strip(); e2 = (g.get("eq2", "") or "").strip()
+        if e1 and e2 and not _db._is_placeholder(e1) and not _db._is_placeholder(e2):
+            reales[str(g.get("jgo", ""))] = {
+                "eq1": e1, "eq2": e2,
+                "ronda": g.get("grupo", ""), "estado": (g.get("estado", "") or "").strip()}
+    grouped = _db.db_get_all_picks_grouped()
+    out = []
+    for pid, data in grouped.items():
+        if data.get("excluido"):
+            continue
+        malos = []
+        for js, pk in data["picks"].items():
+            r = reales.get(str(js))
+            if not r:
+                continue
+            gan = (pk.get("gan", "") or "").strip()
+            if gan and gan not in (r["eq1"], r["eq2"]):
+                malos.append({"jgo": js, "ronda": r["ronda"], "estado": r["estado"],
+                              "cruce_real": f'{r["eq1"]} vs {r["eq2"]}', "gan_obsoleto": gan})
+        if malos:
+            malos.sort(key=lambda x: int(x["jgo"]) if str(x["jgo"]).isdigit() else 0)
+            out.append({"jugador": data.get("nombre", ""), "jugador_id": pid,
+                        "n": len(malos), "picks": malos})
+    out.sort(key=lambda x: (-x["n"], (x["jugador"] or "").lower()))
+    return {"n_jugadores_afectados": len(out),
+            "nota": "gan_obsoleto = ganador elegido que ya no está en el cruce real del partido.",
+            "jugadores": out}
 
 
 @app.get("/api/admin/all-player-points")
