@@ -5492,6 +5492,25 @@ async def admin_sorteo_reset(ql_admin: str = Cookie(default="")):
     return {"ok": True}
 
 
+@app.get("/api/admin/sorteo-clear")
+@app.post("/api/admin/sorteo-clear")
+async def admin_sorteo_clear(key: str = Query(""), ql_admin: str = Cookie(default="")):
+    """Limpia los nombres de ganadores del sorteo (SORTEO_GANADOR_i) en la config
+    SQLite. Úsalo si quedó un valor de prueba (p.ej. 'Camila') antes de correr el
+    sorteo, para que el pozo deje de mostrar un ganador inexistente.
+    Uso: /api/admin/sorteo-clear?key=TU_CLAVE_ADMIN."""
+    _admin_pass = state.get("cfg", {}).get("ADMIN_PASS", "quiniela2026")
+    if not _admin_check(ql_admin) and key != _admin_pass:
+        raise HTTPException(403, "No autorizado")
+    previos = {k: v for k, v in state.get("cfg", {}).items()
+               if k.startswith("SORTEO_GANADOR_") and (v or "").strip()}
+    campos = {f"SORTEO_GANADOR_{i}": "" for i in range(1, 20)}
+    _db.db_save_config(campos)
+    state["cfg"] = _db.db_get_config()
+    _invalidate_games()
+    return {"ok": True, "limpiados": previos, "n": len(previos)}
+
+
 @app.post("/api/admin/upload-logo")
 async def admin_upload_logo(file: UploadFile = File(...),
                             ql_admin: str = Cookie(default="")):
