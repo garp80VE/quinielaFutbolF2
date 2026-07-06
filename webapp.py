@@ -946,6 +946,9 @@ _live_clocks: dict = {}   # {espn_id: "45'"} — minuto actual de partidos en vi
 _pending_notifs: list = []   # notificaciones de gol/final pendientes hasta tener standings frescos
 _prorroga_notif:  set  = set()  # espn_id que ya recibieron aviso de TIEMPO EXTRA (1 sola vez)
 _penales_notif:   set  = set()  # espn_id que ya recibieron aviso de PENALES (1 sola vez)
+_mt_notif:        set  = set()  # espn_id que ya recibieron aviso de MEDIO TIEMPO (1 sola vez)
+_score_down:      dict = {}     # {espn_id: "g1-g2"} candidato a marcador MENOR pendiente de
+                                # confirmar (anti-glitch: solo se acepta si ESPN lo repite)
 _post90_games:    set  = set()  # espn_id que YA pasaron de los 90' → marcador congelado fijo
                                 # (ESPN oscila EN VIVO↔PRÓRROGA; esto evita re-disparos)
 _round_announced: set  = set()  # rondas cuyo resumen de "campeones" ya se envió (1 vez)
@@ -2015,6 +2018,33 @@ def _updater_loop():
                 else:
                     sc_g1, sc_g2 = sc["gol1"], sc["gol2"]
 
+                # ── Anti-glitch de marcador ────────────────────────────────────
+                # ESPN a veces devuelve lecturas inestables que suben y bajan en el
+                # mismo minuto → sin filtro se enviaba un "GOL" por cada rebote.
+                # Regla: durante el juego los AUMENTOS (goles reales) pasan AL
+                # INSTANTE (no se toca la velocidad). Un marcador MENOR al guardado
+                # puede ser un glitch O un gol ANULADO por VAR, así que NO se acepta
+                # a la primera: se exige que ESPN lo REPITA en el siguiente ciclo
+                # (doble confirmación). Un glitch no se repite → se descarta; una
+                # anulación real sí → se aplica al ciclo siguiente (segundos después,
+                # y el VAR tarda minutos, así que no se pierde).
+                def _numi(x):
+                    try: return int(str(x).strip())
+                    except (ValueError, TypeError): return None
+                if sc["estado"] in ("EN VIVO", "MEDIO TIEMPO") and not _post90:
+                    _o1, _o2 = _numi(game.get("gol1")), _numi(game.get("gol2"))
+                    _n1, _n2 = _numi(sc_g1), _numi(sc_g2)
+                    if None not in (_o1, _o2, _n1, _n2) and (_n1 < _o1 or _n2 < _o2):
+                        _cand = f"{_n1}-{_n2}"
+                        if _score_down.get(espn_id) == _cand:
+                            _score_down.pop(espn_id, None)   # confirmado 2x → anulación real, se acepta
+                        else:
+                            _score_down[espn_id] = _cand     # 1ª bajada → esperar confirmación
+                            time.sleep(0.3)
+                            return
+                    else:
+                        _score_down.pop(espn_id, None)       # estable o subió → descartar candidato
+
                 if (sc["estado"] == estado_prev and
                         sc_g1 == game.get("gol1", "") and
                         sc_g2 == game.get("gol2", "") and
@@ -2086,8 +2116,10 @@ def _updater_loop():
                             "gol1": sc_g1, "gol2": sc_g2,
                             "min_txt": min_txt, "minuto": minuto,
                         })
-                    # 12.2: aviso de MEDIO TIEMPO (una sola vez, al entrar a esa fase)
-                    if sc["estado"] == "MEDIO TIEMPO" and estado_prev != "MEDIO TIEMPO":
+                    # 12.2: aviso de MEDIO TIEMPO — UNA sola vez por partido (ESPN
+                    # oscila EN VIVO↔MEDIO TIEMPO; sin este set se reenviaba varias veces).
+                    if sc["estado"] == "MEDIO TIEMPO" and espn_id not in _mt_notif:
+                        _mt_notif.add(espn_id)
                         _pending_notifs.append({
                             "tipo": "medio_tiempo", "eq1": eq1, "eq2": eq2,
                             "gol1": sc_g1, "gol2": sc_g2,
