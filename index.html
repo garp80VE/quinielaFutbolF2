@@ -5238,7 +5238,19 @@ async function loadApuestasDetail(game, silent=false) {
                 const pgan = p.pick_gan ?? p.gan ?? '';
                 const hasMarcador = pg1 !== '' && pg2 !== '';
                 const ptsCls = p.pts >= S.ptsMax ? 'pts-hi' : p.pts >= 1 ? 'pts-mid' : p.pts === 0 ? 'pts-lo' : '';
-                const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
+                // Equipos que ESTE jugador predijo (inferidos). En rondas superiores
+                // pueden diferir del partido real; el que no está jugando va tachado.
+                const pe1 = p.pick_eq1 || game.eq1 || '';
+                const pe2 = p.pick_eq2 || game.eq2 || '';
+                const dead1 = p.eq1_vivo === false;
+                const dead2 = p.eq2_vivo === false;
+                const tSt = d => d ? 'color:#cbd5e1;text-decoration:line-through' : 'color:#64748b';
+                const marcadorCell = hasMarcador ? `
+                  <div style="display:flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap">
+                    <span style="${tSt(dead1)};font-size:11px;max-width:64px;overflow:hidden;text-overflow:ellipsis" title="${pe1}">${shortName(pe1)}</span>
+                    <b style="color:#1e293b">${pg1}–${pg2}</b>
+                    <span style="${tSt(dead2)};font-size:11px;max-width:64px;overflow:hidden;text-overflow:ellipsis" title="${pe2}">${shortName(pe2)}</span>
+                  </div>` : '<span style="color:#94a3b8">—</span>';
                 // Solo mostrar ganador si hay marcador completo
                 const ganDisp = (hasMarcador && pgan) ? pgan : '—';
                 const ganStyle = (hasMarcador && pgan)
@@ -5246,7 +5258,7 @@ async function loadApuestasDetail(game, silent=false) {
                   : 'color:#94a3b8';
                 return `<tr data-nombre="${(p.nombre||'').replace(/"/g,'&quot;')}" style="${i%2?'background:#f8fafc':''}">
                   <td style="padding:10px 12px;font-weight:600;color:${hasMarcador?'#1e293b':'#94a3b8'}">${p.nombre}</td>
-                  <td style="padding:10px 8px;text-align:center;color:#475569">${pickStr}</td>
+                  <td style="padding:10px 8px;text-align:center;color:#475569">${marcadorCell}</td>
                   <td style="padding:10px 8px;text-align:center;${ganStyle};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${ganDisp}</td>
                   <td style="padding:10px 8px;text-align:center">
                     ${p.pts !== null ? `<span class="pts ${ptsCls}">${p.pts}</span>` : '—'}

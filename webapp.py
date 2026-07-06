@@ -4353,8 +4353,19 @@ async def get_game_picks(jgo: int = Query(...)):
         pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db.calc_pts_inferred(
             game, pk, by_jgo, by_ronda, pp,
             _v_logro, _v_gan, _v_gol1, _v_gol2, _v_campeon)
+        # Equipos que ESTE jugador predijo para el cruce (inferidos de su cuadro).
+        # En rondas superiores pueden diferir del partido real (p.ej. predijo que
+        # avanzaba Japón donde en la realidad está Brasil): así se ve por qué un gol
+        # no cuenta (el equipo predicho no está jugando).
+        eq1_inf = _db._disp_team(game, "eq1", by_jgo, by_ronda, pp) or game.get("eq1", "")
+        eq2_inf = _db._disp_team(game, "eq2", by_jgo, by_ronda, pp) or game.get("eq2", "")
+        _r1 = (game.get("eq1", "") or "").strip(); _r2 = (game.get("eq2", "") or "").strip()
+        eq1_vivo = bool(eq1_inf) and not _db._is_placeholder(eq1_inf) and str(eq1_inf).strip() in (_r1, _r2)
+        eq2_vivo = bool(eq2_inf) and not _db._is_placeholder(eq2_inf) and str(eq2_inf).strip() in (_r1, _r2)
         game_picks.append({
             "nombre":    data.get("nombre", ""),
+            "pick_eq1":  eq1_inf, "pick_eq2": eq2_inf,
+            "eq1_vivo":  eq1_vivo, "eq2_vivo": eq2_vivo,
             "pick_gol1": pick_gol1, "pick_gol2": pick_gol2,
             "pick_gan":  pick_gan,  "pts": pts,
             "ok_logro":  pts_logro > 0, "ok_gan": pts_gan > 0,
@@ -4417,12 +4428,25 @@ def _compute_compare_picks() -> dict:
             pts_logro, pts_gan, pts_gol1, pts_gol2, pts = _db.calc_pts_inferred(
                 game, pk, by_jgo, by_ronda, pp, vL, vG, v1, v2, vC)
 
+            # Equipos que ESTE jugador predijo para el cruce (inferidos de su cuadro).
+            # En rondas superiores pueden diferir del partido real (p.ej. predijo que
+            # avanzaba Japón donde en la realidad está Brasil): así se ve por qué un gol
+            # no cuenta (el equipo predicho no está jugando).
+            eq1_inf = _db._disp_team(game, "eq1", by_jgo, by_ronda, pp) or game.get("eq1", "")
+            eq2_inf = _db._disp_team(game, "eq2", by_jgo, by_ronda, pp) or game.get("eq2", "")
+            _r1 = (game.get("eq1", "") or "").strip(); _r2 = (game.get("eq2", "") or "").strip()
+            # ¿El equipo predicho está realmente en el partido? (vivo)
+            eq1_vivo = bool(eq1_inf) and not _db._is_placeholder(eq1_inf) and eq1_inf.strip() in (_r1, _r2)
+            eq2_vivo = bool(eq2_inf) and not _db._is_placeholder(eq2_inf) and eq2_inf.strip() in (_r1, _r2)
+
             game_picks.append({
                 "nombre":    data.get("nombre", ""),
-                "pick_eq1":  "",
+                "pick_eq1":  eq1_inf,
                 "pick_gol1": pick_gol1,
                 "pick_gol2": pick_gol2,
-                "pick_eq2":  "",
+                "pick_eq2":  eq2_inf,
+                "eq1_vivo":  eq1_vivo,
+                "eq2_vivo":  eq2_vivo,
                 "pick_gan":  pick_gan,
                 "pts":       pts,
                 "pts_logro": pts_logro,
