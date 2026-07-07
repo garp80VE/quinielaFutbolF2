@@ -997,17 +997,35 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                 if gr and not _is_placeholder(gr) and gr in vivos:
                     equipos_vivos_jug.add(gr)
 
-            # Max realista + equipos que aun le pueden dar puntos (por cobrar):
-            # equipos vivos que predijo ganadores en partidos PENDIENTES.
+            # "Por cobrar" = PARTIDOS pendientes donde el jugador AÚN puede sumar
+            # (al menos uno de sus dos equipos predichos sigue vivo). Es más útil que
+            # contar equipos: dice cuántos juegos le quedan por rendir. El max realista
+            # por partido solo suma los conceptos de equipos vivos (igual que Mi cuadro).
+            _RLBL = {"R32": "16avos", "R16": "Octavos", "QF": "Cuartos",
+                     "SF": "Semis", "3ER": "3er puesto", "FINAL": "Final"}
             max_add = 0
-            por_cobrar = set()
+            por_cobrar = 0
+            por_cobrar_lista = []
             for g in pendientes:
-                pk = _pp.get(str(g["jgo"])) or {}
-                max_add += vL  # no-empate siempre alcanzable
+                js = str(g["jgo"]); pk = _pp.get(js) or {}
+                e1 = _disp_team(g, "eq1", by_jgo, by_ronda, _pp)
+                e2 = _disp_team(g, "eq2", by_jgo, by_ronda, _pp)
+                a1 = bool(e1) and not _is_placeholder(e1) and e1 in vivos
+                a2 = bool(e2) and not _is_placeholder(e2) and e2 in vivos
+                if not (a1 or a2):
+                    continue                       # ambos equipos muertos → no suma nada
+                por_cobrar += 1
+                r = (g.get("grupo") or g.get("ronda") or "").upper()
                 gr = _gan_real(pk, _pp)
+                etq = _RLBL.get(r, r)
                 if gr and not _is_placeholder(gr) and gr in vivos:
-                    max_add += vG + v1 + v2
-                    por_cobrar.add(gr)
+                    etq += f" ({gr})"
+                por_cobrar_lista.append(etq)
+                max_add += vL                        # no-empate alcanzable
+                if gr and not _is_placeholder(gr) and gr in vivos:
+                    max_add += vG                    # ganador
+                if a1: max_add += v1                 # gol equipo 1
+                if a2: max_add += v2                 # gol equipo 2
             if final_pend and vC:
                 pkf = _pp.get(str(final_pend[0]["jgo"])) or {}
                 camp = _gan_real(pkf, _pp)
@@ -1022,8 +1040,8 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                 "max_realista":    pts + max_add,
                 "equipos_vivos":   len(equipos_vivos_jug),
                 "equipos_lista":   sorted(equipos_vivos_jug),
-                "por_cobrar":      len(por_cobrar),
-                "por_cobrar_lista": sorted(por_cobrar),
+                "por_cobrar":      por_cobrar,
+                "por_cobrar_lista": por_cobrar_lista,
             })
 
         out.sort(key=lambda x: (-x["pts"], -x["max_realista"], x["nombre"]))
