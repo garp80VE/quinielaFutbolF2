@@ -947,6 +947,7 @@ _pending_notifs: list = []   # notificaciones de gol/final pendientes hasta tene
 _prorroga_notif:  set  = set()  # espn_id que ya recibieron aviso de TIEMPO EXTRA (1 sola vez)
 _penales_notif:   set  = set()  # espn_id que ya recibieron aviso de PENALES (1 sola vez)
 _mt_notif:        set  = set()  # espn_id que ya recibieron aviso de MEDIO TIEMPO (1 sola vez)
+_inicio_notif:    set  = set()  # espn_id que ya recibieron aviso de INICIO (1 sola vez)
 _score_down:      dict = {}     # {espn_id: "g1-g2"} candidato a marcador MENOR pendiente de
                                 # confirmar (anti-glitch: solo se acepta si ESPN lo repite)
 _post90_games:    set  = set()  # espn_id que YA pasaron de los 90' → marcador congelado fijo
@@ -1983,6 +1984,12 @@ def _updater_loop():
                 # (esto fue lo que reseteaba juegos decididos por penales/prórroga).
                 if not sc.get("estado"):
                     return
+                # Anti-glitch de ESTADO: un partido que YA arrancó no vuelve a "PROG".
+                # ESPN a veces parpadea a state="pre" (→ "PROG") por un ciclo; si lo
+                # guardáramos, al siguiente ciclo se detectaría "arranque" otra vez y
+                # se re-enviaría el aviso de INICIO. Se ignora esa lectura.
+                if sc["estado"] == "PROG" and estado_prev not in ("PROG", ""):
+                    return
 
                 nuevo_minuto = sc.get("minuto", "")
                 if nuevo_minuto:
@@ -2057,7 +2064,9 @@ def _updater_loop():
                 eq2  = eq2_sheet or eq2_espn
                 prev = _prev_states.get(espn_id, {})
 
-                if sc["estado"] != "PROG" and estado_prev == "PROG":
+                if (sc["estado"] != "PROG" and estado_prev == "PROG"
+                        and espn_id not in _inicio_notif):
+                    _inicio_notif.add(espn_id)   # INICIO: una sola vez por partido
                     _b1, _b2 = _eq(eq1), _eq(eq2)
                     # Distribuci\u00f3n de apuestas al iniciar:
                     #  - respaldo a cada equipo (qui\u00e9n creen que AVANZA)
