@@ -1259,19 +1259,85 @@ def db_compute_probabilities_mc(cfg: dict = None, n_sims: int = 1500) -> dict:
     lider = cur[order[0]] if order else 0
 
     # ── Proyección por "universo perfecto" de cada jugador → estado + universos ─
+    # Un equipo está MUERTO si PERDIÓ un partido ya jugado: un equipo eliminado NO
+    # puede reaparecer en cruces futuros. El "techo" (máximo posible) DEBE respetar
+    # esto — antes asumía que todos los equipos predichos seguían vivos e inflaba el
+    # tope (p.ej. daba 125 cuando el real era 110). Se usa la MISMA lógica de "Mi
+    # cuadro": por partido pendiente, solo suman los conceptos de equipos vivos.
+    eliminados = set()
+    for g in fixed:
+        e1 = (g.get("eq1") or "").strip(); e2 = (g.get("eq2") or "").strip()
+        gn = (g.get("ganador") or "").strip()
+        if e1 and e2 and gn:
+            loser = e2 if gn == e1 else (e1 if gn == e2 else "")
+            if loser:
+                eliminados.add(loser)
+
+    def _status2(name):
+        n = (name or "").strip()
+        if (not n) or _is_placeholder(n) or n.startswith("Gan. ") or n.startswith("Perdedor "):
+            return "unknown"
+        return "dead" if n in eliminados else "alive"
+
+    def _max_disp(pid, js):
+        """Máximo de puntos que pid aún puede sacar en el pendiente js, según qué
+        equipos predichos siguen vivos (idéntico a Mi cuadro)."""
+        pr = pred[pid].get(js)
+        if not pr:
+            return 0
+        e1p, e2p, ganp, g1p, g2p = pr
+        st1, st2, stw = _status2(e1p), _status2(e2p), _status2(ganp)
+        if st1 != "alive" and st2 != "alive":
+            return 0                       # ambos equipos muertos → no suma nada
+        m = vL                             # logro (no-empate) sigue disponible
+        if stw == "alive": m += vG         # ganador
+        if st1 == "alive": m += v1         # gol equipo 1
+        if st2 == "alive": m += v2         # gol equipo 2
+        if js in FINAL_JS and stw == "alive": m += vC   # campeón
+        return m
+
     univ_win = {pid: 0.0 for pid in ids}; univ_top2 = {pid: 0 for pid in ids}
     chance, univ_dif2, techo = {}, {}, {}
+    # Techo real de cada jugador (cota superior por-partido, equipos vivos)
+    for pid in ids:
+        techo[pid] = cur[pid] + sum(_max_disp(pid, js) for js in pend_jgos)
+
     for P in ids:
+        # Universo REALISTA de P: parte de los resultados reales y propaga hacia
+        # adelante eligiendo, en cada pendiente, al ganador que predijo P SOLO si es
+        # uno de los dos equipos que realmente llegan (los eliminados no reaparecen).
         realP = {}
-        for js in pend_jgos:
-            pr = pred[P].get(js)
-            if not pr:
+        for g in games_sorted:
+            js = str(g["jgo"])
+            if _isfin(g) and js not in pend_set:
+                realP[js] = {"eq1": (g.get("eq1") or "").strip(),
+                             "eq2": (g.get("eq2") or "").strip(),
+                             "g1": _num(g.get("gol1")), "g2": _num(g.get("gol2")),
+                             "gan": (g.get("ganador") or "").strip()}
                 continue
-            e1p, e2p, ganp, g1p, g2p = pr
-            realP[js] = {"eq1": e1p, "eq2": e2p, "g1": g1p, "g2": g2p, "gan": ganp}
+            e1 = _disp_team(g, "eq1", by_jgo, by_ronda, realP)
+            e2 = _disp_team(g, "eq2", by_jgo, by_ronda, realP)
+            pr = pred[P].get(js)
+            e1p, e2p, ganp, g1p, g2p = pr if pr else (None, None, None, None, None)
+            # goles que P asignó a cada equipo REAL presente (por nombre)
+            a = g1p if e1p == e1 else (g2p if e2p == e1 else None)
+            b = g1p if e1p == e2 else (g2p if e2p == e2 else None)
+            emp = (g1p is not None and g2p is not None and g1p == g2p)
+            gan = ganp if (ganp and ganp in (e1, e2)) else e1
+            if a is None and b is None:
+                a, b = (1, 0) if gan == e1 else (0, 1)     # equipos de P ausentes: P no puntúa
+            elif emp:
+                base = a if a is not None else b
+                a = b = (base if base is not None else 0)   # empate (avanza gan por penales)
+            else:
+                if a is None: a = (b + 1) if gan == e1 else max(b - 1, 0)
+                if b is None: b = (a + 1) if gan == e2 else max(a - 1, 0)
+                if gan == e1 and not (a > b): a = b + 1
+                if gan == e2 and not (b > a): b = a + 1
+            realP[js] = {"eq1": e1, "eq2": e2, "g1": a, "g2": b, "gan": gan}
         scoresP = {X: cur[X] + _pts_pending(X, realP, pend_jgos) for X in ids}
-        pscore = scoresP[P]
-        techo[P] = pscore
+        scoresP[P] = techo[P]              # P usa su techo real (cota por-partido)
+        pscore = techo[P]
         n_above = sum(1 for x in ids if x != P and scoresP[x] > pscore)
         if not pending:
             chance[P] = "opcion_1" if rank[P] == 1 else ("solo_2" if rank[P] == 2 else "eliminado")
