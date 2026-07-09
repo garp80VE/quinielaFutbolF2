@@ -172,6 +172,13 @@ def parse_ronda(comp: dict, event: dict = None, eq1: str = "", eq2: str = "") ->
     return ""  # sin dato suficiente; el caller asignará por posición
 
 
+def _norm_team(s):
+    """Normaliza un nombre de equipo para comparar (sin acentos, minúsculas)."""
+    import unicodedata
+    s = (s or "").strip().lower()
+    return "".join(c for c in unicodedata.normalize("NFD", s)
+                   if unicodedata.category(c) != "Mn")
+
 def _espn_summary_url():
     league = state.get("cfg", {}).get("ESPN_LEAGUE", "fifa.world")
     return f"{ESPN_BASE}/{league}/summary"
@@ -2024,6 +2031,15 @@ def _updater_loop():
                     sc_g1, sc_g2 = str(game.get("gol1")), str(game.get("gol2"))
                 else:
                     sc_g1, sc_g2 = sc["gol1"], sc["gol2"]
+                    # ESPN puede listar los equipos en orden INVERSO al del cuadro
+                    # (bracket). Sin alinear, el gol se le pinta al equipo equivocado
+                    # (p.ej. "Marruecos 1-0 Francia" cuando anotó Francia). Se compara
+                    # por NOMBRE y, si está invertido, se intercambian goles y penales.
+                    if (eq1_sheet and eq2_sheet and eq1_espn and eq2_espn
+                            and _norm_team(eq1_sheet) == _norm_team(eq2_espn)
+                            and _norm_team(eq2_sheet) == _norm_team(eq1_espn)):
+                        sc_g1, sc_g2 = sc_g2, sc_g1
+                        sc["pen1"], sc["pen2"] = sc.get("pen2", ""), sc.get("pen1", "")
 
                 # ── Anti-glitch de marcador ────────────────────────────────────
                 # ESPN a veces devuelve lecturas inestables que suben y bajan en el
@@ -2185,9 +2201,11 @@ def _updater_loop():
                     elif _g2 > _g1:
                         ganador_final = eq2_sheet or eq2
                     elif sc["ganador"]:
-                        # Empate a 90 resuelto por penales/prórroga → mapear por lado
-                        ganador_final = (eq2_sheet or eq2) if sc["ganador"] == sc.get("eq2", "") \
-                                        else (eq1_sheet or eq1)
+                        # Empate a 90 resuelto por penales/prórroga → mapear por NOMBRE
+                        # al equipo del cuadro (ESPN puede dar el orden invertido).
+                        ganador_final = (eq2_sheet or eq2) \
+                            if _norm_team(sc["ganador"]) == _norm_team(eq2_sheet or eq2) \
+                            else (eq1_sheet or eq1)
                     else:
                         ganador_final = ""
 
