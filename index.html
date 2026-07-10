@@ -4435,13 +4435,25 @@ async function loadComparacion(force=false) {
         const pgan = p.gan  ?? '';
         const hasMarcador = pg1 !== '' && pg2 !== '';
         const hasPick = hasMarcador && pgan !== '';
-        const pickStr = hasMarcador ? `${pg1}–${pg2}` : '—';
+        // Equipos que ESTE jugador predijo (inferidos); el que no está en el
+        // partido real va tachado (igual que en Apuestas).
+        const pe1 = p.pick_eq1 || g.eq1 || '';
+        const pe2 = p.pick_eq2 || g.eq2 || '';
+        const dead1 = p.eq1_vivo === false;
+        const dead2 = p.eq2_vivo === false;
+        const tSt = d => d ? 'color:#cbd5e1;text-decoration:line-through' : 'color:#64748b';
+        const marcadorCell = hasMarcador ? `
+          <div style="display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap">
+            <span style="${tSt(dead1)};font-size:10px;max-width:60px;overflow:hidden;text-overflow:ellipsis" title="${pe1}">${shortName(pe1)}</span>
+            <b style="color:#1e293b;font-size:11px">${pg1}–${pg2}</b>
+            <span style="${tSt(dead2)};font-size:10px;max-width:60px;overflow:hidden;text-overflow:ellipsis" title="${pe2}">${shortName(pe2)}</span>
+          </div>` : '<span style="color:#94a3b8">—</span>';
         const ganDisp = hasPick ? pgan : '—';
         const rowBg = i%2===0 ? '' : 'background:#f8fafc';
         const nameSt = hasPick ? 'color:#1e293b;font-weight:600' : 'color:#94a3b8';
         return `<tr data-nombre="${(p.nombre||'').replace(/"/g,'&quot;')}" style="${rowBg}">
-          <td style="padding:7px 8px;font-size:12px;${nameSt};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${p.nombre}</td>
-          <td style="padding:7px 6px;text-align:center;font-size:12px;color:${hasPick?'#1e293b':'#94a3b8'}">${pickStr}</td>
+          <td style="padding:7px 8px;font-size:11px;${nameSt};white-space:nowrap;max-width:90px;overflow:hidden;text-overflow:ellipsis">${p.nombre}</td>
+          <td style="padding:7px 6px;text-align:center">${marcadorCell}</td>
           <td style="padding:7px 6px;text-align:center;font-size:11px;color:${hasPick?'#7c3aed':'#94a3b8'};font-weight:${hasPick?'700':'400'};white-space:nowrap;max-width:80px;overflow:hidden;text-overflow:ellipsis">${ganDisp}</td>
         </tr>`;
       }).join('');

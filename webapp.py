@@ -4668,14 +4668,29 @@ def _compute_upcoming_picks() -> dict:
         if not _is_def(eq1) or not _is_def(eq2):
             continue
 
-        all_picks = _db.db_get_all_picks_for_game(jgo_str)
+        _r1, _r2 = (eq1 or "").strip(), (eq2 or "").strip()
+        grouped = _db.db_get_all_picks_grouped()
         game_picks = []
-        for pk in all_picks:
+        for _pid, data in grouped.items():
+            if data.get("excluido"):
+                continue
+            pp = data["picks"]
+            pk = pp.get(jgo_str)
+            if not pk:
+                continue
+            # Equipos que ESTE jugador predijo para el cruce (inferidos de su cuadro).
+            # El que no esté en el partido real va tachado en el frontend.
+            pe1 = _db._disp_team(game, "eq1", by_jgo, by_ronda, pp) or eq1
+            pe2 = _db._disp_team(game, "eq2", by_jgo, by_ronda, pp) or eq2
+            v1 = bool(pe1) and not _db._is_placeholder(pe1) and str(pe1).strip() in (_r1, _r2)
+            v2 = bool(pe2) and not _db._is_placeholder(pe2) and str(pe2).strip() in (_r1, _r2)
             game_picks.append({
-                "nombre": pk.get("nombre", "?"),
-                "gol1":   pk.get("g1_pick", "") or "",
-                "gol2":   pk.get("g2_pick", "") or "",
-                "gan":    pk.get("gan_pick", "") or "",
+                "nombre":   data.get("nombre", "?"),
+                "gol1":     pk.get("g1", "") or "",
+                "gol2":     pk.get("g2", "") or "",
+                "gan":      pk.get("gan", "") or "",
+                "pick_eq1": pe1, "pick_eq2": pe2,
+                "eq1_vivo": v1, "eq2_vivo": v2,
             })
 
         game_picks.sort(key=lambda x: (not bool(x["gan"]), x["nombre"]))
