@@ -624,21 +624,14 @@ def _infer_bracket_slot(game, slot, by_jgo, by_ronda, picks):
         pk = picks.get(str(sf_game["jgo"])) or {}
         if not pk.get("gan"):
             return f"Perdedor SF{sf_idx + 1}"
-        gan    = _resolve_team_name(pk["gan"], by_jgo, by_ronda, picks) or pk["gan"]
-        sf_eq1 = _resolve_team_name(sf_game.get("eq1", ""), by_jgo, by_ronda, picks) or sf_game.get("eq1", "")
-        sf_eq2 = _resolve_team_name(sf_game.get("eq2", ""), by_jgo, by_ronda, picks) or sf_game.get("eq2", "")
-        if not sf_eq1 or sf_eq1 == "TBD":
-            sf_eq1 = _resolve_team_name(pk.get("eq1", ""), by_jgo, by_ronda, picks) or pk.get("eq1", "")
-        if not sf_eq2 or sf_eq2 == "TBD":
-            sf_eq2 = _resolve_team_name(pk.get("eq2", ""), by_jgo, by_ronda, picks) or pk.get("eq2", "")
-        if not sf_eq1 or sf_eq1 == "TBD":
-            inf = _infer_bracket_slot(sf_game, "eq1", by_jgo, by_ronda, picks)
-            if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
-                sf_eq1 = inf
-        if not sf_eq2 or sf_eq2 == "TBD":
-            inf = _infer_bracket_slot(sf_game, "eq2", by_jgo, by_ronda, picks)
-            if inf and not inf.startswith("Gan. ") and not inf.startswith("Perdedor "):
-                sf_eq2 = inf
+        gan = _resolve_team_name(pk["gan"], by_jgo, by_ronda, picks) or pk["gan"]
+        # El 3er puesto son los PERDEDORES de las semis. Se usan los equipos que
+        # EL JUGADOR predijo para su semifinal (no los reales), para que sea
+        # coherente con el resto de las rondas: si predijo mal a los semifinalistas,
+        # su equipo del 3er puesto también será "equivocado" (y se marcará muerto),
+        # en vez de reescribirse con el perdedor real que él nunca eligió.
+        sf_eq1 = _disp_team(sf_game, "eq1", by_jgo, by_ronda, picks)
+        sf_eq2 = _disp_team(sf_game, "eq2", by_jgo, by_ronda, picks)
         loser = sf_eq2 if gan == sf_eq1 else (sf_eq1 if gan == sf_eq2 else "")
         return loser or f"Perdedor SF{sf_idx + 1}"
 
