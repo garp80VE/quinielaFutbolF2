@@ -2992,6 +2992,21 @@ function renderGames(games) {
   // Ordenar: EN VIVO → PROG → Terminados
   const sorted = [...games].sort((a, b) => _gameOrder(a) - _gameOrder(b));
 
+  // Equipos ELIMINADOS: perdieron un partido ya jugado (no reaparecen). Se usa
+  // para calcular el máximo REAL de puntos por pick (si el equipo predicho está
+  // muerto, ese concepto ya no puede sumar).
+  const _dead = new Set();
+  for (const gg of (S.games || [])) {
+    const est = (gg.estado || '').trim();
+    if (!est || est === 'PROG') continue;
+    const e1 = (gg.eq1 || '').trim(), e2 = (gg.eq2 || '').trim(), gn = (gg.ganador || '').trim();
+    if (e1 && e2 && gn) {
+      const loser = gn === e1 ? e2 : (gn === e2 ? e1 : '');
+      if (loser) _dead.add(loser);
+    }
+  }
+  const _esMuerto = (n) => !!(n && !isPlaceholder(n) && !n.startsWith('Gan. ') && !n.startsWith('Perdedor ') && _dead.has(n));
+
   sorted.forEach(g => {
     const jgo    = g.jgo;
     const estado = g.estado || '';
@@ -3209,17 +3224,42 @@ function renderGames(games) {
           ${(!p.ganador && !locked && (p.gol1 !== '' || p.gol2 !== '')) ? `<p id="gan-warn-${jgo}" class="text-xs text-red-400 text-center mt-1.5">* Debes elegir un ganador</p>` : `<p id="gan-warn-${jgo}" class="text-xs text-red-400 text-center mt-1.5" style="display:none">* Debes elegir un ganador</p>`}
         </div>
 
-        <!-- Puntos si FINAL -->
+        <!-- Puntos si FINAL / máximo alcanzable si pendiente -->
         ${pts !== null ? `
           <div class="mt-3 flex items-center justify-center gap-2">
             <span class="pts ${pts>=S.ptsMax?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts} pts</span>
-          </div>` : `
-          <div class="mt-3 flex gap-1.5 flex-wrap">
-            <span class="bg-green-50 text-green-700 text-xs px-2.5 py-1 rounded-full font-semibold">⚡ Logro: ${S.pts.logro} pt${S.pts.logro!==1?'s':''}</span>
-            <span class="bg-purple-50 text-purple-700 text-xs px-2.5 py-1 rounded-full font-semibold">🏆 Ganador: ${S.pts.gan} pts</span>
-            <span class="bg-blue-50 text-blue-600 text-xs px-2.5 py-1 rounded-full font-semibold">🎯 Goles c/u: ${S.pts.gol1} pt${S.pts.gol1!==1?'s':''}</span>
-            ${S.pts.campeon && g.ronda === 'FINAL' ? `<span class="bg-yellow-50 text-yellow-700 text-xs px-2.5 py-1 rounded-full font-semibold">⭐ Campeón: +${S.pts.campeon} pts</span>` : ''}
-          </div>`}
+          </div>` : (() => {
+            // Estado vivo/muerto de los equipos predichos y del ganador.
+            const _d1 = _esMuerto(pe1), _d2 = _esMuerto(pe2);
+            const _win = ganDisp || p.ganador || '';
+            const _dw = _esMuerto(_win);
+            const _allAlive = !_d1 && !_d2 && !_dw;
+            if (_allAlive) {
+              // Caso normal: leyenda de puntos por concepto.
+              return `<div class="mt-3 flex gap-1.5 flex-wrap">
+                <span class="bg-green-50 text-green-700 text-xs px-2.5 py-1 rounded-full font-semibold">⚡ Logro: ${S.pts.logro} pt${S.pts.logro!==1?'s':''}</span>
+                <span class="bg-purple-50 text-purple-700 text-xs px-2.5 py-1 rounded-full font-semibold">🏆 Ganador: ${S.pts.gan} pts</span>
+                <span class="bg-blue-50 text-blue-600 text-xs px-2.5 py-1 rounded-full font-semibold">🎯 Goles c/u: ${S.pts.gol1} pt${S.pts.gol1!==1?'s':''}</span>
+                ${S.pts.campeon && g.ronda === 'FINAL' ? `<span class="bg-yellow-50 text-yellow-700 text-xs px-2.5 py-1 rounded-full font-semibold">⭐ Campeón: +${S.pts.campeon} pts</span>` : ''}
+              </div>`;
+            }
+            // Hay equipos eliminados → mostrar SOLO lo que aún puede sumar (como Mi cuadro).
+            const _winValido = _win && !_dw && (_win === pe1 || _win === pe2);
+            let _max = 0;
+            const _chips = [];
+            if (!(_d1 && _d2)) {
+              _max += S.pts.logro;
+              _chips.push(`<span class="bg-green-50 text-green-700 text-xs px-2.5 py-1 rounded-full font-semibold">⚡ Logro: ${S.pts.logro}</span>`);
+              if (_winValido) { _max += S.pts.gan; _chips.push(`<span class="bg-purple-50 text-purple-700 text-xs px-2.5 py-1 rounded-full font-semibold">🏆 Ganador: ${S.pts.gan}</span>`); }
+              if (!_d1) { _max += S.pts.gol1; _chips.push(`<span class="bg-blue-50 text-blue-600 text-xs px-2.5 py-1 rounded-full font-semibold">🎯 Gol ${shortName(pe1)}: ${S.pts.gol1}</span>`); }
+              if (!_d2) { _max += S.pts.gol2; _chips.push(`<span class="bg-blue-50 text-blue-600 text-xs px-2.5 py-1 rounded-full font-semibold">🎯 Gol ${shortName(pe2)}: ${S.pts.gol2}</span>`); }
+              if (g.ronda === 'FINAL' && S.pts.campeon && _winValido) { _max += S.pts.campeon; _chips.push(`<span class="bg-yellow-50 text-yellow-700 text-xs px-2.5 py-1 rounded-full font-semibold">⭐ Campeón: +${S.pts.campeon}</span>`); }
+            }
+            const _resumen = _max === 0
+              ? `<span class="bg-red-50 text-red-500 text-xs px-2.5 py-1 rounded-full font-bold">⚠️ Equipos eliminados · máx 0 pt</span>`
+              : `<span class="bg-slate-100 text-slate-600 text-xs px-2.5 py-1 rounded-full font-bold">máx ${_max} pt</span>`;
+            return `<div class="mt-3 flex gap-1.5 flex-wrap">${_resumen}${_chips.join('')}</div>`;
+          })()}
       </div>`;
     list.appendChild(card);
   });
