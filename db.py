@@ -983,12 +983,18 @@ def db_compute_probabilities(cfg: dict = None) -> list:
                 pts += ptot
                 breakdown[ptot] = breakdown.get(ptot, 0) + 1
 
-            # Equipos que predijo (ganador) y siguen vivos
+            # Equipos vivos del jugador = equipos de SUS líneas en partidos PENDIENTES
+            # (lo que muestra su cuadro) que además siguen vivos en la realidad.
+            # Idéntico a los verdes de "Mi cuadro": NO cuenta equipos que predijo en
+            # rondas ya jugadas ni equipos ajenos a su línea aunque sigan jugando
+            # (p.ej. un equipo que picó ganador en octavos y sigue vivo pero que en
+            # su cuadro ya fue reemplazado por otro cruce).
             equipos_vivos_jug = set()
-            for pk in _pp.values():
-                gr = _gan_real(pk, _pp)
-                if gr and not _is_placeholder(gr) and gr in vivos:
-                    equipos_vivos_jug.add(gr)
+            for g in pendientes:
+                for slot in ("eq1", "eq2"):
+                    t = _disp_team(g, slot, by_jgo, by_ronda, _pp)
+                    if t and not _is_placeholder(t) and t in vivos:
+                        equipos_vivos_jug.add(t)
 
             # "Por cobrar" = PARTIDOS pendientes donde el jugador AÚN puede sumar
             # (al menos uno de sus dos equipos predichos sigue vivo). Es más útil que
