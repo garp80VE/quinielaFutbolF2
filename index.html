@@ -4997,9 +4997,17 @@ function resolveTeamName(rawName, depth) {
   if (!pick || !pick.ganador) return rawName; // sin pick → mantener placeholder
 
   if (ref.type === 'loser') {
-    // Para 3er puesto: el equipo que jugó y NO ganó
-    const rEq1 = resolveTeamName(refGame.eq1, depth + 1);
-    const rEq2 = resolveTeamName(refGame.eq2, depth + 1);
+    // Para 3er puesto: el perdedor de la semi según los equipos que EL JUGADOR
+    // predijo (no los reales), coherente con el resto del cuadro.
+    const _pf = (s) => {
+      const inf = _inferBracketSlot(refGame, s);
+      if (inf && !inf.startsWith('Gan. ') && !inf.startsWith('Perdedor ') && !isPlaceholder(inf)) return inf;
+      const st = pick[s] || '';
+      if (st && !isPlaceholder(st)) return resolveTeamName(st, depth + 1) || st;
+      return resolveTeamName(refGame[s], depth + 1) || refGame[s] || '';
+    };
+    const rEq1 = _pf('eq1');
+    const rEq2 = _pf('eq2');
     const gan  = pick.ganador;
     // El perdedor es el que no fue elegido como ganador
     if (gan === rEq1 || gan === pick.eq1) return rEq2 || pick.eq2 || rawName;
@@ -5043,21 +5051,19 @@ function _inferBracketSlot(game, slot) {
     if (!pick?.ganador) return `Perdedor SF${sfIdx+1}`;
     const gan = resolveTeamName(pick.ganador) || pick.ganador;
 
-    // HORARIOS puede tener eq1/eq2 vacíos en SF — buscar en picks guardados o en inferencia del bracket
-    let sfEq1 = resolveTeamName(sfGame.eq1) || sfGame.eq1 || '';
-    let sfEq2 = resolveTeamName(sfGame.eq2) || sfGame.eq2 || '';
-    // Fallback 1: usar lo que el usuario guardó en el pick del SF
-    if (!sfEq1 || sfEq1 === 'TBD') sfEq1 = resolveTeamName(pick.eq1||'') || pick.eq1 || '';
-    if (!sfEq2 || sfEq2 === 'TBD') sfEq2 = resolveTeamName(pick.eq2||'') || pick.eq2 || '';
-    // Fallback 2: inferir por bracket (QF ganadores) — solo si es un equipo real
-    if (!sfEq1 || sfEq1 === 'TBD') {
-      const inf = _inferBracketSlot(sfGame, 'eq1');
-      if (inf && !inf.startsWith('Gan. ') && !inf.startsWith('Perdedor ')) sfEq1 = inf;
-    }
-    if (!sfEq2 || sfEq2 === 'TBD') {
-      const inf = _inferBracketSlot(sfGame, 'eq2');
-      if (inf && !inf.startsWith('Gan. ') && !inf.startsWith('Perdedor ')) sfEq2 = inf;
-    }
+    // Equipos que EL JUGADOR predijo para la semi (no los reales): así el 3er
+    // puesto usa el perdedor que ÉL imaginó, coherente con el resto del cuadro.
+    // Si predijo mal a los semifinalistas, su equipo del 3er puesto quedará
+    // "muerto" en vez de reescribirse con el perdedor real que nunca eligió.
+    const _predSF = (s) => {
+      const inf = _inferBracketSlot(sfGame, s);
+      if (inf && !inf.startsWith('Gan. ') && !inf.startsWith('Perdedor ') && !isPlaceholder(inf)) return inf;
+      const st = pick[s] || '';
+      if (st && !isPlaceholder(st)) return resolveTeamName(st) || st;
+      return resolveTeamName(sfGame[s] || '') || sfGame[s] || '';
+    };
+    const sfEq1 = _predSF('eq1');
+    const sfEq2 = _predSF('eq2');
 
     // El perdedor es el equipo que NO ganó
     const loser = gan === sfEq1 ? sfEq2 : (gan === sfEq2 ? sfEq1 : '');
