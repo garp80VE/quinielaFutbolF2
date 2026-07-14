@@ -1462,8 +1462,15 @@ def db_compute_probabilities_mc(cfg: dict = None, n_sims: int = 1500) -> dict:
 
     players = []
     for pid in order:
-        prob1 = round(now_p1.get(pid, 0.0), 5)
-        ptop  = round(now_p2.get(pid, 0.0), 5)
+        # El ESTADO exacto (posibilidad real) manda sobre el % de Monte Carlo: si es
+        # imposible ser 1° / top-2, su probabilidad se fija en 0 (el MC puede dar un
+        # residuo por muestreo, pero no puede haber % de algo matemáticamente
+        # imposible). Así el badge y el % nunca se contradicen.
+        _est   = chance[pid]
+        _can1  = _est == "opcion_1"
+        _cant2 = _est in ("opcion_1", "solo_2")
+        prob1 = round(now_p1.get(pid, 0.0), 5) if _can1  else 0.0
+        ptop  = round(now_p2.get(pid, 0.0), 5) if _cant2 else 0.0
         players.append({
             "name": names[pid], "rank": rank[pid], "current_pts": cur[pid],
             "max_possible": techo[pid], "techo": techo[pid],
