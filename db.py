@@ -1313,62 +1313,131 @@ def db_compute_probabilities_mc(cfg: dict = None, n_sims: int = 1500) -> dict:
         if js in FINAL_JS and stw == "alive": m += vC   # campeón
         return m
 
-    univ_win = {pid: 0.0 for pid in ids}; univ_top2 = {pid: 0 for pid in ids}
-    chance, univ_dif2, techo = {}, {}, {}
-    # Techo real de cada jugador (cota superior por-partido, equipos vivos)
+    techo = {}
     for pid in ids:
         techo[pid] = cur[pid] + sum(_max_disp(pid, js) for js in pend_jgos)
 
-    for P in ids:
-        # Universo REALISTA de P: parte de los resultados reales y propaga hacia
-        # adelante eligiendo, en cada pendiente, al ganador que predijo P SOLO si es
-        # uno de los dos equipos que realmente llegan (los eliminados no reaparecen).
-        realP = {}
-        for g in games_sorted:
-            js = str(g["jgo"])
-            if _isfin(g) and js not in pend_set:
-                realP[js] = {"eq1": (g.get("eq1") or "").strip(),
-                             "eq2": (g.get("eq2") or "").strip(),
-                             "g1": _num(g.get("gol1")), "g2": _num(g.get("gol2")),
-                             "gan": (g.get("ganador") or "").strip()}
-                continue
-            e1 = _disp_team(g, "eq1", by_jgo, by_ronda, realP)
-            e2 = _disp_team(g, "eq2", by_jgo, by_ronda, realP)
-            pr = pred[P].get(js)
-            e1p, e2p, ganp, g1p, g2p = pr if pr else (None, None, None, None, None)
-            # goles que P asignó a cada equipo REAL presente (por nombre)
+    # ── Estado por ENUMERACIÓN EXACTA del universo de cada jugador ──────────────
+    # "¿Sigue con vida / solo 2° / eliminado?" es una pregunta de POSIBILIDAD, no de
+    # probabilidad: se resuelve mirando TODOS los desenlaces posibles de los partidos
+    # que faltan (no una muestra al azar). Como al final del torneo quedan muy pocos
+    # partidos, se enumeran todos los cruces posibles (2^pendientes) y se revisa si
+    # existe ALGÚN desenlace donde el jugador termina 1° (o top-2). Los goles se fijan
+    # en el pronóstico del propio jugador (su universo); solo varía quién gana cada
+    # partido. El Monte Carlo (prob_1st/prob_top2) queda SOLO para el % de arriba.
+    univ_win  = {pid: None for pid in ids}
+    univ_top2 = {pid: None for pid in ids}
+    univ_dif2 = {pid: None for pid in ids}
+    chance = {}
+    univ_total_n = 0
+
+    pend_seq = [g for g in games_sorted if str(g["jgo"]) in pend_set]
+
+    def _score_for(pr, e1, e2, w):
+        """Marcador P-favorable: los goles que predijo el jugador si son coherentes
+        con que gane `w` (o empate a penales); si no, `w` gana 1-0."""
+        if pr:
+            e1p, e2p, ganp, g1p, g2p = pr
             a = g1p if e1p == e1 else (g2p if e2p == e1 else None)
             b = g1p if e1p == e2 else (g2p if e2p == e2 else None)
-            emp = (g1p is not None and g2p is not None and g1p == g2p)
-            gan = ganp if (ganp and ganp in (e1, e2)) else e1
-            if a is None and b is None:
-                a, b = (1, 0) if gan == e1 else (0, 1)     # equipos de P ausentes: P no puntúa
-            elif emp:
-                base = a if a is not None else b
-                a = b = (base if base is not None else 0)   # empate (avanza gan por penales)
-            else:
-                if a is None: a = (b + 1) if gan == e1 else max(b - 1, 0)
-                if b is None: b = (a + 1) if gan == e2 else max(a - 1, 0)
-                if gan == e1 and not (a > b): a = b + 1
-                if gan == e2 and not (b > a): b = a + 1
-            realP[js] = {"eq1": e1, "eq2": e2, "g1": a, "g2": b, "gan": gan}
-        scoresP = {X: cur[X] + _pts_pending(X, realP, pend_jgos) for X in ids}
-        scoresP[P] = techo[P]              # P usa su techo real (cota por-partido)
-        pscore = techo[P]
-        n_above = sum(1 for x in ids if x != P and scoresP[x] > pscore)
-        if not pending:
-            chance[P] = "opcion_1" if rank[P] == 1 else ("solo_2" if rank[P] == 2 else "eliminado")
-        else:
-            chance[P] = "opcion_1" if n_above == 0 else ("solo_2" if n_above == 1 else "eliminado")
-        otros = [sc for x, sc in scoresP.items() if x != P]
-        univ_dif2[P] = pscore - (max(otros) if otros else 0)
-        mx1 = max(scoresP.values())
-        champs = [x for x, sc in scoresP.items() if sc == mx1]
-        for x in champs: univ_win[x] += 1.0 / len(champs)
-        vals = sorted(set(scoresP.values()), reverse=True)
-        mx2 = vals[1] if len(vals) > 1 else vals[0]
-        for x, sc in scoresP.items():
-            if sc >= mx2: univ_top2[x] += 1
+            if a is not None and b is not None:
+                if a == b or (a > b and w == e1) or (b > a and w == e2):
+                    return a, b
+        return (1, 0) if w == e1 else (0, 1)
+
+    ENUM_CAP = 512                      # 2^9: enumera exacto solo si hay pocos pendientes
+    n_universos = 1 << len(pend_seq)
+
+    if not pending:
+        # Torneo terminado: el estado sale del ranking final.
+        for P in ids:
+            chance[P] = ("opcion_1" if rank[P] == 1
+                         else ("solo_2" if rank[P] == 2 else "eliminado"))
+    elif n_universos <= ENUM_CAP:
+        from itertools import product as _product
+        # Genera TODOS los cruces posibles (equipos + ganador) una sola vez; los
+        # equipos de cada partido se propagan según los ganadores ya elegidos.
+        combos = [{}]
+        for g in pend_seq:
+            js = str(g["jgo"]); nuevos = []
+            for parcial in combos:
+                e1 = _disp_team(g, "eq1", by_jgo, by_ronda, parcial)
+                e2 = _disp_team(g, "eq2", by_jgo, by_ronda, parcial)
+                opciones = [w for w in (e1, e2) if w]
+                opciones = list(dict.fromkeys(opciones)) or [e1]
+                for w in opciones:
+                    nd = dict(parcial)
+                    nd[js] = {"eq1": e1, "eq2": e2, "gan": w}
+                    nuevos.append(nd)
+            combos = nuevos
+        univ_total_n = len(combos)
+
+        # Para cada cruce, además de quién gana, se prueban unos pocos MARCADORES por
+        # partido: el que predijo P (le da sus goles/logro) y marcadores "estériles"
+        # que hunden a los rivales (nadie acierta goles; se prueba con y sin empate).
+        # Así el estado es una verdadera prueba de posibilidad: existe ALGÚN desenlace
+        # (cruces + marcadores) donde P termina 1° / top-2. Si el volumen es muy alto
+        # se cae a un solo marcador (el de P) para no penalizar el tiempo de cómputo.
+        SCORE_CAP = 50000
+        multi = (univ_total_n * (3 ** len(pend_seq))) <= SCORE_CAP
+
+        def _cands(predP, js, e1, e2, w):
+            a, b = _score_for(predP.get(js), e1, e2, w)
+            if not multi:
+                return [(a, b)]
+            ster_nd = (9, 0) if w == e1 else (0, 9)     # gana sin empate, nadie acierta goles
+            ster_dr = (8, 8)                            # empate (gana por penales), nadie acierta
+            out = []
+            for c in ((a, b), ster_nd, ster_dr):
+                if c not in out:
+                    out.append(c)
+            return out
+
+        for P in ids:
+            predP = pred[P]
+            can1 = False; wins = 0; tops = 0; best = None
+            for combo in combos:
+                jss = list(combo.keys())
+                cand_lists = [_cands(predP, js, combo[js]["eq1"], combo[js]["eq2"],
+                                     combo[js]["gan"]) for js in jss]
+                combo_1 = False; combo_top2 = False
+                for choice in _product(*cand_lists):
+                    real = {}
+                    for js, (a, b) in zip(jss, choice):
+                        info = combo[js]
+                        real[js] = {"eq1": info["eq1"], "eq2": info["eq2"],
+                                    "g1": a, "g2": b, "gan": info["gan"]}
+                    sc = {X: cur[X] + _pts_pending(X, real, pend_jgos) for X in ids}
+                    sp = sc[P]; mx = max(sc.values())
+                    if sp >= mx:                       # 1° (empate cuenta como 1°)
+                        combo_1 = True
+                    otros = sorted((sc[X] for X in ids if X != P), reverse=True)
+                    corte2 = otros[1] if len(otros) >= 2 else None
+                    if corte2 is None or sp >= corte2:
+                        combo_top2 = True
+                    if corte2 is not None:
+                        m = sp - corte2
+                        if best is None or m > best:
+                            best = m
+                    if combo_1 and combo_top2:
+                        break
+                if combo_1:
+                    wins += 1; can1 = True
+                if combo_top2:
+                    tops += 1
+            univ_win[P]  = wins
+            univ_top2[P] = tops
+            univ_dif2[P] = best
+            chance[P] = ("opcion_1" if can1
+                         else ("solo_2" if tops > 0 else "eliminado"))
+    else:
+        # Demasiados pendientes para enumerar (inicio del torneo): cota SEGURA que
+        # nunca elimina de más — solo descarta a quien ya tiene rivales por encima de
+        # su techo (imposible alcanzarlos aun acertando todo).
+        for P in ids:
+            n_above = sum(1 for R in ids if R != P and cur[R] > techo[P])
+            chance[P] = ("opcion_1" if n_above == 0
+                         else ("solo_2" if n_above == 1 else "eliminado"))
 
     # ── Tendencia ▲▼: prob_1st antes vs después del último partido finalizado ──
     before_p1 = dict(now_p1)
@@ -1403,8 +1472,8 @@ def db_compute_probabilities_mc(cfg: dict = None, n_sims: int = 1500) -> dict:
             "univ_1st": prob1, "univ_2nd": round(max(0.0, ptop - prob1), 5),
             "trend": round(prob1 - before_p1.get(pid, prob1), 1),
             "estado": chance[pid], "chance": chance[pid],
-            "univ_win": round(univ_win[pid], 2), "univ_top2": univ_top2[pid],
-            "univ_dif2": univ_dif2[pid], "univ_total": len(ids),
+            "univ_win": univ_win[pid], "univ_top2": univ_top2[pid],
+            "univ_dif2": univ_dif2[pid], "univ_total": univ_total_n or None,
             "pts_breakdown": brk[pid],
         })
     return {"players": players, "fixed_games": len(fixed), "pending_games": len(pending),
