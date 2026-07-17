@@ -3005,7 +3005,6 @@ function renderGames(games) {
       if (loser) _dead.add(loser);
     }
   }
-  const _esMuerto = (n) => !!(n && !isPlaceholder(n) && !n.startsWith('Gan. ') && !n.startsWith('Perdedor ') && _dead.has(n));
 
   sorted.forEach(g => {
     const jgo    = g.jgo;
@@ -3229,10 +3228,25 @@ function renderGames(games) {
           <div class="mt-3 flex items-center justify-center gap-2">
             <span class="pts ${pts>=S.ptsMax?'pts-hi':pts>=1?'pts-mid':'pts-lo'}">${pts} pts</span>
           </div>` : (() => {
-            // Estado vivo/muerto de los equipos predichos y del ganador.
-            const _d1 = _esMuerto(pe1), _d2 = _esMuerto(pe2);
+            // ¿Cada equipo predicho puede PUNTUAR en ESTE partido? No basta con que
+            // siga vivo en el torneo: un finalista (España) NO juega el 3er puesto,
+            // así que ahí no puntúa; un perdedor de semis (Inglaterra) SÍ juega el
+            // 3er puesto aunque esté "eliminado". Si los equipos REALES del cruce ya
+            // se conocen, se valida por pertenencia al partido real; si no, criterio
+            // global de eliminados. (Coherente con Mi cuadro y el techo.)
+            const _realE1 = (g.eq1 || '').trim(), _realE2 = (g.eq2 || '').trim();
+            const _phN = (n) => !n || isPlaceholder(n) ||
+                                 n.startsWith('Gan. ') || n.startsWith('Perdedor ');
+            const _realKnown = _realE1 && _realE2 && !_phN(_realE1) && !_phN(_realE2);
+            const _noPuntua = (n) => {
+              if (!n || _phN(n)) return true;
+              if (_realKnown) return !(n === _realE1 || n === _realE2);
+              return _dead.has(n);
+            };
+            // Estado vivo/muerto (para ESTE partido) de los equipos y del ganador.
+            const _d1 = _noPuntua(pe1), _d2 = _noPuntua(pe2);
             const _win = ganDisp || p.ganador || '';
-            const _dw = _esMuerto(_win);
+            const _dw = _noPuntua(_win);
             const _allAlive = !_d1 && !_d2 && !_dw;
             if (_allAlive) {
               // Caso normal: leyenda de puntos por concepto.
