@@ -1296,21 +1296,42 @@ def db_compute_probabilities_mc(cfg: dict = None, n_sims: int = 1500) -> dict:
             return "unknown"
         return "dead" if n in eliminados else "alive"
 
+    def _alive_here(name, re1, re2, real_known):
+        """¿El equipo predicho puede puntuar en ESTE partido? Si los equipos reales
+        del cruce ya se conocen, debe ser participante real (un finalista NO puede
+        puntuar en el 3er puesto; un perdedor de semis SÍ, aunque esté 'eliminado'
+        del torneo). Si el cruce aún no está definido, se usa el criterio global."""
+        n = (name or "").strip()
+        if (not n) or _is_placeholder(n) or n.startswith("Gan. ") or n.startswith("Perdedor "):
+            return False
+        if real_known:
+            return n in (re1, re2)
+        return n not in eliminados
+
     def _max_disp(pid, js):
         """Máximo de puntos que pid aún puede sacar en el pendiente js, según qué
-        equipos predichos siguen vivos (idéntico a Mi cuadro)."""
+        equipos predichos pueden puntuar en ese cruce real (idéntico a Mi cuadro)."""
         pr = pred[pid].get(js)
         if not pr:
             return 0
         e1p, e2p, ganp, g1p, g2p = pr
-        st1, st2, stw = _status2(e1p), _status2(e2p), _status2(ganp)
-        if st1 != "alive" and st2 != "alive":
-            return 0                       # ambos equipos muertos → no suma nada
+        g = games_map.get(js) or by_jgo.get(js) or {}
+        re1 = (g.get("eq1") or "").strip(); re2 = (g.get("eq2") or "").strip()
+        def _ph(n):
+            n = (n or "").strip()
+            return ((not n) or _is_placeholder(n)
+                    or n.startswith("Gan. ") or n.startswith("Perdedor "))
+        real_known = bool(re1 and re2 and not _ph(re1) and not _ph(re2))
+        a1 = _alive_here(e1p, re1, re2, real_known)
+        a2 = _alive_here(e2p, re1, re2, real_known)
+        aw = _alive_here(ganp, re1, re2, real_known)
+        if not a1 and not a2:
+            return 0                       # ningún equipo puede puntuar aquí
         m = vL                             # logro (no-empate) sigue disponible
-        if stw == "alive": m += vG         # ganador
-        if st1 == "alive": m += v1         # gol equipo 1
-        if st2 == "alive": m += v2         # gol equipo 2
-        if js in FINAL_JS and stw == "alive": m += vC   # campeón
+        if aw: m += vG                     # ganador
+        if a1: m += v1                     # gol equipo 1
+        if a2: m += v2                     # gol equipo 2
+        if js in FINAL_JS and aw: m += vC  # campeón
         return m
 
     techo = {}

@@ -4083,7 +4083,25 @@ async def get_mi_cuadro(phone: str = Query(""), email: str = Query("")):
             estado = g.get("estado", "")
             jugado = bool(estado) and estado != "PROG"
             real_gan = (g.get("ganador") or "").strip()
-            st1, st2, stw = _status(e1), _status(e2), _status(ganp)
+            # Estado de cada equipo PARA ESTE PARTIDO. Un equipo puede seguir vivo en
+            # el torneo pero NO ser participante de este cruce (p.ej. un finalista en
+            # la línea del 3er puesto): ahí no puede puntuar. Al revés, un perdedor de
+            # semis está "eliminado" del torneo pero SÍ juega el 3er puesto. Por eso,
+            # si los equipos REALES de este partido ya se conocen, se valida por
+            # PERTENENCIA al cruce real; si aún no (rondas futuras sin definir), se
+            # cae al criterio global de eliminados.
+            real_e1 = (g.get("eq1") or "").strip()
+            real_e2 = (g.get("eq2") or "").strip()
+            real_known = (not jugado and real_e1 and real_e2
+                          and not _is_ph(real_e1) and not _is_ph(real_e2))
+            def _status_here(name):
+                if _is_ph(name):
+                    return "unknown"
+                n = (name or "").strip()
+                if real_known:
+                    return "alive" if n in (real_e1, real_e2) else "dead"
+                return "dead" if n in eliminados else "alive"
+            st1, st2, stw = _status_here(e1), _status_here(e2), _status_here(ganp)
             es_final = key == "FINAL"
             # Puntos: si ya se jugó → ganados reales; si está pendiente → máximo
             # aún disponible según qué equipos predichos siguen vivos.
