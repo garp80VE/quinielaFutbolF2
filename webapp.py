@@ -4684,11 +4684,17 @@ def _compute_upcoming_picks() -> dict:
             pe2 = _db._disp_team(game, "eq2", by_jgo, by_ronda, pp) or eq2
             v1 = bool(pe1) and not _db._is_placeholder(pe1) and str(pe1).strip() in (_r1, _r2)
             v2 = bool(pe2) and not _db._is_placeholder(pe2) and str(pe2).strip() in (_r1, _r2)
+            # Ganador a MOSTRAR = coherente con SUS equipos predichos y su marcador.
+            # Si el gan guardado quedó huérfano (p.ej. 'Francia' en el 3er puesto,
+            # cuando sus equipos ahí son Portugal/Brasil), se infiere del marcador
+            # (2-1 -> gana el local). Igual que en Apuestas/Comparar.
+            gan_disp = _gan_efectivo(pk.get("gan", ""), pe1, pe2,
+                                     pk.get("g1", ""), pk.get("g2", ""))
             game_picks.append({
                 "nombre":   data.get("nombre", "?"),
                 "gol1":     pk.get("g1", "") or "",
                 "gol2":     pk.get("g2", "") or "",
-                "gan":      pk.get("gan", "") or "",
+                "gan":      gan_disp,
                 "pick_eq1": pe1, "pick_eq2": pe2,
                 "eq1_vivo": v1, "eq2_vivo": v2,
             })
