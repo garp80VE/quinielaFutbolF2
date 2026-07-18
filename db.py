@@ -724,6 +724,19 @@ def _calc_pts(g1_pick, g2_pick, gan_pick, gol1, gol2, ganador, estado,
     gan_p = (gan_pick or "").strip()
     gan_real = (ganador or "").strip()
 
+    # Ganador EFECTIVO: si el gan guardado quedo HUERFANO (no es ninguno de los dos
+    # equipos que el jugador predijo para ESTE cruce, p.ej. 'Francia' guardado en el
+    # 3er puesto cuando sus equipos ahi son Portugal/Brasil), se infiere de SU
+    # marcador (2-1 -> gana el local). Asi el gan huerfano no cuela por el gate
+    # teamAlive ni suma ganador. Coherente con _gan_efectivo de la vista.
+    if gan_p and e1p and e2p and gan_p not in (e1p, e2p) \
+       and not e1p.startswith("Gan. ") and not e2p.startswith("Gan. "):
+        try:
+            _ap, _bp = int(str(g1_pick).strip()), int(str(g2_pick).strip())
+            gan_p = e1p if _ap > _bp else (e2p if _bp > _ap else "")
+        except (ValueError, TypeError):
+            gan_p = ""
+
     # teamAlive: al menos 1 equipo predicho debe estar jugando el partido real
     if _eq1r and _eq2r:
         real_teams = {_eq1r, _eq2r}
