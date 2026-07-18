@@ -4439,6 +4439,10 @@ async def get_game_picks(jgo: int = Query(...)):
         _r1 = (game.get("eq1", "") or "").strip(); _r2 = (game.get("eq2", "") or "").strip()
         eq1_vivo = bool(eq1_inf) and not _db._is_placeholder(eq1_inf) and str(eq1_inf).strip() in (_r1, _r2)
         eq2_vivo = bool(eq2_inf) and not _db._is_placeholder(eq2_inf) and str(eq2_inf).strip() in (_r1, _r2)
+        # Ganador a MOSTRAR = coherente con SUS equipos predichos y su marcador. Si el
+        # gan guardado quedó huérfano (p.ej. 'Francia' donde sus equipos son
+        # Portugal/Brasil), se infiere del marcador (2-1 -> gana el local).
+        pick_gan = _gan_efectivo(pick_gan, eq1_inf, eq2_inf, pick_gol1, pick_gol2)
         game_picks.append({
             "nombre":    data.get("nombre", ""),
             "pick_eq1":  eq1_inf, "pick_eq2": eq2_inf,
