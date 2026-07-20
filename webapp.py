@@ -5368,25 +5368,19 @@ def _sorteo_elegibles() -> list:
     cfg = state.get("cfg", {})
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2") or "2"))
 
-    # Leer standings para excluir puestos 1° y 2° (respetando empates)
+    # Excluir puestos 1° y 2° usando la TABLA REAL (SQLite), respetando empates en
+    # puntos: se excluyen los dos valores de puntos más altos (así, si hay empate en
+    # el 1° o el 2°, todos esos jugadores quedan fuera del sorteo). Antes esto leía
+    # el Google Sheet "POSICIONES", que en esta versión está desactualizado y por eso
+    # el campeón de la quiniela llegó a entrar al sorteo.
     top_names = set()
     try:
-        ws_p = state["sh"].worksheet("POSICIONES")
-        rows = ws_p.get_all_values()
-        data_rows = [r for r in rows[2:] if any(c.strip() for c in r)]  # skip título+headers
-        second_pos = None
-        for r in data_rows:
-            if len(r) < 2: continue
-            pos_str = r[0].strip()
-            if not pos_str.isdigit(): continue
-            pos_n = int(pos_str)
-            if pos_n == 1:
-                top_names.add(r[1].strip().lower())
-            else:
-                if second_pos is None:
-                    second_pos = pos_n
-                if pos_n == second_pos:
-                    top_names.add(r[1].strip().lower())
+        standings = _db.db_compute_standings(state.get("cfg", {}))
+        pts_vals  = sorted({s["pts"] for s in standings}, reverse=True)
+        top2_pts  = set(pts_vals[:2])
+        for s in standings:
+            if s["pts"] in top2_pts:
+                top_names.add((s.get("nombre") or "").strip().lower())
     except Exception:
         pass
 
@@ -5594,6 +5588,50 @@ async def admin_sorteo_draw(ql_admin: str = Cookie(default="")):
         _set_cfg_cell(f"SORTEO_GANADOR_{i}", w)
         state["cfg"][f"SORTEO_GANADOR_{i}"] = w
     return {"ok": True, "ganadores": winners}
+
+
+@app.post("/api/admin/sorteo-redraw-ultimo")
+async def admin_sorteo_redraw_ultimo(ql_admin: str = Cookie(default="")):
+    """Vuelve a sortear SOLO el último ganador, CONSERVANDO los anteriores.
+    Útil si el último salió inválido (p.ej. el campeón de la quiniela, que no debe
+    entrar al sorteo). Recalcula elegibles excluyendo 1°/2° reales y excluyendo a
+    los ganadores que se conservan. Persiste en SQLite (fuente de verdad)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    import random
+    cfg = state.get("cfg", {})
+    sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2") or "2"))
+
+    ganadores = [g for g in (_sorteo.get("ganadores") or []) if (g or "").strip()]
+    if not ganadores:
+        ganadores = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
+        ganadores = [g for g in ganadores if (g or "").strip()]
+    if not ganadores:
+        raise HTTPException(400, "No hay ganadores previos para conservar")
+
+    keep       = ganadores[:-1]                     # conservar todos menos el último
+    anterior   = ganadores[-1]
+    elegibles  = _sorteo_elegibles()                # ya excluye 1°/2° reales (SQLite)
+    excl       = {n.strip().lower() for n in keep}
+    candidatos = [e for e in elegibles if e.strip().lower() not in excl]
+    if not candidatos:
+        raise HTTPException(400, "No quedan candidatos elegibles para el nuevo sorteo")
+
+    nuevo     = random.choice(candidatos)
+    ganadores = keep + [nuevo]
+
+    _sorteo["ganadores"] = ganadores
+    _sorteo["elegibles"] = elegibles
+    _sorteo["fase"]      = "done"
+
+    # Persistir en SQLite (de donde se recarga state['cfg']) + memoria
+    campos = {f"SORTEO_GANADOR_{i}": "" for i in range(1, 20)}
+    for i, w in enumerate(ganadores, 1):
+        campos[f"SORTEO_GANADOR_{i}"] = w
+    _db.db_save_config(campos)
+    state["cfg"] = _db.db_get_config()
+
+    return {"ok": True, "conservados": keep, "anterior": anterior,
+            "nuevo": nuevo, "ganadores": ganadores}
 
 
 @app.post("/api/admin/sorteo-reset")
