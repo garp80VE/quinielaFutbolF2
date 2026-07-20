@@ -34,7 +34,7 @@ if hasattr(sys.stderr, "reconfigure"):
 import gspread
 import requests
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File, Form, Request
+from fastapi import FastAPI, HTTPException, Query, Cookie, UploadFile, File, Form, Request, Body
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 _Req = Request
@@ -5591,25 +5591,33 @@ async def admin_sorteo_draw(ql_admin: str = Cookie(default="")):
 
 
 @app.post("/api/admin/sorteo-redraw-ultimo")
-async def admin_sorteo_redraw_ultimo(ql_admin: str = Cookie(default="")):
+async def admin_sorteo_redraw_ultimo(body: dict = Body(default=None),
+                                     ql_admin: str = Cookie(default="")):
     """Vuelve a sortear SOLO el último ganador, CONSERVANDO los anteriores.
     Útil si el último salió inválido (p.ej. el campeón de la quiniela, que no debe
     entrar al sorteo). Recalcula elegibles excluyendo 1°/2° reales y excluyendo a
-    los ganadores que se conservan. Persiste en SQLite (fuente de verdad)."""
+    los ganadores que se conservan. Persiste en SQLite (fuente de verdad).
+
+    Body opcional: {"conservar": ["Nombre1","Nombre2"]} para fijar explícitamente a
+    quiénes mantener (recomendado, por si el estado en memoria se perdió al reiniciar)."""
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
     import random
     cfg = state.get("cfg", {})
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2") or "2"))
 
-    ganadores = [g for g in (_sorteo.get("ganadores") or []) if (g or "").strip()]
-    if not ganadores:
-        ganadores = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
-        ganadores = [g for g in ganadores if (g or "").strip()]
-    if not ganadores:
-        raise HTTPException(400, "No hay ganadores previos para conservar")
-
-    keep       = ganadores[:-1]                     # conservar todos menos el último
-    anterior   = ganadores[-1]
+    conservar = (body or {}).get("conservar") if isinstance(body, dict) else None
+    if conservar:
+        keep     = [c for c in conservar if (c or "").strip()]
+        anterior = None
+    else:
+        ganadores = [g for g in (_sorteo.get("ganadores") or []) if (g or "").strip()]
+        if not ganadores:
+            ganadores = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(sorteo_cant)]
+            ganadores = [g for g in ganadores if (g or "").strip()]
+        if not ganadores:
+            raise HTTPException(400, "No hay ganadores previos para conservar")
+        keep     = ganadores[:-1]                     # conservar todos menos el último
+        anterior = ganadores[-1]
     elegibles  = _sorteo_elegibles()                # ya excluye 1°/2° reales (SQLite)
     excl       = {n.strip().lower() for n in keep}
     candidatos = [e for e in elegibles if e.strip().lower() not in excl]
