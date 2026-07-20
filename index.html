@@ -5430,6 +5430,9 @@ async function loadAdminDashboard() {
         const _oc = el.getAttribute('onclick') || '';
         if (/^wa[A-Z]/.test(_oc) || el.closest('#wa-pair-modal')) return;
         if (/^(saveAdminConfig|showDbTab|loadDbView)\b/.test(_oc)) return;
+        // El sorteo se corre al FINAL del torneo (aún activo) → sus acciones no se
+        // bloquean. Lanzar/Sacar gestionan su propio disabled en sorteoCheckEstado.
+        if (/^(sorteoLanzar|sorteoSacar|sorteoReset|sorteoRepetirShow)\b/.test(_oc)) return;
         el.disabled = true;
         el.style.opacity = '0.5';
         el.style.cursor = 'not-allowed';
