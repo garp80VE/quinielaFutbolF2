@@ -1152,8 +1152,9 @@
           <div id="adm-sorteo-draw-wrap" style="display:none">
             <button id="adm-sorteo-draw-btn" onclick="sorteoSacar()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#4c1d95);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">🎲 SACAR GANADOR #1 de 2</button>
           </div>
+          <button id="btn-sorteo-repetir" onclick="sorteoRepetirShow()" style="width:100%;background:#faf5ff;color:#6d28d9;border:1.5px solid #ddd6fe;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">🎬 Repetir el show en vivo (mismos ganadores)</button>
           <button onclick="sorteoReset()" style="width:100%;background:white;color:#64748b;border:1.5px solid #e2e8f0;border-radius:12px;padding:11px;font-weight:700;font-size:13px;cursor:pointer">🔄 Resetear sorteo</button>
-          <p style="font-size:11px;color:#94a3b8;text-align:center;margin:0">La fecha/hora se configura en "Configuración del torneo" arriba. El botón activa el sorteo para todos los usuarios.</p>
+          <p style="font-size:11px;color:#94a3b8;text-align:center;margin:0">La fecha/hora se configura en "Configuración del torneo" arriba. "Lanzar" hace un sorteo NUEVO al azar. "Repetir el show" vuelve a poner el sorteo EN VIVO revelando otra vez a los MISMOS ganadores ya elegidos (para que el grupo lo vea de nuevo): luego dale a SACAR GANADOR una vez por cada uno.</p>
           <div style="margin-top:6px;padding-top:14px;border-top:1.5px dashed #fbcfe8">
             <p style="font-weight:800;font-size:13px;color:#9d174d;margin:0 0 4px">🎆 Probar celebración final</p>
             <p style="font-size:11px;color:#831843;margin:0 0 8px">Muestra el popup con el 1ro/2do actuales y el sorteo, sin esperar a que termine el torneo.</p>
@@ -7665,6 +7666,19 @@ async function sorteoSacar() {
     _sorteoSacando = false;
     if (btn) { btn.disabled=false; btn.textContent='Sacar ganador'; btn.style.opacity='1'; }
   }
+}
+
+// ── Repetir el show en vivo con los MISMOS ganadores ya elegidos ──
+async function sorteoRepetirShow() {
+  if (!confirm('Se pondrá el sorteo EN VIVO otra vez para todos, revelando de nuevo a los MISMOS ganadores ya elegidos. Luego dale a "SACAR GANADOR" una vez por cada uno. ¿Continuar?')) return;
+  try {
+    const r = await api('POST', '/api/admin/sorteo-launch', { repetir: true });
+    _sorteoRevealedCount = 0;
+    _sorteoGanadores = [];
+    if (_sorteoAnim) { _sorteoAnim.stop?.(); _sorteoAnim = null; }
+    showToast('Sorteo EN VIVO otra vez — dale a SACAR GANADOR');
+    sorteoCheckEstado();
+  } catch(e) { showToast('Error: ' + e.message); }
 }
 
 // ── Resetear sorteo ───────────────────────────────────────────────

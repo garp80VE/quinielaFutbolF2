@@ -5357,6 +5357,7 @@ _sorteo = {
     "ganadores": [],       # nombres confirmados
     "elegibles": [],       # candidatos (excluye top posiciones)
     "anim":      "bolas",  # bolas | slot | ruleta
+    "predef":    [],       # si no vacío: revelar EXACTAMENTE estos (repetir show)
 }
 _sorteo_notif_sent  = False   # True cuando ya se envió la notif de 2 min antes
 _sorteo_notif_key   = ""      # "FECHA|HORA" para detectar cambio de config
@@ -5504,16 +5505,29 @@ async def sorteo_estado():
 
 
 @app.post("/api/admin/sorteo-launch")
-async def admin_sorteo_launch(ql_admin: str = Cookie(default="")):
-    """Activa la pantalla del sorteo en vivo para todos los usuarios."""
+async def admin_sorteo_launch(body: dict = Body(default=None),
+                              ql_admin: str = Cookie(default="")):
+    """Activa la pantalla del sorteo en vivo para todos los usuarios.
+    Body opcional {"fijos": ["N1","N2",...]}: REPITE el show revelando exactamente
+    esos ganadores (mismos de antes), en vez de sacarlos al azar."""
     if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
-    elegibles = _sorteo_elegibles()
-    if len(elegibles) < 1:
-        raise HTTPException(400, "No hay jugadores elegibles para el sorteo")
     cfg = state.get("cfg", {})
+    elegibles = _sorteo_elegibles()
+    fijos = [f for f in ((body or {}).get("fijos") or []) if (f or "").strip()] \
+            if isinstance(body, dict) else []
+    # {"repetir": true} → usar los ganadores ya guardados (persistidos en SQLite),
+    # robusto aunque el estado en memoria se haya perdido por un reinicio.
+    if not fijos and isinstance(body, dict) and body.get("repetir"):
+        cant = int(float(cfg.get("SORTEO_CANT", "2") or "2"))
+        fijos = [cfg.get(f"SORTEO_GANADOR_{i+1}", "") for i in range(cant)]
+        fijos = [f for f in fijos if (f or "").strip()]
+    if not fijos and len(elegibles) < 1:
+        raise HTTPException(400, "No hay jugadores elegibles para el sorteo")
     _sorteo["fase"]      = "live"
     _sorteo["ganadores"] = []
-    _sorteo["elegibles"] = elegibles
+    _sorteo["predef"]    = fijos                 # [] = sorteo normal al azar
+    # Pool visual de la animación: elegibles + los fijos (por si alguno no estuviera)
+    _sorteo["elegibles"] = list(dict.fromkeys(list(elegibles) + fijos)) if fijos else elegibles
     _sorteo["anim"]      = cfg.get("SORTEO_ANIM", "bolas")
     torneo = cfg.get("TORNEO", "Quiniela")
     # Push a todos
@@ -5540,19 +5554,28 @@ async def admin_sorteo_draw(ql_admin: str = Cookie(default="")):
     cfg = state.get("cfg", {})
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2") or "2"))
 
-    # Elegibles = los del estado live, excluyendo ya ganadores
-    elegibles = _sorteo.get("elegibles") or _sorteo_elegibles()
-    ya_ganaron = {w.lower() for w in _sorteo["ganadores"]}
-    candidatos = [e for e in elegibles if e.lower() not in ya_ganaron]
-
-    if not candidatos:
-        raise HTTPException(400, "No quedan candidatos elegibles")
-
-    winner = random.choice(candidatos)
+    predef = _sorteo.get("predef") or []
+    if predef:
+        # Repetir show: revelar los ganadores FIJOS en orden (no al azar).
+        idx = len(_sorteo["ganadores"])
+        if idx >= len(predef):
+            raise HTTPException(400, "Ya se revelaron todos los ganadores")
+        winner = predef[idx]
+        target = len(predef)
+    else:
+        # Sorteo normal: al azar entre elegibles no ganadores.
+        elegibles = _sorteo.get("elegibles") or _sorteo_elegibles()
+        ya_ganaron = {w.lower() for w in _sorteo["ganadores"]}
+        candidatos = [e for e in elegibles if e.lower() not in ya_ganaron]
+        if not candidatos:
+            raise HTTPException(400, "No quedan candidatos elegibles")
+        winner = random.choice(candidatos)
+        target = sorteo_cant
     _sorteo["ganadores"].append(winner)
 
     # Si ya se sacaron todos los ganadores → fase done
-    if len(_sorteo["ganadores"]) >= sorteo_cant:
+    if len(_sorteo["ganadores"]) >= target:
+        _sorteo["predef"] = []
         _sorteo["fase"] = "done"
         winners = _sorteo["ganadores"]
         # Anunciar ganadores por WhatsApp
@@ -5649,6 +5672,7 @@ async def admin_sorteo_reset(ql_admin: str = Cookie(default="")):
     _sorteo["fase"]      = "idle"
     _sorteo["ganadores"] = []
     _sorteo["elegibles"] = []
+    _sorteo["predef"]    = []
     with _sheets_lock:
         ws_cfg   = _sheets_retry(lambda: state["sh"].worksheet("CONFIG"))
         cfg_rows = _sheets_retry(lambda: ws_cfg.get_all_values())
