@@ -5369,23 +5369,16 @@ def _sorteo_elegibles() -> list:
     cfg = state.get("cfg", {})
     sorteo_cant = int(float(cfg.get("SORTEO_CANT", "2") or "2"))
 
-    # Excluir puestos 1° y 2° usando la TABLA REAL (SQLite), respetando empates en
-    # puntos: se excluyen los dos valores de puntos más altos (así, si hay empate en
-    # el 1° o el 2°, todos esos jugadores quedan fuera del sorteo). Antes esto leía
-    # el Google Sheet "POSICIONES", que en esta versión está desactualizado y por eso
-    # el campeón de la quiniela llegó a entrar al sorteo.
-    top_names = set()
-    try:
-        standings = _db.db_compute_standings(state.get("cfg", {}))
-        pts_vals  = sorted({s["pts"] for s in standings}, reverse=True)
-        top2_pts  = set(pts_vals[:2])
-        for s in standings:
-            if s["pts"] in top2_pts:
-                top_names.add((s.get("nombre") or "").strip().lower())
-    except Exception:
-        pass
+    # Excluir 1° y 2° reales (desde SQLite, respetando empates en puntos). Antes esto
+    # leía el Google Sheet "POSICIONES", desactualizado, y por eso el campeón llegó a
+    # entrar al sorteo.
+    top_names = set(_sorteo_top_names().keys())
 
-    # Jugadores pagados fuera del top
+    # Exclusiones MANUALES del admin (casillas desmarcadas). Por defecto vacío =
+    # todos participan. Se guardan como lista JSON de nombres en config.
+    manual = _sorteo_excluidos_manual()
+
+    # Jugadores pagados fuera del top y no desmarcados manualmente
     _, rows, header_idx, headers = _read_jugadores_cached()
     elegibles = []
     for row in rows:  # rows son dicts (SQLite via _jugador_db_to_cache)
@@ -5395,15 +5388,97 @@ def _sorteo_elegibles() -> list:
         if d.get("PAGADO", "").upper() not in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"):
             continue
         nombre = d.get("NOMBRE", "?")
-        if nombre.strip().lower() not in top_names:
+        nl = nombre.strip().lower()
+        if nl not in top_names and nl not in manual:
             elegibles.append(nombre)
     return elegibles
+
+
+def _sorteo_excluidos_manual() -> set:
+    """Nombres (en minúscula) desmarcados manualmente del sorteo por el admin."""
+    cfg = state.get("cfg", {})
+    try:
+        return {(n or "").strip().lower()
+                for n in json.loads(cfg.get("SORTEO_EXCLUIDOS", "[]") or "[]")
+                if (n or "").strip()}
+    except Exception:
+        return set()
+
+
+def _sorteo_top_names() -> dict:
+    """Mapa nombre_minúscula -> '1°'/'2°' de la quiniela (los que se excluyen solos)."""
+    top = {}
+    try:
+        standings = _db.db_compute_standings(state.get("cfg", {}))
+        pts_vals  = sorted({s["pts"] for s in standings}, reverse=True)
+        top1 = pts_vals[0] if pts_vals else None
+        top2 = pts_vals[1] if len(pts_vals) > 1 else None
+        for s in standings:
+            nl = (s.get("nombre") or "").strip().lower()
+            if   s["pts"] == top1: top[nl] = "1°"
+            elif s["pts"] == top2: top[nl] = "2°"
+    except Exception:
+        pass
+    return top
 
 
 def _sorteo_dt_utc(cfg, fecha, hora):
     """La hora del sorteo se ingresa directamente en UTC — sin conversión."""
     from datetime import datetime as _dt2
     return _dt2.fromisoformat(f"{fecha}T{hora}:00")
+
+
+@app.get("/api/admin/sorteo-participantes")
+async def admin_sorteo_participantes(ql_admin: str = Cookie(default="")):
+    """Lista de jugadores PAGADOS con su casilla de participación en el sorteo.
+    Todos participan por defecto; el 1° y 2° de la quiniela quedan desmarcados y
+    BLOQUEADOS (locked). El admin puede desmarcar/marcar a los demás."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    top    = _sorteo_top_names()
+    manual = _sorteo_excluidos_manual()
+    _, rows, _hi, _hd = _read_jugadores_cached()
+    parts = []
+    for row in rows:
+        if not row: continue
+        d = _normalize_player(row)
+        if d.get("PAGADO", "").upper() not in ("1", "SI", "SÍ", "YES", "TRUE", "✓", "X"):
+            continue
+        nombre = d.get("NOMBRE", "?"); nl = nombre.strip().lower()
+        locked = nl in top
+        parts.append({
+            "nombre":    nombre,
+            "participa": (not locked) and (nl not in manual),
+            "locked":    locked,
+            "motivo":    top.get(nl, ""),   # "1°" / "2°" si está bloqueado
+        })
+    parts.sort(key=lambda x: (not x["participa"], x["nombre"].lower()))
+    n_in = sum(1 for p in parts if p["participa"])
+    return {"participantes": parts, "total": len(parts), "participan": n_in}
+
+
+@app.post("/api/admin/sorteo-participante")
+async def admin_sorteo_participante(body: dict = Body(...),
+                                    ql_admin: str = Cookie(default="")):
+    """Marca/desmarca a UN jugador del sorteo. Body: {"nombre": str, "participa": bool}.
+    No se puede marcar a un bloqueado (1°/2°)."""
+    if not _admin_check(ql_admin): raise HTTPException(403, "No autorizado")
+    nombre    = (body.get("nombre") or "").strip()
+    participa = bool(body.get("participa"))
+    if not nombre:
+        raise HTTPException(400, "Falta el nombre del jugador")
+    if nombre.strip().lower() in _sorteo_top_names():
+        raise HTTPException(400, "El 1°/2° de la quiniela no puede entrar al sorteo")
+    cfg = state.get("cfg", {})
+    try:
+        excl = json.loads(cfg.get("SORTEO_EXCLUIDOS", "[]") or "[]")
+    except Exception:
+        excl = []
+    excl = [e for e in excl if (e or "").strip().lower() != nombre.lower()]
+    if not participa:
+        excl.append(nombre)          # desmarcado → a la lista de excluidos
+    _db.db_save_config({"SORTEO_EXCLUIDOS": json.dumps(excl, ensure_ascii=False)})
+    state["cfg"] = _db.db_get_config()
+    return {"ok": True, "nombre": nombre, "participa": participa}
 
 
 def _check_sorteo_notif():

@@ -1148,6 +1148,17 @@
           <div id="adm-sorteo-info" style="background:#f5f3ff;border-radius:12px;padding:12px 14px">
             <p id="adm-sorteo-info-txt" style="font-size:13px;color:#4c1d95;margin:0;font-weight:600">—</p>
           </div>
+          <!-- Participantes del sorteo (casillas) -->
+          <div style="background:white;border:1.5px solid #ede9fe;border-radius:14px;overflow:hidden">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#faf5ff;border-bottom:1.5px solid #ede9fe">
+              <p style="font-weight:800;font-size:13px;color:#6d28d9;margin:0">👥 Participantes del sorteo</p>
+              <button onclick="loadSorteoParticipantes()" style="background:none;border:none;color:#7c3aed;font-size:12px;font-weight:700;cursor:pointer">↻ Actualizar</button>
+            </div>
+            <p id="adm-sorteo-part-sub" style="font-size:11px;color:#94a3b8;margin:8px 14px 0">Todos participan por defecto. El 1° y 2° de la quiniela se desmarcan solos.</p>
+            <div id="adm-sorteo-part-list" style="max-height:280px;overflow-y:auto;padding:8px 14px 12px">
+              <p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px 0">Cargando participantes…</p>
+            </div>
+          </div>
           <button id="btn-sorteo-launch" onclick="sorteoLanzar()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#a21caf);color:white;border:none;border-radius:12px;padding:13px;font-weight:800;font-size:14px;cursor:pointer">🚀 Lanzar sorteo en vivo ahora</button>
           <div id="adm-sorteo-draw-wrap" style="display:none">
             <button id="adm-sorteo-draw-btn" onclick="sorteoSacar()" style="width:100%;background:linear-gradient(135deg,#7c3aed,#4c1d95);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:13px;cursor:pointer">🎲 SACAR GANADOR #1 de 2</button>
@@ -5416,6 +5427,8 @@ async function loadAdminDashboard() {
         if (el.closest('#adm-config-form')) return;
         // Cobro a jugadores e instrucciones de pago: siempre editables (se cobra en vivo)
         if (el.id === 'adm-stripe-activo' || el.id === 'cfg-PAGO_INSTRUCCIONES') return;
+        // Casillas de participantes del sorteo: el sorteo se corre al final (torneo activo)
+        if (el.closest('#adm-sorteo-part-list')) return;
         el.disabled = true;
         el.style.opacity = '0.5';
         el.style.cursor = 'not-allowed';
@@ -5432,7 +5445,7 @@ async function loadAdminDashboard() {
         if (/^(saveAdminConfig|showDbTab|loadDbView)\b/.test(_oc)) return;
         // El sorteo se corre al FINAL del torneo (aún activo) → sus acciones no se
         // bloquean. Lanzar/Sacar gestionan su propio disabled en sorteoCheckEstado.
-        if (/^(sorteoLanzar|sorteoSacar|sorteoReset|sorteoRepetirShow)\b/.test(_oc)) return;
+        if (/^(sorteoLanzar|sorteoSacar|sorteoReset|sorteoRepetirShow|loadSorteoParticipantes)\b/.test(_oc)) return;
         el.disabled = true;
         el.style.opacity = '0.5';
         el.style.cursor = 'not-allowed';
@@ -5918,6 +5931,10 @@ function toggleAdmSection(bodyId, chevId) {
   const open = body.style.display !== 'none';
   body.style.display = open ? 'none' : 'block';
   if (chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(180deg)';
+  // Al abrir la sección del sorteo, cargar la lista de participantes (casillas).
+  if (!open && bodyId === 'adm-body-sorteo-live' && typeof loadSorteoParticipantes === 'function') {
+    loadSorteoParticipantes();
+  }
 }
 
 function initAdmSections() {
@@ -7668,6 +7685,44 @@ async function sorteoSacar() {
   } finally {
     _sorteoSacando = false;
     if (btn) { btn.disabled=false; btn.textContent='Sacar ganador'; btn.style.opacity='1'; }
+  }
+}
+
+// ── Participantes del sorteo (casillas) ──────────────────────────
+async function loadSorteoParticipantes() {
+  const cont = document.getElementById('adm-sorteo-part-list');
+  const sub  = document.getElementById('adm-sorteo-part-sub');
+  if (!cont) return;
+  try {
+    const r = await api('GET', '/api/admin/sorteo-participantes');
+    const ps = r.participantes || [];
+    if (sub) sub.textContent = `${r.participan} de ${r.total} participan · el 1°/2° se excluyen solos`;
+    if (!ps.length) { cont.innerHTML = '<p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px 0">No hay jugadores pagados aún.</p>'; return; }
+    cont.innerHTML = ps.map(p => {
+      const nm = (p.nombre || '').replace(/"/g, '&quot;');
+      const tag = p.locked ? `<span style="font-size:10px;font-weight:800;color:#b91c1c;background:#fee2e2;border-radius:6px;padding:1px 6px;margin-left:6px">${p.motivo} · bloqueado</span>` : '';
+      const dis = p.locked ? 'disabled' : '';
+      const op  = p.locked ? '0.55' : '1';
+      return `<label style="display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid #f1f5f9;opacity:${op};cursor:${p.locked?'not-allowed':'pointer'}">
+        <input type="checkbox" ${p.participa?'checked':''} ${dis}
+          onchange="toggleSorteoParticipante('${nm}', this.checked, this)"
+          style="width:18px;height:18px;accent-color:#7c3aed;cursor:${p.locked?'not-allowed':'pointer'}">
+        <span style="font-size:13px;color:#1e293b;font-weight:600">${p.nombre}${tag}</span>
+      </label>`;
+    }).join('');
+  } catch(e) {
+    cont.innerHTML = `<p style="font-size:12px;color:#dc2626;text-align:center;padding:12px 0">Error: ${e.message}</p>`;
+  }
+}
+
+async function toggleSorteoParticipante(nombre, participa, el) {
+  try {
+    await api('POST', '/api/admin/sorteo-participante', { nombre, participa });
+    // refrescar el subtítulo/contador sin recargar toda la lista
+    loadSorteoParticipantes();
+  } catch(e) {
+    showToast('Error: ' + e.message);
+    if (el) el.checked = !participa;   // revertir visualmente
   }
 }
 
